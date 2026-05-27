@@ -34,6 +34,7 @@ async def create_provider(
     max_agent_iterations: int | None = None,
     default_reasoning_effort: ReasoningEffort | None = None,
     provider_settings: ProviderSettings | None = None,
+    skill_directories: list[str] | None = None,
 ) -> AgentProvider:
     """Factory function to create the appropriate provider.
 
@@ -61,6 +62,9 @@ async def create_provider(
             applied when ``provider_type == "copilot"`` and the settings
             opted into custom routing; ignored for all other providers
             (structured config for those providers is not yet implemented).
+        skill_directories: Directories to load skills from for agent sessions
+            (Copilot provider only; ignored for other providers).  Paths must
+            be absolute—resolve relative paths before calling this function.
 
     Returns:
         Configured AgentProvider instance.
@@ -88,6 +92,7 @@ async def create_provider(
                 max_agent_iterations=max_agent_iterations,
                 default_reasoning_effort=default_reasoning_effort,
                 provider_settings=provider_settings,
+                skill_directories=skill_directories,
             )
         case "openai-agents":
             raise ProviderError(

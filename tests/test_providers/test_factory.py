@@ -276,4 +276,31 @@ class TestClaudeAgentSdkFactoryRejections:
             mcp_servers=None,
         )
         assert isinstance(provider, ClaudeAgentSdkProvider)
+
+class TestSkillDirectories:
+    """Tests for skill_directories parameter in create_provider."""
+
+    @pytest.mark.asyncio
+    async def test_skill_directories_stored_in_copilot_provider(self) -> None:
+        """Test that skill_directories are stored on the CopilotProvider."""
+        skill_dirs = ["/path/to/skills", "/other/skills"]
+        provider = await create_provider("copilot", validate=False, skill_directories=skill_dirs)
+        assert isinstance(provider, CopilotProvider)
+        assert provider._skill_directories == skill_dirs
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_skill_directories_default_empty(self) -> None:
+        """Test that skill_directories defaults to an empty list."""
+        provider = await create_provider("copilot", validate=False)
+        assert isinstance(provider, CopilotProvider)
+        assert provider._skill_directories == []
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_skill_directories_none_becomes_empty_list(self) -> None:
+        """Test that None skill_directories is normalised to an empty list."""
+        provider = await create_provider("copilot", validate=False, skill_directories=None)
+        assert isinstance(provider, CopilotProvider)
+        assert provider._skill_directories == []
         await provider.close()
