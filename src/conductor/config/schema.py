@@ -505,7 +505,7 @@ class AgentDef(BaseModel):
     ) = None
     """Agent type. Defaults to 'agent' if not specified."""
 
-    provider: Literal["copilot", "claude", "claude-agent-sdk"] | None = None
+    provider: Literal["copilot", "claude", "claude-agent-sdk", "pydantic-deep"] | None = None
     """Provider override for this agent.
 
     If None (default), the agent uses the workflow.runtime.provider.
