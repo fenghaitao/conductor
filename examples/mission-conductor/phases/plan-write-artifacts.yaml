@@ -1,0 +1,326 @@
+# Mission Planning — Write Artifacts Phase
+#
+# Writes all remaining worker-facing artifacts:
+#   - AGENTS.md
+#   - services.yaml
+#   - skills/<skill_name>/SKILL.md  (one per unique skill_name in features.yaml)
+#   - init.sh
+#
+# Steps:
+#   1. load_context          — read all existing artifacts + extract skill names
+#   2. write_agents_md       — LLM writes AGENTS.md (skips if exists)
+#   3. write_services_yaml   — LLM writes services.yaml (skips if exists)
+#   4. write_init_sh         — LLM writes init.sh (skips if exists)
+#   5. skill_writers         — for_each: one write-skill.yaml per unique skill_name
+
+workflow:
+  name: mission-plan-write-artifacts
+  description: Write AGENTS.md, services.yaml, init.sh, and per-skill SKILL.md files
+  version: "1.0.0"
+  entry_point: load_context
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 60
+
+for_each:
+  # ── Step 5 (for_each parallel) ──────────────────────────────────────────────
+  - name: skill_writers
+    type: for_each
+    description: |
+      Write one SKILL.md per unique skill_name from features.yaml.
+      Each skill writes to its own skills/<skill_name>/SKILL.md — safe to parallelize.
+    source: load_context.output.skill_names
+    as: skill_name
+    max_concurrent: 3
+    failure_mode: continue_on_error
+
+    agent:
+      name: write_one_skill
+      type: workflow
+      workflow: ./write-skill.yaml
+      input_mapping:
+        mission_dir: "{{ workflow.input.mission_dir }}"
+        skill_name: "{{ skill_name }}"
+        mission_md: "{{ load_context.output.mission_md }}"
+        architecture_md: "{{ load_context.output.architecture_md }}"
+
+    routes:
+      - to: $end
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: load_context
+    type: script
+    description: Read all planning artifacts and extract the unique skill names.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+
+        def read(p): return p.read_text() if p.exists() else ""
+
+        mission_md      = read(mission_dir / "mission.md")
+        architecture_md = read(mission_dir / "architecture.md")
+        contract_md     = read(mission_dir / "validation-contract.md")
+
+        # Extract unique skill names from features.yaml
+        skill_names = []
+        features_path = mission_dir / "features.yaml"
+        if features_path.exists():
+            data = yaml.load(features_path)
+            seen = set()
+            for f in data.get("features", []):
+                sn = f.get("skill_name", "")
+                if sn and sn not in seen:
+                    seen.add(sn)
+                    skill_names.append(sn)
+
+        print(json.dumps({
+            "mission_md":      mission_md,
+            "architecture_md": architecture_md,
+            "contract_md":     contract_md,
+            "skill_names":     skill_names,
+            "has_agents_md":   (mission_dir / "AGENTS.md").exists(),
+            "has_services":    (mission_dir / "services.yaml").exists(),
+            "has_init_sh":     (mission_dir / "init.sh").exists(),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      mission_md:      { type: string }
+      architecture_md: { type: string }
+      contract_md:     { type: string }
+      skill_names:     { type: array }
+      has_agents_md:   { type: boolean }
+      has_services:    { type: boolean }
+      has_init_sh:     { type: boolean }
+    routes:
+      - to: write_agents_md
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: write_agents_md
+    model: claude-sonnet-4.6
+    description: |
+      Write AGENTS.md — guidance and mission boundaries for all workers.
+      Skips if already exists.
+    prompt: |
+      {% if load_context.output.has_agents_md %}
+      AGENTS.md already exists — output exactly: SKIP
+      {% else %}
+      Write AGENTS.md for this mission's workers.
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ARCHITECTURE:
+      {{ load_context.output.architecture_md }}
+
+      AGENTS.md must contain these sections:
+
+      ## Mission Boundaries
+      - Port ranges allocated to this mission
+      - Directories/services that are OFF-LIMITS (user's existing infra)
+      - Any external services that must not be modified
+      - Git rules (which repos workers may commit to)
+
+      ## Worker Guidance
+      - Technology choices that are BINDING (no substitutions)
+      - Code quality standards: no god files, extract reusable components, stay in scope
+      - Commit message format
+      - Where to report pre-existing bugs (discoveredIssues, non_blocking)
+
+      ## Known Pre-Existing Issues
+      (Leave empty initially — orchestrator fills this in during the run)
+
+      ## Testing & Validation Guidance
+      - How to run tests (scoped to changed area)
+      - How to run typecheck and lint
+      - Testing tools available (agent-browser, curl, exec)
+      - Any auth or setup needed for manual testing
+
+      Be specific about port ranges and boundaries. Workers that violate boundaries
+      could damage the user's existing system.
+      {% endif %}
+    output:
+      content:
+        type: string
+    routes:
+      - to: save_agents_md
+
+  - name: save_agents_md
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2].strip()
+        path = mission_dir / "AGENTS.md"
+        if content == "SKIP" or path.exists():
+            print(json.dumps({"path": str(path), "skipped": True}))
+        else:
+            path.write_text(content)
+            print(json.dumps({"path": str(path), "skipped": False}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ write_agents_md.output.content }}"
+    output:
+      path:    { type: string }
+      skipped: { type: boolean }
+    routes:
+      - to: write_services_yaml
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: write_services_yaml
+    model: claude-sonnet-4.6
+    description: |
+      Write services.yaml — single source of truth for commands and services.
+      Skips if already exists.
+    prompt: |
+      {% if load_context.output.has_services %}
+      services.yaml already exists — output exactly: SKIP
+      {% else %}
+      Write services.yaml for this mission.
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ARCHITECTURE:
+      {{ load_context.output.architecture_md }}
+
+      services.yaml format:
+      ```yaml
+      commands:
+        test: <test command — scoped to mission's area>
+        typecheck: <typecheck command>
+        lint: <lint command>
+        lint_fix: <auto-fix lint command>
+
+      services:
+        <service-name>:
+          start: <start command with hardcoded port>
+          stop: <stop command using hardcoded port>
+          healthcheck: <healthcheck command>
+          port: <port number>
+          depends_on: []
+      ```
+
+      Rules:
+      - ALL commands are run from the working directory (not missionDir)
+      - Ports MUST be hardcoded in start/stop/healthcheck strings — never use variables
+      - The `stop` command must kill by port (e.g., `lsof -ti :3000 | xargs kill -9`)
+      - `healthcheck` must be a command that exits 0 when service is ready
+      - `commands.test` should be scoped — not the entire test suite if it would be slow
+      - Include all services needed: API server, frontend dev server, database, etc.
+
+      Only include services the mission actually needs based on the architecture.
+      {% endif %}
+    output:
+      content: { type: string }
+    routes:
+      - to: save_services_yaml
+
+  - name: save_services_yaml
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2].strip()
+        path = mission_dir / "services.yaml"
+        if content == "SKIP" or path.exists():
+            print(json.dumps({"path": str(path), "skipped": True}))
+        else:
+            # Validate YAML parses
+            yaml = YAML()
+            yaml.load(content)
+            path.write_text(content)
+            print(json.dumps({"path": str(path), "skipped": False}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ write_services_yaml.output.content }}"
+    output:
+      path:    { type: string }
+      skipped: { type: boolean }
+    routes:
+      - to: write_init_sh
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: write_init_sh
+    model: claude-sonnet-4.6
+    description: |
+      Write init.sh — idempotent one-time environment setup script.
+      Skips if not needed or already exists.
+    prompt: |
+      {% if load_context.output.has_init_sh %}
+      init.sh already exists — output exactly: SKIP
+      {% else %}
+      Write init.sh for this mission, or output SKIP if no one-time setup is needed
+      (e.g., purely greenfield with no dependency installs required before workers start).
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ARCHITECTURE:
+      {{ load_context.output.architecture_md }}
+
+      init.sh should:
+      - Be idempotent (safe to run multiple times)
+      - Install dependencies (npm install, pip install, etc.)
+      - Run database migrations if needed
+      - Create any required directories or config files
+      - NOT start services (that's services.yaml's job)
+      - Exit 0 on success, non-zero on failure
+
+      Start with: #!/usr/bin/env bash\nset -e
+      {% endif %}
+    output:
+      content: { type: string }
+    routes:
+      - to: save_init_sh
+
+  - name: save_init_sh
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys, os
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2].strip()
+        path = mission_dir / "init.sh"
+        if content == "SKIP" or path.exists():
+            print(json.dumps({"path": str(path), "skipped": True}))
+        else:
+            path.write_text(content)
+            path.chmod(0o755)
+            print(json.dumps({"path": str(path), "skipped": False}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ write_init_sh.output.content }}"
+    output:
+      path:    { type: string }
+      skipped: { type: boolean }
+    routes:
+      - to: skill_writers
+
+output:
+  artifacts_written: "true"

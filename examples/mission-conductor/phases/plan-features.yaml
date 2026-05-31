@@ -1,0 +1,268 @@
+# Mission Planning — Features Phase
+#
+# Decomposes validation-contract.md into features.yaml.
+# Enforces the coverage invariant: every VAL-* ID claimed by exactly one feature.
+#
+# Steps:
+#   1. check_existing      — skip if features.yaml already passes coverage check
+#   2. load_context        — read contract + mission + architecture
+#   3. generate_features   — LLM decomposes contract into features with fulfills
+#   4. save_features       — script writes features.yaml
+#   5. validate_coverage   — script checks invariant; loops back if broken
+#   6. coverage_fix        — LLM fixes coverage gaps (if step 5 fails)
+
+workflow:
+  name: mission-plan-features
+  description: Decompose validation contract into features.yaml with coverage validation
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 30
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        features_path = mission_dir / "features.yaml"
+        contract_path = mission_dir / "validation-contract.md"
+
+        if not features_path.exists() or not contract_path.exists():
+            print(json.dumps({"state": "ready", "coverage_issues": ""}))
+            sys.exit(0)
+
+        # Check coverage invariant on existing features.yaml
+        yaml = YAML()
+        data = yaml.load(features_path)
+        contract = contract_path.read_text()
+
+        contract_ids = set(re.findall(r"VAL-[A-Z]+-\d+", contract))
+        features = data.get("features", [])
+        all_fulfills = []
+        for f in features:
+            all_fulfills.extend(f.get("fulfills", []))
+
+        claimed = set(all_fulfills)
+        duplicates = [id_ for id_ in all_fulfills if all_fulfills.count(id_) > 1]
+        orphans = contract_ids - claimed
+        unknown = claimed - contract_ids
+
+        issues = []
+        if orphans:
+            issues.append(f"Orphaned (in contract but no feature fulfills them): {sorted(orphans)}")
+        if duplicates:
+            issues.append(f"Duplicated (claimed by more than one feature): {sorted(set(duplicates))}")
+        if unknown:
+            issues.append(f"Unknown (in fulfills but not in contract): {sorted(unknown)}")
+
+        if issues:
+            print(json.dumps({"state": "ready", "coverage_issues": "; ".join(issues)}))
+        else:
+            print(json.dumps({"state": "done", "coverage_issues": ""}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state:            { type: string }
+      coverage_issues:  { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: load_context
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: load_context
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        def read(p): return p.read_text() if p.exists() else ""
+        print(json.dumps({
+            "mission_md":      read(mission_dir / "mission.md"),
+            "architecture_md": read(mission_dir / "architecture.md"),
+            "contract_md":     read(mission_dir / "validation-contract.md"),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      mission_md:      { type: string }
+      architecture_md: { type: string }
+      contract_md:     { type: string }
+    routes:
+      - to: generate_features
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: generate_features
+    model: claude-sonnet-4.6
+    reasoning:
+      effort: medium
+    description: |
+      Decompose validation contract into features.yaml. Every VAL-* ID must
+      be claimed by exactly one feature's fulfills list.
+    prompt: |
+      Decompose this validation contract into a features.yaml for a multi-agent mission.
+
+      VALIDATION CONTRACT:
+      {{ load_context.output.contract_md }}
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ARCHITECTURE:
+      {{ load_context.output.architecture_md }}
+
+      {% if check_existing.output.coverage_issues %}
+      COVERAGE ISSUES TO FIX FROM PRIOR ATTEMPT:
+      {{ check_existing.output.coverage_issues }}
+      {% endif %}
+
+      Produce a YAML document with this exact structure:
+
+      ```yaml
+      features:
+        - id: "1.1"
+          milestone: <milestone-name-kebab-case>
+          description: <what to build — concrete and specific>
+          skill_name: <worker-type-kebab-case>
+          expected_behavior: <what success looks like from a user perspective>
+          fulfills:
+            - VAL-AUTH-001
+            - VAL-AUTH-002
+          status: pending
+          worker_session_id: ""
+
+        - id: "1.2"
+          ...
+      ```
+
+      Rules:
+      - Milestones group features by build phase (e.g., "foundation", "auth", "ui")
+      - Feature IDs are "<milestone_number>.<feature_number>" (e.g., "1.1", "1.2", "2.1")
+      - Every VAL-* ID from the contract MUST appear in exactly one feature's fulfills
+      - No VAL-* ID may appear in more than one feature's fulfills
+      - skill_name matches a worker type (e.g., "backend-worker", "frontend-worker")
+      - Features within a milestone should be sequenced so dependencies come first
+      - status is always "pending" for new features
+      - worker_session_id is always empty string for new features
+
+      Output ONLY the YAML — no markdown fences, no explanation.
+    output:
+      features_yaml:
+        type: string
+        description: Complete features.yaml content
+    routes:
+      - to: save_features
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: save_features
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2]
+
+        # Validate it parses as YAML before writing
+        yaml = YAML()
+        try:
+            data = yaml.load(content)
+            if not isinstance(data, dict) or "features" not in data:
+                raise ValueError("Missing 'features' key")
+        except Exception as e:
+            print(json.dumps({"error": str(e), "path": ""}))
+            sys.exit(1)
+
+        path = mission_dir / "features.yaml"
+        path.write_text(content)
+        print(json.dumps({"path": str(path), "count": len(data["features"])}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ generate_features.output.features_yaml }}"
+    output:
+      path:  { type: string }
+      count: { type: number }
+    routes:
+      - to: validate_coverage
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: validate_coverage
+    type: script
+    description: |
+      Enforce the coverage invariant. Routes back to generate_features
+      if there are orphaned, duplicated, or unknown VAL-* IDs.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        data = yaml.load((mission_dir / "features.yaml").read_text())
+        contract = (mission_dir / "validation-contract.md").read_text()
+
+        contract_ids = set(re.findall(r"VAL-[A-Z]+-\d+", contract))
+        all_fulfills = []
+        for f in data.get("features", []):
+            all_fulfills.extend(f.get("fulfills", []))
+
+        claimed = set(all_fulfills)
+        duplicates = set(id_ for id_ in all_fulfills if all_fulfills.count(id_) > 1)
+        orphans = contract_ids - claimed
+        unknown = claimed - contract_ids
+
+        issues = []
+        if orphans:
+            issues.append(f"Orphaned (need a feature): {sorted(orphans)}")
+        if duplicates:
+            issues.append(f"Duplicated (each must be in exactly one feature): {sorted(duplicates)}")
+        if unknown:
+            issues.append(f"Unknown (not in contract): {sorted(unknown)}")
+
+        state = "fail" if issues else "pass"
+        print(json.dumps({
+            "state": state,
+            "issues": "; ".join(issues),
+            "contract_count": len(contract_ids),
+            "claimed_count": len(claimed),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state:          { type: string }
+      issues:         { type: string }
+      contract_count: { type: number }
+      claimed_count:  { type: number }
+    routes:
+      - to: $end
+        when: "state == 'pass'"
+      - to: generate_features
+        when: "state == 'fail'"
+
+output:
+  features_path:     "{{ save_features.output.path | default('') }}"
+  feature_count:     "{{ save_features.output.count | default(0) }}"
+  coverage_verified: "{{ validate_coverage.output.state == 'pass' }}"

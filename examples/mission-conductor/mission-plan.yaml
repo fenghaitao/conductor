@@ -1,0 +1,162 @@
+# Mission Planning Pipeline
+#
+# Drives the full mission planning lifecycle:
+#   understand → propose → [human gate] → readiness_check → architecture → contract → features → artifacts
+#
+# Usage:
+#   conductor run examples/mission-conductor/mission-plan.yaml \
+#     --input mission_name="my-app" \
+#     --input working_directory="/path/to/repo" \
+#     --input idea="Build a REST API with authentication and a React frontend"
+#
+# After completion, the missionDir is ready and mission-run.yaml can be started:
+#   conductor run examples/mission-conductor/mission-run.yaml \
+#     --input mission_dir="<missionDir printed at end>"
+#
+# Idempotent: each phase checks its output artifact and skips if already written.
+
+workflow:
+  name: mission-plan
+  description: |
+    Full mission planning: understand requirements, propose, get user acceptance,
+    write architecture, validation contract, features, and all worker artifacts.
+  version: "1.0.0"
+  entry_point: understand_phase
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_name:
+      type: string
+      required: true
+      description: |
+        Short kebab-case name for this mission (e.g. "user-auth-api").
+        Used as the missionDir folder name under missions/.
+    working_directory:
+      type: string
+      required: true
+      description: |
+        Absolute path to the repository/codebase the mission will modify.
+        Workers will operate from this directory.
+    idea:
+      type: string
+      required: false
+      description: |
+        One or more sentences describing what to build.
+        The understand phase will ask clarifying questions based on this.
+
+  limits:
+    max_iterations: 250
+
+agents:
+  # ── Stage 1: Understand & Plan ───────────────────────────────────────────────
+  - name: understand_phase
+    type: workflow
+    description: |
+      Iterative Q&A + investigation to deeply understand requirements,
+      architecture approach, infrastructure needs, and validation strategy.
+      Produces a structured planning summary for the propose phase.
+    workflow: ./phases/plan-understand.yaml
+    input_mapping:
+      mission_name: "{{ workflow.input.mission_name }}"
+      working_directory: "{{ workflow.input.working_directory }}"
+      idea: "{{ workflow.input.idea | default('') }}"
+    routes:
+      - to: propose_phase
+
+  # ── Stage 2: Propose ────────────────────────────────────────────────────────
+  - name: propose_phase
+    type: workflow
+    description: |
+      Generate the mission proposal and present it to the user for acceptance.
+      On acceptance, writes mission.md and creates missionDir.
+      Routes back to understand_phase if the user requests edits.
+    workflow: ./phases/plan-propose.yaml
+    input_mapping:
+      mission_name: "{{ workflow.input.mission_name }}"
+      working_directory: "{{ workflow.input.working_directory }}"
+      planning_summary: "{{ understand_phase.output.planning_summary }}"
+    routes:
+      - to: readiness_check_phase
+        when: "accepted == true"
+      - to: understand_phase
+        when: "accepted == false"
+
+  # ── Stage 3: Readiness Check ─────────────────────────────────────────────────
+  - name: readiness_check_phase
+    type: workflow
+    description: |
+      Actively verify all dependencies (packages, APIs, credentials, tools)
+      and the validation toolchain (test runner, dev server, browser) before
+      committing to an architecture. Measures system resources and writes
+      readiness-report.yaml (used by user-testing-phase for max_concurrent).
+      On blockers → human gate for user to resolve, then retry.
+      Skips if readiness-report.yaml already exists with has_blockers=false.
+    workflow: ./phases/readiness-check.yaml
+    input_mapping:
+      mission_dir: "{{ propose_phase.output.mission_dir }}"
+    routes:
+      - to: architecture_phase
+
+  # ── Stage 4: Architecture ────────────────────────────────────────────────────
+  - name: architecture_phase
+    type: workflow
+    description: |
+      Write architecture.md — the authoritative system design document.
+      Skips if already written.
+    workflow: ./phases/plan-architecture.yaml
+    input_mapping:
+      mission_dir: "{{ propose_phase.output.mission_dir }}"
+    routes:
+      - to: contract_phase
+
+  # ── Stage 5: Validation Contract ─────────────────────────────────────────────
+  - name: contract_phase
+    type: workflow
+    description: |
+      Generate validation-contract.md (per-area + cross-area assertions)
+      and validation-state.yaml. Skips if already written.
+    workflow: ./phases/plan-contract.yaml
+    input_mapping:
+      mission_dir: "{{ propose_phase.output.mission_dir }}"
+    routes:
+      - to: features_phase
+
+  # ── Stage 6: Features ────────────────────────────────────────────────────────
+  - name: features_phase
+    type: workflow
+    description: |
+      Decompose the contract into features.yaml.
+      Validates the coverage invariant: every VAL-* ID claimed by exactly one feature.
+      Skips if features.yaml already exists and passes coverage check.
+    workflow: ./phases/plan-features.yaml
+    input_mapping:
+      mission_dir: "{{ propose_phase.output.mission_dir }}"
+    routes:
+      - to: artifacts_phase
+
+  # ── Stage 7: Worker Artifacts ────────────────────────────────────────────────
+  - name: artifacts_phase
+    type: workflow
+    description: |
+      Write all remaining worker artifacts: AGENTS.md, services.yaml,
+      skills/<type>/SKILL.md (one per unique skill_name in features.yaml),
+      and init.sh. Skips artifacts that already exist.
+    workflow: ./phases/plan-write-artifacts.yaml
+    input_mapping:
+      mission_dir: "{{ propose_phase.output.mission_dir }}"
+    routes:
+      - to: $end
+
+output:
+  mission_dir: "{{ propose_phase.output.mission_dir }}"
+  mission_name: "{{ workflow.input.mission_name }}"
+  summary: |
+    Mission planning complete for '{{ workflow.input.mission_name }}'.
+    missionDir: {{ propose_phase.output.mission_dir }}
+
+    To start execution:
+      conductor run examples/mission-conductor/mission-run.yaml \
+        --input mission_dir="{{ propose_phase.output.mission_dir }}"

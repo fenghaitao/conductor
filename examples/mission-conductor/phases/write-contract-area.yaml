@@ -1,0 +1,159 @@
+# Write Contract Area (single area)
+#
+# Sub-workflow invoked by plan-contract.yaml's for_each group.
+# Writes one area section to contract-work/<area_slug>.md.
+#
+# Steps:
+#   1. check_existing   — skip if draft already written (idempotent)
+#   2. write_assertions — LLM generates VAL-AREA-NNN assertions
+#   3. save_draft       — script writes to contract-work/<area_slug>.md
+
+workflow:
+  name: mission-write-contract-area
+  description: Write validation contract assertions for one area
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    area_name:
+      type: string
+      required: true
+    area_features:
+      type: string
+      required: true
+      description: Comma-separated feature descriptions for this area
+    mission_md:
+      type: string
+      required: true
+    architecture_md:
+      type: string
+      required: true
+    contract_work_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+
+        contract_work_dir = pathlib.Path(sys.argv[1])
+        area_name = sys.argv[2]
+
+        # Slugify area name for filename
+        slug = re.sub(r"[^a-z0-9]+", "-", area_name.lower()).strip("-")
+        draft_path = contract_work_dir / f"{slug}.md"
+
+        print(json.dumps({
+            "state": "done" if draft_path.exists() else "ready",
+            "draft_path": str(draft_path),
+            "area_slug": slug,
+        }))
+      - "{{ workflow.input.contract_work_dir }}"
+      - "{{ workflow.input.area_name }}"
+    output:
+      state:      { type: string }
+      draft_path: { type: string }
+      area_slug:  { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: write_assertions
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: write_assertions
+    model: claude-sonnet-4.6
+    description: |
+      Generate behavioral assertions for this area of the validation contract.
+    prompt: |
+      Write the `## Area: {{ workflow.input.area_name }}` section for a validation contract.
+
+      AREA FEATURES:
+      {{ workflow.input.area_features }}
+
+      MISSION:
+      {{ workflow.input.mission_md }}
+
+      ARCHITECTURE:
+      {{ workflow.input.architecture_md }}
+
+      ---
+
+      Write 3-8 behavioral assertions for this area using this exact format:
+
+      ## Area: {{ workflow.input.area_name }}
+
+      ### VAL-{{ check_existing.output.area_slug | upper | replace("-", "") | truncate(6, true, "") }}-001: <title>
+      <behavioral description — from user's perspective, unambiguous pass/fail>
+      Tool: <agent-browser | curl | exec>
+      Evidence: <evidence requirements>
+
+      ### VAL-{{ check_existing.output.area_slug | upper | replace("-", "") | truncate(6, true, "") }}-002: <title>
+      ...
+
+      Rules:
+      - Use a SHORT area prefix (e.g., AUTH, CATALOG, CHECKOUT, API, UI) — max 6 chars, all caps
+      - **BLACK-BOX ONLY (gap #19)**: Assertions MUST be from the user's perspective.
+        NEVER reference: function names, class names, module paths, variable names,
+        database table names, internal state, or any implementation detail.
+        A validator must be able to determine pass/fail without reading any source code.
+        BAD: "The authenticate() function returns a JWT when credentials match."
+        GOOD: "Submitting valid credentials to the login form returns a 200 response with a token."
+      - Every assertion must have an unambiguous pass/fail condition
+      - Cover: happy path, primary error paths, and edge cases
+      - Tool choices: agent-browser = web UI flows, curl = REST API calls, exec = CLI commands
+      - Evidence: screenshot (UI), console-errors (UI), network(METHOD /path -> STATUS) (API),
+        terminal-output (CLI), exit-code (CLI)
+      - At minimum 2 assertions per area: one happy path + one failure/error path
+
+      IMPORTANT: Derive the exact area prefix from the area name:
+      - "Authentication" → AUTH
+      - "User Management" → USRMGMT
+      - "Shopping Cart" → CART
+      - "Foundation" → FOUND
+      Keep it recognizable and unique across areas.
+    output:
+      content:
+        type: string
+        description: Area section markdown for validation-contract.md
+    routes:
+      - to: save_draft
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: save_draft
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        draft_path = pathlib.Path(sys.argv[1])
+        content = sys.argv[2]
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text(content)
+        print(json.dumps({"path": str(draft_path), "size": len(content)}))
+      - "{{ check_existing.output.draft_path }}"
+      - "{{ write_assertions.output.content }}"
+    output:
+      path: { type: string }
+      size: { type: number }
+    routes:
+      - to: $end
+
+output:
+  draft_path: "{{ save_draft.output.path | default(check_existing.output.draft_path) }}"

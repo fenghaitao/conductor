@@ -1,0 +1,189 @@
+# Mission Planning — Propose Phase
+#
+# Generates the mission proposal, presents it to the user via human gate,
+# and on acceptance writes mission.md + creates missionDir.
+#
+# Steps:
+#   1. check_existing  — script: is mission.md already written? (idempotent)
+#   2. write_proposal  — LLM: generate full proposal markdown
+#   3. user_review     — human gate: Accept / Request changes
+#   4. save_mission    — script: mkdir missionDir, write mission.md + working_directory.txt
+
+workflow:
+  name: mission-plan-propose
+  description: Generate proposal, get user acceptance, write mission.md
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_name:
+      type: string
+      required: true
+    working_directory:
+      type: string
+      required: true
+    planning_summary:
+      type: string
+      required: true
+      description: Structured output from plan-understand.yaml
+
+  context:
+    mode: accumulate
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    description: |
+      Check if mission.md already exists. If so, read it back so the
+      propose phase can skip generation and go straight to save.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+
+        mission_name = sys.argv[1]
+        mission_dir = pathlib.Path("missions") / mission_name
+        mission_md = mission_dir / "mission.md"
+
+        if mission_md.exists():
+            print(json.dumps({
+                "state": "done",
+                "mission_dir": str(mission_dir.resolve()),
+                "existing_content": mission_md.read_text(),
+            }))
+        else:
+            print(json.dumps({
+                "state": "ready",
+                "mission_dir": str(mission_dir.resolve()),
+                "existing_content": "",
+            }))
+      - "{{ workflow.input.mission_name }}"
+    output:
+      state:            { type: string }
+      mission_dir:      { type: string }
+      existing_content: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: write_proposal
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: write_proposal
+    model: claude-sonnet-4.6
+    description: |
+      Generate the full mission proposal in markdown. This becomes mission.md
+      after user acceptance.
+    prompt: |
+      Write a mission proposal for "{{ workflow.input.mission_name }}".
+
+      PLANNING SUMMARY (requirements, architecture, milestones, tech decisions):
+      {{ workflow.input.planning_summary }}
+
+      Write a thorough proposal with these sections:
+
+      ## Plan Overview
+      High-level description of what the mission will accomplish end-to-end.
+      Include the complete user journey.
+
+      ## Expected Functionality
+      Milestones and features in build order. For each milestone, list its features
+      with a 1-sentence description. This must be complete — validators will test
+      against this.
+
+      ## Environment Setup
+      Dependencies, configuration files, environment variables needed.
+      Note any credentials or external services that must be configured.
+
+      ## Infrastructure
+      Services (databases, caches, queues), processes (servers, workers), ports,
+      and mission boundaries (what is allowed/off-limits).
+
+      ## Worker Types
+      Distinct skill domains workers will need (e.g., backend-worker, frontend-worker).
+      One paragraph each describing what they do and what tools they use.
+
+      ## Testing & Validation Strategy
+      Which surfaces (browser, CLI, API) and which tools (agent-browser, curl, etc.)
+      will be used. Programmatic validators (test, typecheck, lint commands).
+
+      ## Non-Functional Requirements
+      Performance, security, quality attributes with measurable thresholds.
+
+      ---
+      Be specific. The validation contract will be derived directly from this proposal.
+      Every feature listed here becomes one or more VAL-XXX-NNN assertions.
+    output:
+      proposal:
+        type: string
+        description: Complete mission proposal markdown
+    routes:
+      - to: user_review
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: user_review
+    type: human_gate
+    description: Present proposal to user for acceptance or revision
+    prompt: |
+      ## Mission Proposal: {{ workflow.input.mission_name }}
+
+      {{ write_proposal.output.proposal }}
+
+      ---
+      Do you accept this mission plan?
+    options:
+      - label: "Accept — proceed with this plan"
+        value: accepted
+        route: save_mission
+      - label: "Request changes — go back and revise"
+        value: revise
+        route: $end
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: save_mission
+    type: script
+    description: |
+      Create missionDir, write mission.md and working_directory.txt.
+      Content is passed as a positional arg to avoid shell quoting issues.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        mission_name = sys.argv[2]
+        proposal = sys.argv[3]
+        working_directory = sys.argv[4]
+
+        mission_dir.mkdir(parents=True, exist_ok=True)
+
+        # mission.md
+        content = f"# {mission_name}\n\n{proposal}"
+        (mission_dir / "mission.md").write_text(content)
+
+        # working_directory.txt — workers read this to know where to operate
+        (mission_dir / "working_directory.txt").write_text(working_directory)
+
+        print(json.dumps({
+            "mission_dir": str(mission_dir),
+            "mission_md": str(mission_dir / "mission.md"),
+        }))
+      - "{{ check_existing.output.mission_dir }}"
+      - "{{ workflow.input.mission_name }}"
+      - "{{ write_proposal.output.proposal }}"
+      - "{{ workflow.input.working_directory }}"
+    output:
+      mission_dir: { type: string }
+      mission_md:  { type: string }
+    routes:
+      - to: $end
+
+output:
+  accepted: "{{ user_review.output.response == 'Accept — proceed with this plan' }}"
+  mission_dir: "{{ save_mission.output.mission_dir | default(check_existing.output.mission_dir) }}"

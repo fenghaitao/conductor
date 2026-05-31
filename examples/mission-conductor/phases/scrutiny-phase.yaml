@@ -1,0 +1,376 @@
+# Scrutiny Phase
+#
+# Auto-injected quality gate at the end of each milestone.
+# Mirrors the Droid "scrutiny-validator" behavior:
+#   1. Run programmatic validators (test, typecheck, lint)
+#   2. Review each completed feature's handoff + code via LLM
+#   3. Synthesize findings — fail → features reset to pending for re-run
+#
+# Steps:
+#   1. run_validators        — script: run test/typecheck/lint from services.yaml
+#   2. load_milestone_data   — script: collect completed features + handoffs
+#   3. review_features       — for_each (parallel): LLM reviews each feature
+#   4. synthesize            — LLM: aggregate findings, decide pass/fail
+#   5. handle_failures       — script: reset failed features to pending
+
+workflow:
+  name: mission-scrutiny-phase
+  description: Run validators and review completed features for a milestone
+  version: "1.0.0"
+  entry_point: run_validators
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    milestone:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 60
+
+for_each:
+  # ── Step 3 (for_each parallel) ──────────────────────────────────────────────
+  - name: review_features
+    type: for_each
+    description: |
+      LLM reviews each completed feature's handoff for quality and correctness.
+      Parallel since each review is independent.
+    source: load_milestone_data.output.completed_features
+    as: feature
+    max_concurrent: 3
+    failure_mode: continue_on_error
+
+    agent:
+      name: review_one_feature
+      model: claude-sonnet-4.6
+      description: Review one feature's implementation quality
+      prompt: |
+        Review feature {{ feature.id }}: "{{ feature.description }}"
+
+        HANDOFF:
+        {{ feature.handoff | tojson }}
+
+        VALIDATION ASSERTIONS THIS FEATURE FULFILLS:
+        {% for vid in feature.fulfills %}{{ vid }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+        ARCHITECTURE:
+        {{ load_milestone_data.output.architecture_md }}
+
+        Review for:
+        1. Are the stated fulfills assertions actually satisfied by what was implemented?
+        2. Does the handoff show adequate test coverage (TDD — tests written before implementation)?
+        3. Are there obvious gaps in verification (interactive checks missing, commands not run)?
+        4. Any red flags in what_was_left_undone or discovered_issues?
+        5. Does the implementation scope align with the feature description?
+        6. Did the worker stay within architectural boundaries (correct directories, patterns)?
+        7. For any pre-existing issues noted: are they correctly classified as non-blocking?
+
+        SHARED STATE OBSERVATIONS:
+        While reviewing, also note any observations about shared mission state that belong
+        in specific places. Classify each as one of:
+        - services.yaml: operational commands/services that should be declared there
+        - library: factual patterns/quirks/env-vars discovered during implementation
+        - AGENTS.md: normative guidance the orchestrator should add for future workers
+        - skills: procedural improvements to the skill definition
+
+        Output a review as YAML:
+        ```yaml
+        feature_id: "{{ feature.id }}"
+        verdict: pass | fail | warning
+        issues:
+          - "<issue description>"
+        recommendations:
+          - "<recommendation>"
+        pre_existing_issues:
+          - "<Pre-existing: description>"  # only if handoff lists any
+        shared_state_observations:
+          - destination: services.yaml | library | AGENTS.md | skills
+            content: "<what should be added>"
+            rationale: "<why it belongs there>"
+        ```
+      output:
+        review_yaml:
+          type: string
+
+    routes:
+      - to: synthesize
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: run_validators
+    type: script
+    description: |
+      Run test, typecheck, and lint commands from services.yaml.
+      Captures exit codes and output. Does NOT pipe through head/tail.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, subprocess, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        services = yaml.load((mission_dir / "services.yaml").read_text())
+        working_dir_file = mission_dir / "working_directory.txt"
+        cwd = working_dir_file.read_text().strip() if working_dir_file.exists() else str(mission_dir)
+
+        commands = services.get("commands", {})
+        results = []
+        all_passed = True
+
+        for key in ("test", "typecheck", "lint"):
+            cmd = commands.get(key)
+            if not cmd:
+                continue
+            result = subprocess.run(
+                cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=300
+            )
+            passed = result.returncode == 0
+            if not passed:
+                all_passed = False
+            results.append({
+                "command": cmd,
+                "key": key,
+                "exit_code": result.returncode,
+                "output": (result.stdout + result.stderr)[-3000:],
+                "passed": passed,
+            })
+
+        print(json.dumps({"results": results, "all_passed": all_passed}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      results:    { type: array }
+      all_passed: { type: boolean }
+    routes:
+      - to: $end
+        when: "all_passed == false"
+      - to: load_milestone_data
+        when: "all_passed == true"
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: load_milestone_data
+    type: script
+    description: Collect all completed features in this milestone and their handoffs.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        yaml = YAML()
+        data = yaml.load((mission_dir / "features.yaml").read_text())
+
+        completed = [
+            f for f in data.get("features", [])
+            if f.get("milestone") == milestone and f.get("status") == "completed"
+            and not f.get("skill_name", "").startswith("scrutiny-")
+            and not f.get("skill_name", "").startswith("user-testing-")
+        ]
+
+        # Load handoffs
+        for f in completed:
+            safe_id = f["id"].replace(".", "-")
+            handoff_path = mission_dir / "handoffs" / f"{safe_id}.yaml"
+            if handoff_path.exists():
+                try:
+                    f["handoff"] = yaml.load(handoff_path.read_text())
+                except Exception:
+                    f["handoff"] = {}
+
+        def read(p): return p.read_text() if p.exists() else ""
+        print(json.dumps({
+            "completed_features": completed,
+            "mission_md":      read(mission_dir / "mission.md"),
+            "architecture_md": read(mission_dir / "architecture.md"),
+            "contract_md":     read(mission_dir / "validation-contract.md"),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      completed_features: { type: array }
+      mission_md:         { type: string }
+      architecture_md:    { type: string }
+      contract_md:        { type: string }
+    routes:
+      - to: review_features
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: synthesize
+    model: claude-sonnet-4.6
+    description: |
+      Aggregate all feature reviews + validator results into a pass/fail decision.
+    prompt: |
+      Synthesize the scrutiny results for milestone "{{ workflow.input.milestone }}".
+
+      VALIDATOR RESULTS:
+      {{ run_validators.output.results | tojson }}
+
+      FEATURE REVIEWS:
+      (collected from review_features above)
+
+      MISSION.MD (for context):
+      {{ load_milestone_data.output.mission_md }}
+
+      Decide overall pass/fail for this milestone scrutiny.
+
+      Also perform SHARED STATE TRIAGE:
+      Collect all shared_state_observations from the feature reviews above and triage
+      each observation using first-principles:
+      - services.yaml: does it describe a service with start/stop/port/healthcheck?
+      - library/: is it a factual discovery (env var, API quirk, path convention)?
+        Write to library/<area-slug>.md. NOT normative guidance.
+      - AGENTS.md: is it normative guidance the orchestrator wants workers to follow?
+        Append to the appropriate section.
+      - skills/<name>/SKILL.md: is it a procedural improvement to a specific skill?
+
+      Output YAML:
+      ```yaml
+      verdict: pass | fail
+      passed_features: []   # feature IDs that passed review
+      failed_features: []   # feature IDs that failed review (need re-implementation)
+      summary: "<2-4 sentence summary>"
+      issues:
+        - feature_id: "1.1"
+          issue: "<what's wrong>"
+          action: "reset_to_pending"
+      pre_existing_issues:
+        - "<Pre-existing: description>"  # deduplicated from all feature reviews
+      shared_state_updates:
+        - destination: library | AGENTS.md | skills
+          path_suffix: "<e.g. auth-patterns.md or AGENTS.md or skills/backend-worker/SKILL.md>"
+          content: "<text to write or append>"
+          operation: append | create
+      ```
+
+      A feature should be in failed_features only if:
+      - Its fulfills assertions are clearly not satisfied
+      - Critical verification was skipped (no tests added, no commands run)
+      - There is a breaking defect mentioned in the handoff
+
+      Warnings alone do not fail a feature.
+    output:
+      synthesis_yaml:
+        type: string
+    routes:
+      - to: handle_failures
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: handle_failures
+    type: script
+    description: |
+      Parse synthesis. Reset failed features to pending in features.yaml.
+      Write synthesis to validation/<milestone>/scrutiny/synthesis.yaml.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        synthesis_yaml = sys.argv[3]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        try:
+            synthesis = yaml.load(synthesis_yaml)
+        except Exception:
+            synthesis = {"verdict": "pass", "failed_features": [], "summary": "parse error"}
+
+        # Write synthesis artifact
+        out_dir = mission_dir / "validation" / milestone / "scrutiny"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / "synthesis.yaml", "w") as f:
+            yaml.dump(synthesis, f)
+
+        # Reset failed features to pending
+        failed = synthesis.get("failed_features", [])
+        if failed:
+            features_path = mission_dir / "features.yaml"
+            data = yaml.load(features_path.read_text())
+            for f in data.get("features", []):
+                if f.get("id") in failed:
+                    f["status"] = "pending"
+            with open(features_path, "w") as fp:
+                yaml.dump(data, fp)
+
+        verdict = synthesis.get("verdict", "pass")
+
+        # Apply shared-state updates (gap #10: triage framework)
+        shared_updates = synthesis.get("shared_state_updates", [])
+        for update in shared_updates:
+            dest = update.get("destination", "")
+            path_suffix = update.get("path_suffix", "")
+            content = update.get("content", "").strip()
+            operation = update.get("operation", "append")
+            if not path_suffix or not content:
+                continue
+            target_path = mission_dir / path_suffix
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if operation == "create" or not target_path.exists():
+                target_path.write_text(content + "\n")
+            else:  # append
+                existing = target_path.read_text()
+                # Avoid exact duplicates
+                if content[:80] not in existing:
+                    target_path.write_text(existing + "\n\n" + content + "\n")
+
+        # Update Known Pre-Existing Issues in AGENTS.md (gap #12)
+        pre_existing = synthesis.get("pre_existing_issues", [])
+        if pre_existing:
+            agents_path = mission_dir / "AGENTS.md"
+            if agents_path.exists():
+                agents_text = agents_path.read_text()
+                marker = "## Known Pre-Existing Issues"
+                if marker in agents_text:
+                    # Find where to insert (after the section header and any existing content)
+                    insert_pos = agents_text.index(marker) + len(marker)
+                    new_entries = "\n".join(f"- {issue}" for issue in pre_existing
+                                            if issue not in agents_text)
+                    if new_entries:
+                        agents_text = agents_text[:insert_pos] + "\n" + new_entries + agents_text[insert_pos:]
+                        agents_path.write_text(agents_text)
+                else:
+                    # Append section
+                    new_section = "\n\n## Known Pre-Existing Issues\n\n"
+                    new_section += "\n".join(f"- {issue}" for issue in pre_existing)
+                    agents_path.write_text(agents_text + new_section + "\n")
+
+        print(json.dumps({
+            "scrutiny_passed": verdict == "pass",
+            "failed_count": len(failed),
+            "synthesis_path": str(out_dir / "synthesis.yaml"),
+            "shared_updates_applied": len(shared_updates),
+            "pre_existing_added": len(pre_existing),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+      - "{{ synthesize.output.synthesis_yaml }}"
+    output:
+      scrutiny_passed:         { type: boolean }
+      failed_count:            { type: number }
+      synthesis_path:          { type: string }
+      shared_updates_applied:  { type: number }
+      pre_existing_added:      { type: number }
+    routes:
+      - to: $end
+
+output:
+  scrutiny_passed: "{{ handle_failures.output.scrutiny_passed | default(false) }}"
+  failed_count:    "{{ handle_failures.output.failed_count | default(0) }}"

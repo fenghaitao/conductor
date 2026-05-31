@@ -1,0 +1,142 @@
+# Mission Planning — Architecture Phase
+#
+# Writes architecture.md — the authoritative system design document.
+# Workers read this mandatory context before any implementation.
+#
+# Steps:
+#   1. check_existing  — skip if architecture.md already written
+#   2. write_architecture — LLM reads mission.md + codebase, writes design doc
+#   3. save_architecture — script writes to missionDir/architecture.md
+
+workflow:
+  name: mission-plan-architecture
+  description: Write architecture.md based on mission.md and codebase investigation
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        arch_file = mission_dir / "architecture.md"
+        working_dir = (mission_dir / "working_directory.txt").read_text().strip() \
+                      if (mission_dir / "working_directory.txt").exists() else ""
+        mission_md = (mission_dir / "mission.md").read_text() \
+                     if (mission_dir / "mission.md").exists() else ""
+        print(json.dumps({
+            "state": "done" if arch_file.exists() else "ready",
+            "mission_md": mission_md,
+            "working_directory": working_dir,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state:             { type: string }
+      mission_md:        { type: string }
+      working_directory: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: write_architecture
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: write_architecture
+    model: claude-sonnet-4.6
+    reasoning:
+      effort: high
+    description: |
+      Read the codebase and write a thorough architecture document.
+      This is the single authoritative design reference for all workers.
+    tools: null
+    prompt: |
+      You are writing architecture.md for a software mission.
+
+      MISSION:
+      {{ check_existing.output.mission_md }}
+
+      WORKING DIRECTORY: {{ check_existing.output.working_directory }}
+
+      Investigate the codebase thoroughly using your tools, then write architecture.md.
+
+      architecture.md must cover:
+
+      ## System Overview
+      What the system does and how the pieces fit together.
+
+      ## Directory Structure
+      Key directories and their purpose. Annotate existing vs. new.
+
+      ## Data Models
+      Core entities, their fields, and relationships.
+
+      ## API / Interface Layer
+      Endpoints, their inputs/outputs, and auth requirements.
+
+      ## Service Layer
+      Business logic modules, their responsibilities, and interactions.
+
+      ## Infrastructure
+      Services (DB, cache, queues), ports, external integrations.
+
+      ## Frontend Architecture (if applicable)
+      Component hierarchy, routing, state management approach.
+
+      ## Key Technical Decisions
+      Framework choices, patterns used, and why.
+
+      ## Integration Points
+      How the new code connects to existing code (for brownfield projects).
+
+      ## Worker Boundaries
+      Which worker type owns which part of the codebase.
+      Clear lines prevent workers from stepping on each other.
+
+      Be precise and specific — this document is what workers read to understand
+      where to add code and how to integrate with existing components.
+    output:
+      content:
+        type: string
+        description: Complete architecture.md content
+    routes:
+      - to: save_architecture
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: save_architecture
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2]
+        path = mission_dir / "architecture.md"
+        path.write_text(content)
+        print(json.dumps({"path": str(path), "size": len(content)}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ write_architecture.output.content }}"
+    output:
+      path: { type: string }
+      size: { type: number }
+    routes:
+      - to: $end
+
+output:
+  architecture_path: "{{ save_architecture.output.path | default('') }}"

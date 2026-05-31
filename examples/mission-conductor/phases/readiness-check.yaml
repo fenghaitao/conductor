@@ -1,0 +1,274 @@
+# Mission Readiness Check
+#
+# Mandatory pre-execution gate. Actively verifies all dependencies before the
+# architecture phase locks in a tech stack choice.
+#
+# Two active checks (RUNS REAL COMMANDS — not just config reads):
+#   1. Dependency readiness  — packages, external APIs, credentials, CLI tools
+#   2. Validation readiness  — test toolchain, dev server startup, browser automation
+#
+# Also measures system resources and writes readiness-report.yaml so that
+# user-testing-phase.yaml can set max_concurrent correctly (gap #8).
+#
+# On blockers → human gate for user to resolve, then retry.
+# Idempotent: if readiness-report.yaml exists and has_blockers == false, skip.
+
+workflow:
+  name: mission-readiness-check
+  description: Actively verify dependency and validation readiness before architecture
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider: copilot
+    default_model: claude-sonnet-4.6
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 30
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    description: Skip if readiness-report.yaml already exists with no blockers.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        report = mission_dir / "readiness-report.yaml"
+        if report.exists():
+            from ruamel.yaml import YAML
+            yaml = YAML()
+            try:
+                data = yaml.load(report.read_text())
+                if not data.get("has_blockers", True):
+                    print(json.dumps({"state": "done"}))
+                    sys.exit(0)
+            except Exception:
+                pass
+        print(json.dumps({"state": "ready"}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: load_context
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: load_context
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        def read(p): return p.read_text() if p.exists() else ""
+        wd = read(mission_dir / "working_directory.txt").strip()
+        print(json.dumps({
+            "mission_md":        read(mission_dir / "mission.md"),
+            "working_directory": wd,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      mission_md:        { type: string }
+      working_directory: { type: string }
+    routes:
+      - to: verify_readiness
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: verify_readiness
+    model: claude-sonnet-4.6
+    description: |
+      ACTIVELY run commands to verify dependency + validation readiness.
+      This step MUST run real commands — not just inspect config files.
+    tools: null
+    prompt: |
+      You are performing a Mission Readiness Check before execution begins.
+      CRITICAL: Run REAL commands — do not assume anything works without testing it.
+
+      WORKING DIRECTORY: {{ load_context.output.working_directory }}
+      missionDir: {{ workflow.input.mission_dir }}
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ═══════════════════════════════════════════════
+      PART 1: DEPENDENCY READINESS
+      ═══════════════════════════════════════════════
+      For each dependency the mission references, actively verify:
+
+      1. **Package managers**: Try installing (e.g. `pip install -r requirements.txt`,
+         `npm install`, `uv sync`, `go mod download`). Capture exit code.
+
+      2. **External APIs/services**: Make a real test request with actual credentials
+         (e.g. `curl -H "Authorization: Bearer $TOKEN" https://api.example.com/health`).
+         Verify required env vars are set: `echo "${VAR:-MISSING}"`.
+         Do NOT reveal credential values — just confirm they exist and are non-empty.
+
+      3. **CLI tools**: Run `which <tool> && <tool> --version` for each required tool.
+         Record exact version to surface compatibility issues early.
+
+      4. **Dev dependencies**: Confirm any code generation, migration, or seed tools work.
+
+      ═══════════════════════════════════════════════
+      PART 2: VALIDATION READINESS
+      ═══════════════════════════════════════════════
+      Verify the validation toolchain will work at milestone time:
+
+      1. **Test runner**: Try `pytest --collect-only`, `jest --listTests`,
+         `go test -list .`, `cargo test -- --list`, etc. Record how many tests found.
+
+      2. **Dev server**: Attempt to start the dev server, confirm it binds to its port
+         (try: `curl -s http://localhost:<PORT>/health`), then stop it cleanly using the
+         declared stop command. Record startup time in seconds.
+
+      3. **Browser automation** (if mission uses web UI validation):
+         Confirm playwright/puppeteer is installed: `playwright --version` or
+         `node -e "require('playwright')"`. Try launching headless: brief smoke test.
+
+      4. **Typecheck + lint**: Run `mypy --version`, `tsc --version`, etc.
+
+      ═══════════════════════════════════════════════
+      PART 3: RESOURCE ASSESSMENT
+      ═══════════════════════════════════════════════
+      Run these to measure available system resources:
+        free -m 2>/dev/null | awk '/^Mem:/{print $7}' || vm_stat 2>/dev/null | head -5
+        nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null
+
+      Then recommend max_concurrent for user-testing validators (1–5):
+      - Browser-heavy validations: max 1 per 2 GB available RAM, max 3
+      - API/CLI validations: min(cpu_count / 2, 4), at least 1
+      - Conservative default if resources unknown: 2
+
+      ═══════════════════════════════════════════════
+      OUTPUT
+      ═══════════════════════════════════════════════
+      ```yaml
+      blockers:
+        - category: packages | api | credentials | tools | test_runner | dev_server
+          description: "<what failed and exact error output>"
+          resolution_hint: "<specific command user can run to fix this>"
+      warnings:
+        - "<non-blocking observation>"
+      resource_assessment:
+        available_memory_mb: <number or 0 if unknown>
+        cpu_count: <number or 0 if unknown>
+        dev_server_startup_seconds: <number or null>
+        recommended_max_concurrent: <1-5>
+        rationale: "<one sentence explaining the number>"
+      all_clear: true | false
+      ```
+
+      all_clear must be false if blockers is non-empty.
+    output:
+      check_yaml:
+        type: string
+    routes:
+      - to: save_report
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: save_report
+    type: script
+    description: Parse verification output and write readiness-report.yaml.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        check_yaml = sys.argv[2]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        try:
+            check = yaml.load(check_yaml)
+        except Exception:
+            check = {
+                "all_clear": False,
+                "blockers": [{"category": "parse_error",
+                               "description": "Could not parse readiness check output",
+                               "resolution_hint": "Re-run the readiness check"}],
+                "resource_assessment": {"recommended_max_concurrent": 2},
+            }
+
+        blockers = check.get("blockers", [])
+        has_blockers = len(blockers) > 0 and not check.get("all_clear", True)
+        rec = check.get("resource_assessment", {}).get("recommended_max_concurrent", 2)
+
+        report = {
+            "has_blockers": has_blockers,
+            "blockers": blockers,
+            "warnings": check.get("warnings", []),
+            "resource_assessment": check.get("resource_assessment", {}),
+        }
+
+        report_path = mission_dir / "readiness-report.yaml"
+        with open(report_path, "w") as f:
+            yaml.dump(report, f)
+
+        print(json.dumps({
+            "has_blockers": has_blockers,
+            "blocker_count": len(blockers),
+            "report_path": str(report_path),
+            "recommended_max_concurrent": rec,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ verify_readiness.output.check_yaml }}"
+    output:
+      has_blockers:               { type: boolean }
+      blocker_count:              { type: number }
+      report_path:                { type: string }
+      recommended_max_concurrent: { type: number }
+    routes:
+      - to: $end
+        when: "has_blockers == false"
+      - to: resolve_blockers
+        when: "has_blockers == true"
+
+  # ── Step 5 (conditional) ────────────────────────────────────────────────────
+  - name: resolve_blockers
+    type: human_gate
+    description: |
+      Present blockers to the user. Re-runs the full check after user resolves them.
+    prompt: |
+      ## Mission Readiness: {{ save_report.output.blocker_count }} Blocker(s) Found
+
+      The readiness check found issues that must be resolved before the mission proceeds.
+      Running with unresolved blockers risks mid-run failures that waste worker compute.
+
+      Full report: {{ save_report.output.report_path }}
+
+      **To resolve blockers:**
+      1. Open a terminal in the working directory
+      2. Follow the `resolution_hint` for each blocker in the report
+      3. Come back here and select **Retry**
+
+      Selecting **Skip** proceeds despite blockers — only do this if you have confirmed
+      the blockers do not affect this mission's specific features.
+    options:
+      - label: "Retry — all blockers resolved"
+        value: retry
+        route: verify_readiness
+      - label: "Skip — proceed despite blockers"
+        value: skip
+        route: $end
+
+output:
+  has_blockers:               "{{ save_report.output.has_blockers | default(false) }}"
+  recommended_max_concurrent: "{{ save_report.output.recommended_max_concurrent | default(2) }}"
+  report_path:                "{{ save_report.output.report_path | default('') }}"
