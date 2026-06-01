@@ -148,7 +148,7 @@ agents:
       After all milestones complete, scan handoffs for skill deviation feedback
       and apply suggested improvements to each skills/<type>/SKILL.md.
       Workers report skill deviations in the handoff's skill_feedback field.
-      This closes the skill improvement loop (gap #6).
+      This closes the skill improvement loop.
     command: python3
     args:
       - "-c"
@@ -227,6 +227,19 @@ agents:
       skills_updated: { type: array }
       feedback_count: { type: number }
     routes:
+      - to: orchestrator_review
+
+  # ── Orchestrator review (all milestones complete) ─────────────────────────
+  - name: orchestrator_review
+    type: workflow
+    description: |
+      Review all worker handoff issues (return_to_orchestrator: true) and
+      any knowledge surfaced during the mission. Applies guidance updates
+      and optionally escalates unresolved issues to the user.
+    workflow: ./phases/orchestrator-review.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
       - to: $end
 
   # ── Scrutiny phase ────────────────────────────────────────────────────────
@@ -242,9 +255,9 @@ agents:
       milestone:   "{{ get_milestone.output.milestone }}"
     routes:
       - to: run_user_testing
-        when: "scrutiny_passed == true"
+        when: "scrutiny_passed == True"
       - to: get_milestone
-        when: "scrutiny_passed == false"
+        when: "scrutiny_passed == False"
 
   # ── User testing phase ─────────────────────────────────────────────────────
   - name: run_user_testing
@@ -253,16 +266,16 @@ agents:
       Test all pending VAL-* assertions for this milestone through real user surfaces.
       Updates validation-state.yaml with pass/fail results.
       Fails → fix features injected, loops back to feature_runner via get_milestone.
-      Passes → seal_milestone (gap #20), then prompt for mid-mission changes (gap #1).
+      Passes → seal_milestone, then prompt for mid-mission changes.
     workflow: ./phases/user-testing-phase.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
     routes:
       - to: seal_milestone
-        when: "testing_passed == true"
+        when: "testing_passed == True"
       - to: get_milestone
-        when: "testing_passed == false"
+        when: "testing_passed == False"
 
   # ── Seal milestone ─────────────────────────────────────────────────────────
   - name: seal_milestone
@@ -270,7 +283,7 @@ agents:
     description: |
       Write validation/<milestone>/sealed.yaml to mark this milestone as sealed.
       Once sealed, future scope changes target new milestones rather than reopening this one.
-      (Gap #20: milestone sealing concept)
+
     command: python3
     args:
       - "-c"
@@ -335,7 +348,7 @@ agents:
     description: |
       Optional mid-mission change gate at each milestone boundary.
       Gives the user a chance to update scope or guidance before the next milestone.
-      (Gap #1+#3: mid-mission user request handling)
+
     prompt: |
       ## Milestone {{ seal_milestone.output.milestone }} Complete and Sealed
 

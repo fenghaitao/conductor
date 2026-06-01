@@ -8,7 +8,7 @@
 #   2. Validation readiness  — test toolchain, dev server startup, browser automation
 #
 # Also measures system resources and writes readiness-report.yaml so that
-# user-testing-phase.yaml can set max_concurrent correctly (gap #8).
+# user-testing-phase.yaml can set max_concurrent correctly.
 #
 # On blockers → human gate for user to resolve, then retry.
 # Idempotent: if readiness-report.yaml exists and has_blockers == false, skip.
@@ -207,7 +207,7 @@ agents:
             }
 
         blockers = check.get("blockers", [])
-        has_blockers = len(blockers) > 0 and not check.get("all_clear", True)
+        has_blockers = len(blockers) > 0 and not check.get("all_clear", False)
         rec = check.get("resource_assessment", {}).get("recommended_max_concurrent", 2)
 
         report = {
@@ -236,9 +236,9 @@ agents:
       recommended_max_concurrent: { type: number }
     routes:
       - to: $end
-        when: "has_blockers == false"
+        when: "has_blockers == False"
       - to: resolve_blockers
-        when: "has_blockers == true"
+        when: "has_blockers == True"
 
   # ── Step 5 (conditional) ────────────────────────────────────────────────────
   - name: resolve_blockers
@@ -269,6 +269,6 @@ agents:
         route: $end
 
 output:
-  has_blockers:               "{{ save_report.output.has_blockers | default(false) }}"
-  recommended_max_concurrent: "{{ save_report.output.recommended_max_concurrent | default(2) }}"
-  report_path:                "{{ save_report.output.report_path | default('') }}"
+  has_blockers:               "{{ save_report.output.has_blockers if save_report is defined else false }}"
+  recommended_max_concurrent: "{{ save_report.output.recommended_max_concurrent if save_report is defined else 2 }}"
+  report_path:                "{{ save_report.output.report_path if save_report is defined else '' }}"

@@ -185,5 +185,5 @@ agents:
       - to: $end
 
 output:
-  accepted: "{{ user_review.output.response == 'Accept — proceed with this plan' }}"
-  mission_dir: "{{ save_mission.output.mission_dir | default(check_existing.output.mission_dir) }}"
+  accepted: "{{ (user_review.output.selected == 'accepted') if user_review is defined else true }}"
+  mission_dir: "{{ save_mission.output.mission_dir if save_mission is defined else check_existing.output.mission_dir }}"

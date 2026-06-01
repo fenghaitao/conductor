@@ -41,6 +41,7 @@ agents:
       - "-c"
       - |
         import json, pathlib, re, sys
+        from collections import Counter
         from ruamel.yaml import YAML
 
         mission_dir = pathlib.Path(sys.argv[1])
@@ -63,7 +64,8 @@ agents:
             all_fulfills.extend(f.get("fulfills", []))
 
         claimed = set(all_fulfills)
-        duplicates = [id_ for id_ in all_fulfills if all_fulfills.count(id_) > 1]
+        _counts = Counter(all_fulfills)
+        duplicates = sorted(id_ for id_, cnt in _counts.items() if cnt > 1)
         orphans = contract_ids - claimed
         unknown = claimed - contract_ids
 
@@ -71,7 +73,7 @@ agents:
         if orphans:
             issues.append(f"Orphaned (in contract but no feature fulfills them): {sorted(orphans)}")
         if duplicates:
-            issues.append(f"Duplicated (claimed by more than one feature): {sorted(set(duplicates))}")
+            issues.append(f"Duplicated (claimed by more than one feature): {duplicates}")
         if unknown:
             issues.append(f"Unknown (in fulfills but not in contract): {sorted(unknown)}")
 
@@ -193,18 +195,21 @@ agents:
             if not isinstance(data, dict) or "features" not in data:
                 raise ValueError("Missing 'features' key")
         except Exception as e:
-            print(json.dumps({"error": str(e), "path": ""}))
-            sys.exit(1)
+            print(json.dumps({"path": "", "count": 0, "error": str(e)}))
+            sys.exit(0)
 
         path = mission_dir / "features.yaml"
         path.write_text(content)
-        print(json.dumps({"path": str(path), "count": len(data["features"])}))
+        feature_list = data.get("features") or []
+        print(json.dumps({"path": str(path), "count": len(feature_list)}))
       - "{{ workflow.input.mission_dir }}"
       - "{{ generate_features.output.features_yaml }}"
     output:
       path:  { type: string }
       count: { type: number }
     routes:
+      - to: generate_features
+        when: "count == 0"
       - to: validate_coverage
 
   # ── Step 5 ──────────────────────────────────────────────────────────────────
@@ -218,6 +223,7 @@ agents:
       - "-c"
       - |
         import json, pathlib, re, sys
+        from collections import Counter
         from ruamel.yaml import YAML
 
         mission_dir = pathlib.Path(sys.argv[1])
@@ -231,7 +237,8 @@ agents:
             all_fulfills.extend(f.get("fulfills", []))
 
         claimed = set(all_fulfills)
-        duplicates = set(id_ for id_ in all_fulfills if all_fulfills.count(id_) > 1)
+        _counts = Counter(all_fulfills)
+        duplicates = set(id_ for id_, cnt in _counts.items() if cnt > 1)
         orphans = contract_ids - claimed
         unknown = claimed - contract_ids
 
@@ -263,6 +270,6 @@ agents:
         when: "state == 'fail'"
 
 output:
-  features_path:     "{{ save_features.output.path | default('') }}"
-  feature_count:     "{{ save_features.output.count | default(0) }}"
-  coverage_verified: "{{ validate_coverage.output.state == 'pass' }}"
+  features_path:     "{{ save_features.output.path if save_features is defined else '' }}"
+  feature_count:     "{{ save_features.output.count if save_features is defined else 0 }}"
+  coverage_verified: "{{ (validate_coverage.output.state == 'pass') if validate_coverage is defined else true }}"

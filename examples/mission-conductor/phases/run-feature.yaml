@@ -115,7 +115,7 @@ agents:
 
         assertions_context = "\n".join(relevant_assertions) if relevant_assertions else contract_md[:2000]
 
-        # Library knowledge base — factual patterns discovered during this mission (gap #7)
+        # Library knowledge base — factual patterns discovered during this mission
         library_dir = mission_dir / "library"
         library_context = ""
         if library_dir.exists():
@@ -126,7 +126,7 @@ agents:
                     parts.append(f"### {lf.relative_to(library_dir)}\n{lf.read_text()}")
                 library_context = "\n\n".join(parts)
 
-        # Validate services.yaml schema before passing to worker (gap #9)
+        # Validate services.yaml schema before passing to worker
         services_ok = True
         services_warn = ""
         if services_yaml:
@@ -266,7 +266,7 @@ agents:
       correct service start/stop commands from the above.
       {% endif %}
 
-      SERVICE RULES (gap #9):
+      SERVICE RULES:
       - You MUST use ONLY services defined in services.yaml above
       - Start services using ONLY the start command shown (with its hardcoded port)
       - Stop services using ONLY the stop command shown (with its hardcoded port)
@@ -294,13 +294,7 @@ agents:
       {% endif %}
 
       ═══════════════════════════════════════════════════════════
-      LIBRARY (factual patterns discovered during this mission)
-      ═══════════════════════════════════════════════════════════
-      {% if load_context.output.library_context %}
-      {{ load_context.output.library_context }}
-      {% else %}
-      (empty — no library entries yet; add discoveries to missionDir/library/ as .md files)
-      {% endif %}
+      MILESTONE SIBLINGS
       ═══════════════════════════════════════════════════════════
       {{ load_context.output.sibling_features }}
 
@@ -327,19 +321,19 @@ agents:
       ═══════════════════════════════════════════════════════════
       Follow the Work Procedure in your skill above.
 
-      BINDING TECHNOLOGY CHOICES (gap #11):
+      BINDING TECHNOLOGY CHOICES:
       Any packages, libraries, frameworks, or tools specified in AGENTS.md above are BINDING.
       You MUST NOT substitute alternatives, even if they seem easier or are already installed.
       If a specified dependency is unavailable, set return_to_orchestrator: true immediately.
       Do not silently use Flask when FastAPI was specified; Pydantic when dataclasses were
       specified; or any other substitution. Binding choices are there for architectural reasons.
 
-      VERIFICATION HYGIENE (gap #18):
+      VERIFICATION HYGIENE:
       - NEVER pipe test output through `| tail`, `| head`, or `| grep` — these mask exit codes
       - If you need less output, run a narrower test target (e.g. `pytest tests/test_auth.py`)
       - Always record the actual exit code of each validator command in your handoff
 
-      PROCESS CLEANUP (gap #16):
+      PROCESS CLEANUP:
       When your implementation is done, stop ALL test runners, dev servers, and browser
       instances you started — by their declared stop command (services.yaml) or by PID.
       NEVER use `pkill <name>` — use the stop command with the hardcoded port number.
@@ -471,7 +465,7 @@ agents:
         with open(path, "w") as fp:
             yaml.dump(data, fp)
 
-        print(json.dumps({"feature_id": feature_id, "status": "completed"}))
+        print(json.dumps({"feature_id": feature_id, "status": "failed" if return_to_orch else "completed"}))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.feature_id }}"
       - "{{ save_handoff.output.return_to_orchestrator }}"

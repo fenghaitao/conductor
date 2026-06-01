@@ -222,7 +222,7 @@ agents:
         work_dir = mission_dir / "contract-work"
         sections = []
 
-        for draft in sorted(work_dir.glob("*.md")):
+        for draft in sorted(f for f in work_dir.glob("*.md") if not f.name.startswith("_")):
             sections.append(draft.read_text())
 
         sections.append(cross_area)
@@ -256,7 +256,7 @@ agents:
       {{ load_context.output.mission_md }}
 
       Check for and fix:
-      1. **IMPLEMENTATION-DETAIL LEAKAGE (gap #19 — reject any of these):**
+      1. **IMPLEMENTATION-DETAIL LEAKAGE:**
          - Function/method names: "the authenticate() function returns..."
          - Class/module names: "UserRepository fetches from..."
          - Database table/column names: "the users table has a password_hash column..."
@@ -337,5 +337,5 @@ agents:
       - to: $end
 
 output:
-  contract_path:    "{{ finalize_contract.output.path | default('') }}"
-  assertion_count:  "{{ write_validation_state.output.assertion_count | default(0) }}"
+  contract_path:    "{{ finalize_contract.output.path if finalize_contract is defined else '' }}"
+  assertion_count:  "{{ write_validation_state.output.assertion_count if write_validation_state is defined else 0 }}"

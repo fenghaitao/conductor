@@ -5,17 +5,15 @@
 # Updates validation-state.yaml with pass/fail results.
 # Failed assertions → fix features injected into features.yaml.
 #
-# Gap #4: E2E validation is the DEFAULT. Mocks are a conscious opt-out
+# E2E validation is the DEFAULT. Mocks are a conscious opt-out
 # requiring explicit user approval — not a silent fallback.
-# Gap #8: Resource-aware concurrency — reads readiness-report.yaml
-# (written by readiness-check.yaml) to set max_concurrent safely.
+# Concurrency is set to a conservative fixed limit.
 #
 # Steps:
 #   1. collect_assertions  — script: get pending assertions for this milestone
-#   2. check_resources     — script: read readiness-report.yaml for concurrency limit
-#   3. test_assertions     — for_each (parallel groups): LLM tests each assertion group
-#   4. update_state        — script: write pass/fail to validation-state.yaml
-#   5. inject_fix_features — script: for failed assertions, add fix features to features.yaml
+#   2. test_assertions     — for_each (parallel groups): LLM tests each assertion group
+#   3. update_state        — script: write pass/fail to validation-state.yaml
+#   4. inject_fix_features — script: for failed assertions, add fix features to features.yaml
 
 workflow:
   name: mission-user-testing-phase
@@ -48,7 +46,7 @@ for_each:
     description: |
       Test each assertion group concurrently. Each group targets one contract area.
       Uses the tool specified in the assertion (agent-browser, curl, exec).
-      Concurrency limit comes from readiness-report.yaml (gap #8).
+      Concurrency is set to a conservative fixed limit.
     source: collect_assertions.output.assertion_groups
     as: group
     max_concurrent: 2
@@ -229,41 +227,9 @@ agents:
     routes:
       - to: $end
         when: "state == 'all_done'"
-      - to: check_resources
-
-  # ── Step 2 ──────────────────────────────────────────────────────────────────
-  - name: check_resources
-    type: script
-    description: |
-      Read readiness-report.yaml (written by readiness-check.yaml) to get the
-      resource-calibrated max_concurrent for this machine. Falls back to 2.
-      (Gap #8: resource cost classification)
-    command: python3
-    args:
-      - "-c"
-      - |
-        import json, pathlib, sys
-        from ruamel.yaml import YAML
-        mission_dir = pathlib.Path(sys.argv[1])
-        report_path = mission_dir / "readiness-report.yaml"
-        max_concurrent = 2  # safe default
-        if report_path.exists():
-            try:
-                yaml = YAML()
-                report = yaml.load(report_path.read_text())
-                rec = report.get("resource_assessment", {}).get("recommended_max_concurrent")
-                if isinstance(rec, int) and 1 <= rec <= 5:
-                    max_concurrent = rec
-            except Exception:
-                pass
-        print(json.dumps({"max_concurrent": max_concurrent}))
-      - "{{ workflow.input.mission_dir }}"
-    output:
-      max_concurrent: { type: number }
-    routes:
       - to: test_assertions
 
-  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: update_state
     type: script
     description: |
@@ -286,19 +252,16 @@ agents:
         state_path = mission_dir / "validation-state.yaml"
         state = yaml.load(state_path.read_text()) if state_path.exists() else {}
 
-        # Read all group result files from the for_each outputs
-        # (We read the context accumulated from test_assertions)
-        # Since results are in agent outputs, we parse from the context
-        # stored in the for_each — handled by collecting from handoff dir
-        results_dir = mission_dir / "validation" / milestone / "user-testing"
-        results_dir.mkdir(parents=True, exist_ok=True)
-
         passed, failed, blocked = [], [], []
 
-        # Scan handoffs directory for testing results written by test_one_group
-        for result_file in (mission_dir / "validation" / milestone / "user-testing").glob("*.yaml"):
+        # Parse results from for_each context outputs
+        outputs = json.loads(sys.argv[3]) if sys.argv[3] else []
+        for item in (outputs if isinstance(outputs, list) else []):
+            results_yaml_str = item.get("results_yaml", "")
+            if not results_yaml_str:
+                continue
             try:
-                data = yaml.load(result_file.read_text())
+                data = yaml.load(results_yaml_str)
                 for r in data.get("results", []):
                     vid = r.get("id", "")
                     status = r.get("status", "blocked")
@@ -328,6 +291,7 @@ agents:
         }))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
+      - "{{ test_assertions.outputs | tojson }}"
     output:
       passed:         { type: array }
       failed:         { type: array }
@@ -335,9 +299,9 @@ agents:
       testing_passed: { type: boolean }
     routes:
       - to: $end
-        when: "testing_passed == true"
+        when: "testing_passed == True"
       - to: inject_fix_features
-        when: "testing_passed == false"
+        when: "testing_passed == False"
 
   # ── Step 5 ──────────────────────────────────────────────────────────────────
   - name: inject_fix_features
@@ -371,9 +335,10 @@ agents:
             f["id"] for f in features
             if f.get("milestone") == milestone and "." in str(f.get("id", ""))
         ]
-        if milestone_ids:
-            ms_num = str(milestone_ids[0]).split(".")[0]
-            max_sub = max(int(str(fid).split(".")[1]) for fid in milestone_ids)
+        numeric_ids = [fid for fid in milestone_ids if str(fid).split(".")[1].isdigit()]
+        if numeric_ids:
+            ms_num = str(numeric_ids[0]).split(".")[0]
+            max_sub = max(int(str(fid).split(".")[1]) for fid in numeric_ids)
         else:
             ms_num = "99"
             max_sub = 0
@@ -424,6 +389,6 @@ agents:
       - to: $end
 
 output:
-  testing_passed: "{{ update_state.output.testing_passed | default(true) }}"
-  passed_count:   "{{ update_state.output.passed | length | default(0) }}"
-  failed_count:   "{{ update_state.output.failed | length | default(0) }}"
+  testing_passed: "{{ update_state.output.testing_passed if update_state is defined else true }}"
+  passed_count:   "{{ update_state.output.passed | length if update_state is defined else 0 }}"
+  failed_count:   "{{ update_state.output.failed | length if update_state is defined else 0 }}"

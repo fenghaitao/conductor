@@ -153,10 +153,69 @@ agents:
       results:    { type: array }
       all_passed: { type: boolean }
     routes:
-      - to: $end
-        when: "all_passed == false"
+      - to: fail_milestone
+        when: "all_passed == False"
       - to: load_milestone_data
-        when: "all_passed == true"
+        when: "all_passed == True"
+
+  # ── Step 1b (validator failure path) ────────────────────────────────────────
+  - name: fail_milestone
+    type: script
+    description: |
+      Called when programmatic validators fail. Resets all completed milestone
+      features back to pending so the run loop can retry them.
+      Writes a synthesis artifact for audit purposes.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import datetime, json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        # Reset all completed features in this milestone to pending
+        features_path = mission_dir / "features.yaml"
+        data = yaml.load(features_path.read_text())
+        reset = []
+        for f in data.get("features", []):
+            if f.get("milestone") == milestone and f.get("status") == "completed":
+                f["status"] = "pending"
+                reset.append(str(f.get("id", "")))
+        with open(features_path, "w") as fp:
+            yaml.dump(data, fp)
+
+        # Write synthesis artifact for audit trail
+        out_dir = mission_dir / "validation" / milestone / "scrutiny"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        synthesis = {
+            "verdict": "fail",
+            "passed_features": [],
+            "failed_features": reset,
+            "summary": "Programmatic validators failed (tests/typecheck/lint). All milestone features reset to pending.",
+            "issues": [{"feature_id": fid, "issue": "Validator failure", "action": "reset_to_pending"} for fid in reset],
+            "pre_existing_issues": [],
+        }
+        with open(out_dir / "synthesis.yaml", "w") as f:
+            yaml.dump(synthesis, f)
+
+        print(json.dumps({
+            "scrutiny_passed": False,
+            "failed_count": len(reset),
+            "reset_features": reset,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      scrutiny_passed: { type: boolean }
+      failed_count:    { type: number }
+      reset_features:  { type: array }
+    routes:
+      - to: $end
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: load_milestone_data
@@ -312,7 +371,7 @@ agents:
 
         verdict = synthesis.get("verdict", "pass")
 
-        # Apply shared-state updates (gap #10: triage framework)
+        # Apply shared-state updates
         shared_updates = synthesis.get("shared_state_updates", [])
         for update in shared_updates:
             dest = update.get("destination", "")
@@ -331,7 +390,7 @@ agents:
                 if content[:80] not in existing:
                     target_path.write_text(existing + "\n\n" + content + "\n")
 
-        # Update Known Pre-Existing Issues in AGENTS.md (gap #12)
+        # Update Known Pre-Existing Issues in AGENTS.md
         pre_existing = synthesis.get("pre_existing_issues", [])
         if pre_existing:
             agents_path = mission_dir / "AGENTS.md"
@@ -372,5 +431,5 @@ agents:
       - to: $end
 
 output:
-  scrutiny_passed: "{{ handle_failures.output.scrutiny_passed | default(false) }}"
-  failed_count:    "{{ handle_failures.output.failed_count | default(0) }}"
+  scrutiny_passed: "{{ handle_failures.output.scrutiny_passed if handle_failures is defined else false }}"
+  failed_count:    "{{ handle_failures.output.failed_count if handle_failures is defined else 0 }}"
