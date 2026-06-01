@@ -122,7 +122,7 @@ agents:
       - **escalate**: This requires a user decision (blocked on credentials, scope change,
         fundamental architecture conflict, etc.). Summarize what the user needs to decide.
 
-      KNOWLEDGE TRIAGE FRAMEWORK (gap #10):
+      KNOWLEDGE TRIAGE FRAMEWORK:
       Also identify any knowledge surfaced in the issues that belongs in a specific place.
       Use first-principles to route it correctly:
       - **services.yaml**: operational facts with start/stop/port/healthcheck
@@ -222,7 +222,7 @@ agents:
         with open(features_path, "w") as fp:
             yaml.dump(features_data, fp)
 
-        # Apply knowledge updates (gap #10: triage framework)
+        # Apply knowledge updates
         knowledge_updates = triage.get("knowledge_updates", [])
         knowledge_applied = 0
         for ku in knowledge_updates:
@@ -256,9 +256,9 @@ agents:
       knowledge_applied:   { type: number }
     routes:
       - to: $end
-        when: "needs_escalation == false"
+        when: "needs_escalation == False"
       - to: user_escalation
-        when: "needs_escalation == true"
+        when: "needs_escalation == True"
 
   # ── Step 4 (conditional) ────────────────────────────────────────────────────
   - name: user_escalation
@@ -282,4 +282,4 @@ agents:
 
 output:
   review_complete:    "true"
-  needs_escalation:   "{{ apply_updates.output.needs_escalation | default(false) }}"
+  needs_escalation:   "{{ apply_updates.output.needs_escalation if apply_updates is defined else false }}"

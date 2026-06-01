@@ -116,7 +116,7 @@ agents:
       Run lint: <lint command>
       Fix all failures before proceeding.
 
-      SCOPING GUIDANCE (gap #17): For each validator, provide the narrowest command
+      SCOPING GUIDANCE: For each validator, provide the narrowest command
       that covers the changed area. Full-suite runs are slow; workers should run the
       narrowest target that proves their feature is correct:
       - pytest: `pytest tests/test_<area>.py -v`
@@ -212,4 +212,4 @@ agents:
       - to: $end
 
 output:
-  skill_path: "{{ save_skill.output.path | default(check_existing.output.skill_path) }}"
+  skill_path: "{{ save_skill.output.path if save_skill is defined else check_existing.output.skill_path }}"

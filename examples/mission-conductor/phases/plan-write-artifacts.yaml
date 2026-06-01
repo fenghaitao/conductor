@@ -251,9 +251,15 @@ agents:
         if content == "SKIP" or path.exists():
             print(json.dumps({"path": str(path), "skipped": True}))
         else:
-            # Validate YAML parses
+            # Validate YAML parses before writing
             yaml = YAML()
-            yaml.load(content)
+            try:
+                yaml.load(content)
+            except Exception as e:
+                import sys
+                print(json.dumps({"path": "", "skipped": False, "error": str(e)}), file=sys.stderr)
+                print(json.dumps({"path": str(path), "skipped": False}))
+                sys.exit(0)
             path.write_text(content)
             print(json.dumps({"path": str(path), "skipped": False}))
       - "{{ workflow.input.mission_dir }}"

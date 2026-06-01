@@ -80,9 +80,9 @@ agents:
       planning_summary: "{{ understand_phase.output.planning_summary }}"
     routes:
       - to: readiness_check_phase
-        when: "accepted == true"
+        when: "accepted == True"
       - to: understand_phase
-        when: "accepted == false"
+        when: "accepted == False"
 
   # ── Stage 3: Readiness Check ─────────────────────────────────────────────────
   - name: readiness_check_phase

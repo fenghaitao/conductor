@@ -139,4 +139,4 @@ agents:
       - to: $end
 
 output:
-  architecture_path: "{{ save_architecture.output.path | default('') }}"
+  architecture_path: "{{ save_architecture.output.path if save_architecture is defined else '' }}"

@@ -108,7 +108,7 @@ agents:
 
       Rules:
       - Use a SHORT area prefix (e.g., AUTH, CATALOG, CHECKOUT, API, UI) — max 6 chars, all caps
-      - **BLACK-BOX ONLY (gap #19)**: Assertions MUST be from the user's perspective.
+      - **BLACK-BOX ONLY**: Assertions MUST be from the user's perspective.
         NEVER reference: function names, class names, module paths, variable names,
         database table names, internal state, or any implementation detail.
         A validator must be able to determine pass/fail without reading any source code.
@@ -156,4 +156,4 @@ agents:
       - to: $end
 
 output:
-  draft_path: "{{ save_draft.output.path | default(check_existing.output.draft_path) }}"
+  draft_path: "{{ save_draft.output.path if save_draft is defined else check_existing.output.draft_path }}"
