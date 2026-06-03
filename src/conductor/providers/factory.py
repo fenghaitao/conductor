@@ -6,7 +6,7 @@ the appropriate AgentProvider based on the requested provider type.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from conductor.exceptions import ProviderError
 from conductor.providers.base import AgentProvider
@@ -14,6 +14,9 @@ from conductor.providers.claude import ANTHROPIC_SDK_AVAILABLE, ClaudeProvider
 from conductor.providers.copilot import CopilotProvider, IdleRecoveryConfig
 from conductor.providers.pydantic_deep import PYDANTIC_DEEP_AVAILABLE, PydanticDeepProvider
 from conductor.providers.reasoning import ReasoningEffort
+
+if TYPE_CHECKING:
+    from conductor.config.schema import ByokDef
 
 
 async def create_provider(
@@ -28,6 +31,7 @@ async def create_provider(
     max_agent_iterations: int | None = None,
     default_reasoning_effort: ReasoningEffort | None = None,
     skill_directories: list[str] | None = None,
+    byok: ByokDef | None = None,
 ) -> AgentProvider:
     """Factory function to create the appropriate provider.
 
@@ -54,6 +58,9 @@ async def create_provider(
         skill_directories: Directories to load skills from for agent sessions
             (Copilot provider only; ignored for other providers).  Paths must
             be absolute—resolve relative paths before calling this function.
+        byok: BYOK (Bring Your Own Key) configuration dict or object with
+            optional keys: ``model``, ``base_url``, ``api_key``, ``type``.
+            (Copilot provider only; ignored for other providers).
 
     Returns:
         Configured AgentProvider instance.
@@ -81,6 +88,7 @@ async def create_provider(
                 max_agent_iterations=max_agent_iterations,
                 default_reasoning_effort=default_reasoning_effort,
                 skill_directories=skill_directories,
+                byok=byok,
             )
         case "openai-agents":
             raise ProviderError(
@@ -169,6 +177,7 @@ class ProviderFactory:
         max_session_seconds = getattr(runtime_config, "max_session_seconds", None)
         max_agent_iterations = getattr(runtime_config, "max_agent_iterations", None)
         default_reasoning_effort = getattr(runtime_config, "default_reasoning_effort", None)
+        byok = getattr(runtime_config, "byok", None)
 
         return await create_provider(
             provider_type=provider_type,
@@ -180,4 +189,5 @@ class ProviderFactory:
             max_session_seconds=max_session_seconds,
             max_agent_iterations=max_agent_iterations,
             default_reasoning_effort=default_reasoning_effort,
+            byok=byok,
         )

@@ -27,7 +27,7 @@ from conductor.providers.base import AgentOutput, AgentProvider, EventCallback, 
 from conductor.providers.reasoning import ReasoningEffort, resolve_reasoning_effort
 
 if TYPE_CHECKING:
-    from conductor.config.schema import AgentDef, OutputField
+    from conductor.config.schema import AgentDef, ByokDef, OutputField
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +240,7 @@ class CopilotProvider(AgentProvider):
         max_agent_iterations: int | None = None,
         default_reasoning_effort: ReasoningEffort | None = None,
         skill_directories: list[str] | None = None,
+        byok: ByokDef | None = None,
     ) -> None:
         """Initialize the Copilot provider.
 
@@ -265,6 +266,10 @@ class CopilotProvider(AgentProvider):
                 session.  Each directory is scanned for sub-directories that
                 contain a ``SKILL.md`` file.  Paths must be absolute (resolve
                 relative paths before passing to the provider).
+            byok: BYOK (Bring Your Own Key) configuration dict or object with
+                optional keys: ``model``, ``base_url``, ``api_key``, ``type``.
+                When provided, the Copilot provider connects to a custom API
+                endpoint instead of the standard Copilot backend.
         """
         self._client: Any = None  # Will hold Copilot SDK client
         self._mock_handler = mock_handler
@@ -286,6 +291,7 @@ class CopilotProvider(AgentProvider):
         self._resume_session_ids: dict[str, str] = {}
         self._interrupted_session: Any = None
         self._abort_supported: bool | None = None
+        self._byok: ByokDef | None = byok
 
     def get_skill_directories(self) -> list[str]:
         """Return the current skill directories list."""
@@ -672,6 +678,17 @@ class CopilotProvider(AgentProvider):
             # Add skill directories if configured
             if self._skill_directories:
                 session_kwargs["skill_directories"] = self._skill_directories
+
+            # Add BYOK (Bring Your Own Key) configuration if provided.
+            # These fields allow connecting to a custom API endpoint instead of
+            # the standard Copilot backend.
+            if self._byok is not None:
+                session_kwargs["model"] = self._byok.model
+                session_kwargs["provider"] = {
+                    "type": self._byok.type,
+                    "base_url": self._byok.base_url,
+                    "api_key": self._byok.api_key,
+                }
 
             # Register an interactive stdin handler when the agent opts in.
             # The Copilot SDK triggers on_user_input_request when a skill calls
@@ -2054,6 +2071,15 @@ class CopilotProvider(AgentProvider):
                     effort,
                     dialog_kwargs["model"],
                 )
+
+            # Add BYOK configuration if provided (same as agent sessions)
+            if self._byok is not None:
+                dialog_kwargs["model"] = self._byok.model
+                dialog_kwargs["provider"] = {
+                    "type": self._byok.type,
+                    "base_url": self._byok.base_url,
+                    "api_key": self._byok.api_key,
+                }
 
             session = await self._client.create_session(**dialog_kwargs)
 

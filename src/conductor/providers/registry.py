@@ -124,6 +124,7 @@ class ProviderRegistry:
             max_agent_iterations=runtime.max_agent_iterations,
             default_reasoning_effort=runtime.default_reasoning_effort,
             skill_directories=self._skill_directories,
+            byok=runtime.byok,
         )
 
         # Pass stored resume session IDs to newly created providers

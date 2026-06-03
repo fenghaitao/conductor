@@ -848,6 +848,36 @@ class MCPServerDef(BaseModel):
         return self
 
 
+class ByokDef(BaseModel):
+    """BYOK (Bring Your Own Key) configuration for Copilot provider.
+
+    When configured, the Copilot provider connects to a custom API endpoint
+    instead of the standard Copilot backend. All fields are optional — BYOK
+    is only activated when the ``byok`` key is present in the runtime config.
+
+    Example::
+
+        runtime:
+          byok:
+            model: gpt-4o
+            base_url: https://api.openai.com/v1
+            api_key: sk-...
+            type: openai
+    """
+
+    model: str
+    """BYOK model name to use when connecting to the custom endpoint."""
+
+    base_url: str
+    """Base URL of the custom API endpoint (e.g., ``https://api.openai.com/v1``)."""
+
+    api_key: str | None = None
+    """API key for authenticating with the custom endpoint."""
+
+    type: str = "anthropic"
+    """BYOK provider type identifier (e.g., ``openai``, ``azure``)."""
+
+
 class RuntimeConfig(BaseModel):
     """Provider and runtime configuration."""
 
@@ -956,6 +986,22 @@ class RuntimeConfig(BaseModel):
           skill_directories:
             - ./artifacts/skills          # relative to the workflow file
             - /shared/company-skills      # absolute path
+    """
+
+    byok: ByokDef | None = None
+    """BYOK (Bring Your Own Key) configuration for Copilot provider.
+
+    When set, the Copilot provider connects to a custom API endpoint instead
+    of the standard Copilot backend. All sub-fields are optional.
+
+    Example::
+
+        runtime:
+          byok:
+            model: gpt-4o
+            base_url: https://api.openai.com/v1
+            api_key: sk-...
+            type: openai
     """
 
 
