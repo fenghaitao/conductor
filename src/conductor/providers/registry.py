@@ -15,7 +15,10 @@ if TYPE_CHECKING:
     from conductor.config.schema import AgentDef, WorkflowConfig
 
 
-ProviderType = Literal["copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk", "claude-subscription"]
+ProviderType = Literal[
+    "copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk",
+    "claude-subscription",
+]
 
 
 class ProviderRegistry:
