@@ -285,7 +285,6 @@ pydantic-deep = [
     { name = "pydantic-deep" },
 ]
 
-[package.optional-dependencies]
 claude-agent-sdk = [
     { name = "claude-agent-sdk" },
 ]

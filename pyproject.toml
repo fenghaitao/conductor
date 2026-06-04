@@ -51,6 +51,7 @@ dependencies = [
 claude-agent-sdk = [
     "claude-agent-sdk>=0.1.64",
 ]
+pydantic-deep = ["pydantic-deep>=0.3.14"]
 
 [project.urls]
 Homepage = "https://github.com/microsoft/conductor"
@@ -71,9 +72,6 @@ packages = ["src/conductor"]
 exclude = [
     "src/conductor/web/frontend",
 ]
-
-[project.optional-dependencies]
-pydantic-deep = ["pydantic-deep>=0.3.14"]
 
 [dependency-groups]
 dev = [
