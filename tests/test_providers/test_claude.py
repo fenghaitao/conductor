@@ -3163,3 +3163,54 @@ class TestClaudeReasoningEffortRegressions:
     # is a fourth messages.create site reachable only via mid-agent interrupt
     # and partial-output flow; mocking complexity is prohibitive for a unit
     # test (would need a full asyncio interrupt fixture).
+
+
+class TestClaudeProviderAuthToken:
+    """Smoke tests for ClaudeProvider with auth_token."""
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_auth_token_forwarded_to_sdk(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """ClaudeProvider(auth_token='test') forwards auth_token to AsyncAnthropic."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(api_key=None, auth_token="test-token")
+
+        mock_async_anthropic.assert_called_once_with(
+            auth_token="test-token",
+            timeout=600.0,
+        )
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_api_key_is_none_when_auth_token_set(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """When auth_token is set, api_key should be forced to None."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(api_key="should-be-ignored", auth_token="test-token")
+
+        _, kwargs = mock_async_anthropic.call_args
+        assert kwargs.get("auth_token") == "test-token"
+        assert "api_key" not in kwargs or kwargs.get("api_key") is None
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_original_api_key_path_unchanged(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """When only api_key is provided (no auth_token), existing behavior is preserved."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(api_key="my-api-key")
+
+        mock_async_anthropic.assert_called_once_with(
+            api_key="my-api-key",
+            timeout=600.0,
+        )

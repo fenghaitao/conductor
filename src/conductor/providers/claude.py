@@ -163,6 +163,7 @@ class ClaudeProvider(AgentProvider):
     def __init__(
         self,
         api_key: str | None = None,
+        auth_token: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -177,6 +178,10 @@ class ClaudeProvider(AgentProvider):
 
         Args:
             api_key: Anthropic API key. If None, uses ANTHROPIC_API_KEY env var.
+            auth_token: OAuth bearer token for Claude subscription authentication.
+                When set, ``api_key`` is forced to ``None`` so the SDK sends
+                ``Authorization: Bearer <token>`` instead of ``x-api-key``.
+                Defaults to None (use ANTHROPIC_API_KEY env var).
             model: Default model to use. Defaults to "claude-3-5-sonnet-latest".
                 This default is chosen for stability and to avoid dated model
                 deprecation risk. The "-latest" suffix ensures compatibility
@@ -209,6 +214,7 @@ class ClaudeProvider(AgentProvider):
 
         self._client: AsyncAnthropic | None = None
         self._api_key = api_key
+        self._auth_token = auth_token
         self._default_model = model or "claude-3-5-sonnet-latest"
 
         # Validate and store temperature (enforce schema bounds at instantiation)
@@ -256,10 +262,13 @@ class ClaudeProvider(AgentProvider):
         if not ANTHROPIC_SDK_AVAILABLE or AsyncAnthropic is None:
             return
 
-        self._client = AsyncAnthropic(
-            api_key=self._api_key,
-            timeout=self._timeout,
-        )
+        kwargs: dict[str, Any] = {"timeout": self._timeout}
+        if self._auth_token is not None:
+            kwargs["auth_token"] = self._auth_token
+        else:
+            kwargs["api_key"] = self._api_key
+
+        self._client = AsyncAnthropic(**kwargs)
 
         # Log SDK version
         if anthropic is not None:
