@@ -39,7 +39,7 @@ def resolve_auth_token(auth_token: str | None = None) -> str:
         ProviderError: If the credentials file is present but contains
             malformed JSON, with the file path in the message.
     """
-    if auth_token is not None:
+    if auth_token:
         return auth_token
 
     env_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from conductor.exceptions import ProviderError
-from conductor.providers.claude_credentials import CREDENTIALS_PATH, resolve_auth_token
+from conductor.providers.claude_credentials import resolve_auth_token
 
 
 class TestResolveAuthToken:
@@ -73,6 +73,30 @@ class TestResolveAuthToken:
         ):
             result = resolve_auth_token(auth_token="explicit")
             assert result == "explicit"
+
+    def test_file_valid_json_missing_oauth_token_raises(self, tmp_path: Path) -> None:
+        """Valid JSON without 'oauth_token' key should raise ProviderError."""
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(json.dumps({"other_key": "not_oauth"}))
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            with pytest.raises(ProviderError) as exc_info:
+                resolve_auth_token()
+            assert "No subscription credentials found" in str(exc_info.value)
+
+    def test_empty_string_auth_token_falls_through(self, tmp_path: Path) -> None:
+        """Empty string auth_token should be treated as unset, falling through to env/file."""
+        with patch.dict(
+            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
+        ), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            tmp_path / "nonexistent.json",
+        ):
+            result = resolve_auth_token(auth_token="")
+            assert result == "env-token"
 
     def test_never_reads_api_key_env(self, tmp_path: Path) -> None:
         creds_file = tmp_path / ".credentials.json"
