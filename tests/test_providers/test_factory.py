@@ -301,6 +301,41 @@ class TestClaudeSubscriptionFactory:
         assert provider._default_max_tokens == 4096
         assert provider._timeout == 300.0
 
+    @patch("conductor.providers.factory.ANTHROPIC_SDK_AVAILABLE", False)
+    @pytest.mark.asyncio
+    async def test_claude_subscription_raises_when_sdk_not_available(self) -> None:
+        """claude-subscription should raise ProviderError when SDK not installed."""
+        with pytest.raises(ProviderError) as exc_info:
+            await create_provider("claude-subscription")
+        assert "anthropic SDK" in str(exc_info.value)
+        assert exc_info.value.suggestion is not None
+
+    @patch(
+        "conductor.providers.factory.resolve_auth_token",
+        side_effect=ProviderError(
+            "No subscription credentials found",
+            suggestion="Run 'claude login'.",
+        ),
+    )
+    @patch("conductor.providers.factory.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    @pytest.mark.asyncio
+    async def test_claude_subscription_raises_when_credentials_not_found(
+        self,
+        mock_anthropic_module: Any,
+        mock_async_anthropic: Any,
+        mock_resolve: Any,
+    ) -> None:
+        """claude-subscription should propagate ProviderError from resolve_auth_token."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        with pytest.raises(ProviderError) as exc_info:
+            await create_provider("claude-subscription")
+
+        assert "No subscription credentials found" in str(exc_info.value)
+        mock_resolve.assert_called_once_with()
+
 
 class TestClaudeAgentSdkFactoryRejections:
     """Factory rejects workflow features claude-agent-sdk does not honor (#241 / A2).
