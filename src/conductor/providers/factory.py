@@ -15,6 +15,7 @@ from conductor.providers.claude_agent_sdk import (
     CLAUDE_AGENT_SDK_AVAILABLE,
     ClaudeAgentSdkProvider,
 )
+from conductor.providers.claude_credentials import resolve_auth_token
 from conductor.providers.copilot import CopilotProvider, IdleRecoveryConfig
 from conductor.providers.pydantic_deep import PYDANTIC_DEEP_AVAILABLE, PydanticDeepProvider
 from conductor.providers.reasoning import ReasoningEffort
@@ -24,7 +25,10 @@ if TYPE_CHECKING:
 
 
 async def create_provider(
-    provider_type: Literal["copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk"] = "copilot",
+    provider_type: Literal[
+        "copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk",
+        "claude-subscription",
+    ] = "copilot",
     validate: bool = True,
     mcp_servers: dict[str, Any] | None = None,
     default_model: str | None = None,
@@ -116,6 +120,24 @@ async def create_provider(
                 max_session_seconds=max_session_seconds,
                 default_reasoning_effort=default_reasoning_effort,
             )
+        case "claude-subscription":
+            if not ANTHROPIC_SDK_AVAILABLE:
+                raise ProviderError(
+                    "Claude provider requires anthropic SDK",
+                    suggestion="Install with: uv add 'anthropic>=0.77.0,<1.0.0'",
+                )
+            token = resolve_auth_token()
+            provider = ClaudeProvider(
+                auth_token=token,
+                model=default_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout if timeout is not None else 600.0,
+                mcp_servers=mcp_servers,
+                max_agent_iterations=max_agent_iterations,
+                max_session_seconds=max_session_seconds,
+                default_reasoning_effort=default_reasoning_effort,
+            )
         case "pydantic-deep":
             if not PYDANTIC_DEEP_AVAILABLE:
                 raise ProviderError(
@@ -176,7 +198,8 @@ async def create_provider(
         case _:
             raise ProviderError(
                 f"Unknown provider: {provider_type}",
-                suggestion="Valid providers are: copilot, openai-agents, claude, pydantic-deep, claude-agent-sdk",
+                suggestion="Valid providers are: copilot, openai-agents, claude, "
+                "claude-subscription, pydantic-deep, claude-agent-sdk",
             )
 
     if validate and not await provider.validate_connection():

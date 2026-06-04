@@ -228,6 +228,80 @@ class TestSkillDirectories:
         await provider.close()
 
 
+class TestClaudeSubscriptionFactory:
+    """Tests for claude-subscription provider in create_provider."""
+
+    @patch(
+        "conductor.providers.factory.resolve_auth_token",
+        return_value="resolved-token",
+    )
+    @patch("conductor.providers.factory.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    @pytest.mark.asyncio
+    async def test_claude_subscription_constructs_claude_provider(
+        self,
+        mock_anthropic_module: Any,
+        mock_async_anthropic: Any,
+        mock_resolve: Any,
+    ) -> None:
+        """claude-subscription should construct a ClaudeProvider with resolved token."""
+        from unittest.mock import AsyncMock
+
+        mock_anthropic_module.__version__ = "0.77.0"
+        mock_client = MagicMock()
+        mock_client.models.list = AsyncMock(return_value=MagicMock(data=[]))
+        mock_async_anthropic.return_value = mock_client
+
+        provider = await create_provider("claude-subscription", validate=False)
+
+        assert provider.__class__.__name__ == "ClaudeProvider"
+        mock_resolve.assert_called_once_with()
+        mock_async_anthropic.assert_called_once()
+        call_kwargs = mock_async_anthropic.call_args.kwargs
+        assert call_kwargs["auth_token"] == "resolved-token"
+        assert "api_key" not in call_kwargs or call_kwargs.get("api_key") is None
+
+    @patch(
+        "conductor.providers.factory.resolve_auth_token",
+        return_value="resolved-token",
+    )
+    @patch("conductor.providers.factory.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    @pytest.mark.asyncio
+    async def test_claude_subscription_passes_all_kwargs(
+        self,
+        mock_anthropic_module: Any,
+        mock_async_anthropic: Any,
+        mock_resolve: Any,
+    ) -> None:
+        """claude-subscription should pass model, temperature, etc. to ClaudeProvider."""
+        from unittest.mock import AsyncMock
+
+        mock_anthropic_module.__version__ = "0.77.0"
+        mock_client = MagicMock()
+        mock_client.models.list = AsyncMock(return_value=MagicMock(data=[]))
+        mock_async_anthropic.return_value = mock_client
+
+        provider = await create_provider(
+            "claude-subscription",
+            validate=False,
+            default_model="claude-sonnet-4-5",
+            temperature=0.3,
+            max_tokens=4096,
+            timeout=300.0,
+            max_session_seconds=120.0,
+            max_agent_iterations=10,
+        )
+
+        assert provider is not None
+        assert provider._default_model == "claude-sonnet-4-5"
+        assert provider._default_temperature == 0.3
+        assert provider._default_max_tokens == 4096
+        assert provider._timeout == 300.0
+
+
 class TestClaudeAgentSdkFactoryRejections:
     """Factory rejects workflow features claude-agent-sdk does not honor (#241 / A2).
 
