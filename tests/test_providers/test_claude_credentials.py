@@ -1,0 +1,90 @@
+"""Unit tests for Claude credential discovery."""
+
+import json
+import os
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from conductor.exceptions import ProviderError
+from conductor.providers.claude_credentials import CREDENTIALS_PATH, resolve_auth_token
+
+
+class TestResolveAuthToken:
+    def test_explicit_kwarg_takes_priority(self) -> None:
+        result = resolve_auth_token(auth_token="explicit-token")
+        assert result == "explicit-token"
+
+    def test_env_var_when_file_absent(self, tmp_path: Path) -> None:
+        with patch.dict(
+            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
+        ), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            tmp_path / "nonexistent.json",
+        ):
+            result = resolve_auth_token()
+            assert result == "env-token"
+
+    def test_env_var_takes_priority_over_file(self, tmp_path: Path) -> None:
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+
+        with patch.dict(
+            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
+        ), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            result = resolve_auth_token()
+            assert result == "env-token"
+
+    def test_file_missing_and_env_unset_raises(self, tmp_path: Path) -> None:
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            tmp_path / "nonexistent.json",
+        ):
+            with pytest.raises(ProviderError) as exc_info:
+                resolve_auth_token()
+            assert "claude login" in str(exc_info.value)
+            assert "ANTHROPIC_AUTH_TOKEN" in str(exc_info.value)
+
+    def test_malformed_json_raises(self, tmp_path: Path) -> None:
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text("not valid json {{{")
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            with pytest.raises(ProviderError) as exc_info:
+                resolve_auth_token()
+            assert str(creds_file) in str(exc_info.value)
+
+    def test_explicit_kwarg_overrides_env_and_file(self, tmp_path: Path) -> None:
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+
+        with patch.dict(
+            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
+        ), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            result = resolve_auth_token(auth_token="explicit")
+            assert result == "explicit"
+
+    def test_never_reads_api_key_env(self, tmp_path: Path) -> None:
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+
+        with patch.dict(
+            os.environ,
+            {"ANTHROPIC_API_KEY": "should-be-ignored"},
+            clear=True,
+        ), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            result = resolve_auth_token()
+            assert result == "file-token"
