@@ -1,0 +1,53 @@
+# Simple Question-Answering Workflow with BYOK (Bring Your Own Key)
+#
+# This example demonstrates how to use a custom API endpoint with the
+# Copilot provider via BYOK configuration. It mirrors examples/simple-qa.yaml
+# but routes all model requests through a user-provided API endpoint.
+#
+# Usage:
+#   conductor run examples/simple-qa-byok.yaml --input question="What is Python?"
+
+workflow:
+  name: simple-qa-byok
+  description: A simple question-answering workflow using a BYOK endpoint
+  version: "1.0.0"
+  entry_point: answerer
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${CONDUCTOR_BYOK_API_KEY:-your-api-key-here}
+      type: anthropic
+    temperature: 0.7
+    default_model: deepseek-v4-pro
+
+  input:
+    question:
+      type: string
+      required: true
+      description: The question to answer
+
+agents:
+  - name: answerer
+    description: Answers the user's question clearly and concisely
+    prompt: |
+      You are a helpful assistant. Please answer the following question
+      clearly and concisely:
+
+      Question: {{ workflow.input.question }}
+
+      Provide a direct answer without unnecessary preamble.
+    output:
+      answer:
+        type: string
+        description: The answer to the question
+      confidence:
+        type: string
+        description: Confidence level (high, medium, low)
+    routes:
+      - to: $end
+
+output:
+  answer: "{{ answerer.output.answer }}"
+  confidence: "{{ answerer.output.confidence }}"

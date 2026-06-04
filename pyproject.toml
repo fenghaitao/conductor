@@ -1,6 +1,6 @@
 [project]
 name = "conductor-cli"
-version = "0.1.17"
+version = "0.1.18"
 description = "A CLI tool for defining and running multi-agent workflows with the GitHub Copilot SDK"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -47,6 +47,12 @@ dependencies = [
     "packaging>=21.0",
 ]
 
+[project.optional-dependencies]
+claude-agent-sdk = [
+    "claude-agent-sdk>=0.1.64",
+]
+pydantic-deep = ["pydantic-deep>=0.3.14"]
+
 [project.urls]
 Homepage = "https://github.com/microsoft/conductor"
 Documentation = "https://github.com/microsoft/conductor#readme"
@@ -66,9 +72,6 @@ packages = ["src/conductor"]
 exclude = [
     "src/conductor/web/frontend",
 ]
-
-[project.optional-dependencies]
-pydantic-deep = ["pydantic-deep>=0.3.14"]
 
 [dependency-groups]
 dev = [
