@@ -386,13 +386,12 @@ class TestGenerateLogPath:
         assert str(path).endswith(".log")
 
     def test_generate_log_path_uses_tmpdir(self) -> None:
-        """Test that generated log path is under temp directory."""
-        import tempfile
-
+        """Test that generated log path is under the conductor run directory."""
         from conductor.cli.run import generate_log_path
 
         path = generate_log_path("test")
-        assert str(path).startswith(tempfile.gettempdir())
+        # Default run dir is ./tmp/ (CWD-relative); CONDUCTOR_TMPDIR overrides it
+        assert "tmp" in path.parts
 
 
 class TestVerboseLogging:

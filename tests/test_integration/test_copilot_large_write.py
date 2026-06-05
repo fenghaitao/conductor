@@ -116,7 +116,7 @@ def _build_large_write_workflow(target_path: Path) -> WorkflowConfig:
         agents=[
             AgentDef(
                 name="writer",
-                model="claude-opus-4.7-1m-internal",
+                model="claude-sonnet-4.6",
                 prompt=prompt,
                 output={
                     "file_path": OutputField(type="string"),

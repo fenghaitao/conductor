@@ -173,7 +173,9 @@ class TestComputeWorkflowHash:
 class TestGetCheckpointsDir:
     def test_returns_path_under_tmpdir(self) -> None:
         d = CheckpointManager.get_checkpoints_dir()
-        assert d.parts[-2:] == ("conductor", "checkpoints")
+        # Default run dir is ./tmp/ (CWD-relative); checkpoints go inside it
+        assert d.name == "checkpoints"
+        assert d.parent.name == "tmp"
         assert d.exists()
 
     def test_idempotent(self) -> None:

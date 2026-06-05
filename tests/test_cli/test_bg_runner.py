@@ -420,9 +420,8 @@ class TestLaunchBackgroundDiagnostics:
         # CONDUCTOR_RUN_ID) can be correlated with the bg log files.
         assert launch.run_id in launch.stderr_log.name
         assert launch.run_id in launch.stdout_log.name
-        # The log files are siblings of the events JSONL under TMPDIR/conductor/
-        assert launch.stderr_log.parent.name == "conductor"
-        assert launch.stderr_log.parent.parent == Path(tempfile.gettempdir())
+        # The log files are in the conductor run directory (default: ./tmp/)
+        assert launch.stderr_log.parent.name == "tmp"
 
     def test_popen_receives_file_handles_not_devnull(self, tmp_path: Path) -> None:
         """stderr/stdout must NOT be ``DEVNULL`` — that's what causes #116's silent crash."""
