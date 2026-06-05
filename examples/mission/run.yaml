@@ -4,15 +4,15 @@
 # After each milestone: auto-runs scrutiny (lint/tests/code-review) then
 # user-testing (end-to-end behavioral assertions).
 #
-# Can be run standalone after mission-plan.yaml completes, or resumed
+# Can be run standalone after plan.yaml completes, or resumed
 # after interruption via `conductor resume`.
 #
 # Usage:
-#   conductor run examples/mission-conductor/mission-run.yaml \
+#   conductor run examples/mission/run.yaml \
 #     --input mission_dir="/path/to/missions/my-app"
 #
 # Resume:
-#   conductor resume examples/mission-conductor/mission-run.yaml
+#   conductor resume examples/mission/run.yaml
 #
 # The loop:
 #   get_milestone → feature_runner (for_each sequential)
@@ -42,7 +42,7 @@ workflow:
     mission_dir:
       type: string
       required: true
-      description: Absolute path to the missionDir (output from mission-plan.yaml)
+      description: Absolute path to the missionDir (output from plan.yaml)
 
   limits:
     max_iterations: 500   # generous — large missions have many features

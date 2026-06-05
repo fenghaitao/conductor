@@ -1,6 +1,6 @@
 # Run Feature (single feature)
 #
-# Sub-workflow invoked by mission-run.yaml's for_each group.
+# Sub-workflow invoked by run.yaml's for_each group.
 # Implements ONE feature and writes the handoff artifact.
 #
 # Steps:

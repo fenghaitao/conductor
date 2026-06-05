@@ -4,13 +4,13 @@
 #   understand → propose → [human gate] → readiness_check → architecture → contract → features → artifacts
 #
 # Usage:
-#   conductor run examples/mission-conductor/mission-plan.yaml \
+#   conductor run examples/mission/plan.yaml \
 #     --input mission_name="my-app" \
 #     --input working_directory="/path/to/repo" \
 #     --input idea="Build a REST API with authentication and a React frontend"
 #
-# After completion, the missionDir is ready and mission-run.yaml can be started:
-#   conductor run examples/mission-conductor/mission-run.yaml \
+# After completion, the missionDir is ready and run.yaml can be started:
+#   conductor run examples/mission/run.yaml \
 #     --input mission_dir="<missionDir printed at end>"
 #
 # Idempotent: each phase checks its output artifact and skips if already written.
@@ -160,5 +160,5 @@ output:
     missionDir: {{ propose_phase.output.mission_dir }}
 
     To start execution:
-      conductor run examples/mission-conductor/mission-run.yaml \
+      conductor run examples/mission/run.yaml \
         --input mission_dir="{{ propose_phase.output.mission_dir }}"

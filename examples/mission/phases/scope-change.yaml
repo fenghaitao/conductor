@@ -1,7 +1,7 @@
 # Scope Change Phase
 #
 # Handles mid-mission scope and guidance changes from the user.
-# Called from mission-run.yaml when a user wants to modify the mission mid-run.
+# Called from run.yaml when a user wants to modify the mission mid-run.
 #
 # Supports two change types:
 #   - Scope change: add/remove features, modify expected behaviors
