@@ -74,7 +74,7 @@ agents:
     values:
       is_breaking: "{{ workflow.input.severity in ['high', 'critical'] }}"
       target_branch: "{{ workflow.input.branch or 'main' }}"
-      effective_model: "{{ workflow.input.model | default('claude-sonnet-4-5') }}"
+      effective_model: "{{ workflow.input.model | default('claude-sonnet-4-6') }}"
     routes:
       - to: breaking_path
         when: "{{ output.is_breaking }}"

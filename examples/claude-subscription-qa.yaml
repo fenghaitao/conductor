@@ -1,0 +1,84 @@
+# Question-Answering Workflow — claude-subscription provider
+#
+# Uses the claude-subscription provider, which authenticates via the OAuth
+# bearer token stored by the `claude` CLI rather than an Anthropic API key.
+# Ideal for Claude Pro/Max subscribers who want to run Conductor workflows
+# against their subscription without managing a separate API key.
+#
+# Authentication (one-time setup):
+#   claude login          # stores credentials in ~/.claude/.credentials.json
+#
+# Alternatively, set the environment variable:
+#   export ANTHROPIC_AUTH_TOKEN=<your-bearer-token>
+#
+# The provider never reads ANTHROPIC_API_KEY on this path.
+#
+# Pre-requisites:
+#   uv add 'anthropic>=0.77.0,<1.0.0'
+#
+# Usage:
+#   conductor run examples/claude-subscription-qa.yaml \
+#     --input question="What are the key benefits of multi-agent workflows?"
+#
+# Validation only (no execution / no API calls):
+#   conductor validate examples/claude-subscription-qa.yaml
+
+workflow:
+  name: claude-subscription-qa
+  description: >
+    Simple question-answering pipeline using the claude-subscription provider.
+    One research agent answers the question, a second agent refines the answer
+    into a concise, user-friendly response.
+  version: "1.0.0"
+  entry_point: researcher
+
+  runtime:
+    provider: claude-subscription
+    default_model: claude-sonnet-4-6
+
+  input:
+    question:
+      type: string
+      required: true
+      description: The question to answer.
+
+agents:
+  - name: researcher
+    description: Produce a thorough answer to the input question.
+    prompt: |
+      Answer the following question thoroughly and accurately.
+      Cite key points and structure your answer clearly.
+
+      Question: {{ workflow.input.question }}
+    output:
+      answer:
+        type: string
+        description: Detailed answer to the question.
+      key_points:
+        type: array
+        description: Bulleted list of the most important points.
+        items:
+          type: string
+    routes:
+      - to: refiner
+
+  - name: refiner
+    description: Condense the researcher's answer into a crisp, user-friendly response.
+    prompt: |
+      Rewrite the answer below into a concise, clear response (2-3 sentences)
+      suitable for a non-expert reader. Incorporate the key points naturally.
+
+      Original answer: {{ researcher.output.answer }}
+      Key points:
+      {% for point in researcher.output.key_points %}- {{ point }}
+      {% endfor %}
+    output:
+      response:
+        type: string
+        description: Concise, user-friendly response.
+    routes:
+      - to: $end
+
+output:
+  answer: "{{ refiner.output.response }}"
+  key_points: "{{ researcher.output.key_points }}"

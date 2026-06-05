@@ -11,6 +11,11 @@ from conductor.exceptions import ProviderError
 from conductor.providers.claude_credentials import resolve_auth_token
 
 
+# Canonical credentials file shape written by the claude CLI.
+def _creds(access_token: str) -> str:
+    return json.dumps({"claudeAiOauth": {"accessToken": access_token}})
+
+
 class TestResolveAuthToken:
     def test_explicit_kwarg_takes_priority(self) -> None:
         result = resolve_auth_token(auth_token="explicit-token")
@@ -28,7 +33,7 @@ class TestResolveAuthToken:
 
     def test_env_var_takes_priority_over_file(self, tmp_path: Path) -> None:
         creds_file = tmp_path / ".credentials.json"
-        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+        creds_file.write_text(_creds("file-token"))
 
         with patch.dict(
             os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
@@ -63,7 +68,7 @@ class TestResolveAuthToken:
 
     def test_explicit_kwarg_overrides_env_and_file(self, tmp_path: Path) -> None:
         creds_file = tmp_path / ".credentials.json"
-        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+        creds_file.write_text(_creds("file-token"))
 
         with patch.dict(
             os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
@@ -74,8 +79,20 @@ class TestResolveAuthToken:
             result = resolve_auth_token(auth_token="explicit")
             assert result == "explicit"
 
-    def test_file_valid_json_missing_oauth_token_raises(self, tmp_path: Path) -> None:
-        """Valid JSON without 'oauth_token' key should raise ProviderError."""
+    def test_file_token_returned_when_no_env(self, tmp_path: Path) -> None:
+        """Token from credentials file is returned when env var is unset."""
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(_creds("file-token"))
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            result = resolve_auth_token()
+            assert result == "file-token"
+
+    def test_file_valid_json_missing_claudeAiOauth_raises(self, tmp_path: Path) -> None:
+        """Valid JSON without 'claudeAiOauth' key should raise ProviderError."""
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(json.dumps({"other_key": "not_oauth"}))
 
@@ -98,10 +115,10 @@ class TestResolveAuthToken:
             result = resolve_auth_token(auth_token="")
             assert result == "env-token"
 
-    def test_empty_oauth_token_in_file_raises_specific_error(self, tmp_path: Path) -> None:
-        """A credentials file with oauth_token: '' raises a specific ProviderError."""
+    def test_empty_access_token_in_file_raises_specific_error(self, tmp_path: Path) -> None:
+        """A credentials file with accessToken: '' raises a specific ProviderError."""
         creds_file = tmp_path / ".credentials.json"
-        creds_file.write_text(json.dumps({"oauth_token": ""}))
+        creds_file.write_text(json.dumps({"claudeAiOauth": {"accessToken": ""}}))
 
         with patch.dict(os.environ, {}, clear=True), patch(
             "conductor.providers.claude_credentials.CREDENTIALS_PATH",
@@ -109,12 +126,12 @@ class TestResolveAuthToken:
         ):
             with pytest.raises(ProviderError) as exc_info:
                 resolve_auth_token()
-            assert "empty oauth_token" in str(exc_info.value)
+            assert "empty accessToken" in str(exc_info.value)
             assert str(creds_file) in str(exc_info.value)
 
     def test_never_reads_api_key_env(self, tmp_path: Path) -> None:
         creds_file = tmp_path / ".credentials.json"
-        creds_file.write_text(json.dumps({"oauth_token": "file-token"}))
+        creds_file.write_text(_creds("file-token"))
 
         with patch.dict(
             os.environ,

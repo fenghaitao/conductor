@@ -28,7 +28,7 @@ def resolve_auth_token(auth_token: str | None = None) -> str:
     Priority order:
     1. Explicit ``auth_token`` kwarg (must be a non-empty string)
     2. ``ANTHROPIC_AUTH_TOKEN`` environment variable
-    3. ``~/.claude/.credentials.json`` — parsed for the ``oauth_token`` field
+    3. ``~/.claude/.credentials.json`` — parsed for ``claudeAiOauth.accessToken``
 
     Args:
         auth_token: Explicit auth token. If truthy, returned immediately.
@@ -42,7 +42,7 @@ def resolve_auth_token(auth_token: str | None = None) -> str:
             "No subscription credentials found — run 'claude login' or set ANTHROPIC_AUTH_TOKEN".
         ProviderError: If the credentials file is present but contains
             malformed JSON, with the file path in the message.
-        ProviderError: If the credentials file contains an empty ``oauth_token`` field.
+        ProviderError: If the credentials file contains an empty ``accessToken`` field.
     """
     if auth_token:
         return auth_token
@@ -61,12 +61,15 @@ def resolve_auth_token(auth_token: str | None = None) -> str:
             suggestion="Re-run 'claude login' to regenerate the credentials file.",
         ) from exc
     else:
-        token = data.get("oauth_token")
+        # ~/.claude/.credentials.json layout written by the claude CLI:
+        # { "claudeAiOauth": { "accessToken": "<bearer>", ... }, ... }
+        oauth = data.get("claudeAiOauth")
+        token = oauth.get("accessToken") if isinstance(oauth, dict) else None
         if token:
             return token
         if token == "":
             raise ProviderError(
-                f"Claude credentials file has an empty oauth_token field: {CREDENTIALS_PATH}",
+                f"Claude credentials file has an empty accessToken field: {CREDENTIALS_PATH}",
                 suggestion="Re-run 'claude login' to regenerate the credentials file.",
             )
 

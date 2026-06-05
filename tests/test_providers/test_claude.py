@@ -3183,6 +3183,7 @@ class TestClaudeProviderAuthToken:
             auth_token="test-token",
             api_key=None,
             timeout=600.0,
+            default_headers={"anthropic-beta": "oauth-2025-04-20"},
         )
 
     @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
@@ -3215,3 +3216,73 @@ class TestClaudeProviderAuthToken:
             api_key="my-api-key",
             timeout=600.0,
         )
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_no_oauth_header_in_api_key_mode(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """API-key mode must not send the OAuth beta header."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(api_key="my-api-key")
+
+        _, kwargs = mock_async_anthropic.call_args
+        assert "default_headers" not in kwargs
+
+
+class TestClaudeSubscriptionSystemPrompt:
+    """The subscription (OAuth) path must inject the Claude Code identity."""
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_wrap_system_subscription_no_prior_system(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """Subscription mode with no prior system -> single identity block."""
+        mock_anthropic_module.__version__ = "0.77.0"
+        provider = ClaudeProvider(auth_token="test-token")
+
+        wrapped = provider._wrap_system_for_subscription(None)
+
+        assert wrapped == [
+            {
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+            }
+        ]
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_wrap_system_subscription_with_prior_system(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """Subscription mode keeps the prior system as a second block."""
+        mock_anthropic_module.__version__ = "0.77.0"
+        provider = ClaudeProvider(auth_token="test-token")
+
+        wrapped = provider._wrap_system_for_subscription("Be a math tutor.")
+
+        assert wrapped == [
+            {
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+            },
+            {"type": "text", "text": "Be a math tutor."},
+        ]
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_wrap_system_api_key_mode_unchanged(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """API-key mode returns the system prompt unchanged (including None)."""
+        mock_anthropic_module.__version__ = "0.77.0"
+        provider = ClaudeProvider(api_key="my-api-key")
+
+        assert provider._wrap_system_for_subscription(None) is None
+        assert provider._wrap_system_for_subscription("plain") == "plain"

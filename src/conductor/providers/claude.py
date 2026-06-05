@@ -124,6 +124,15 @@ class ClaudeProvider(AgentProvider):
         >>> await provider.close()
     """
 
+    # Claude Pro/Max subscription (OAuth bearer) requests must opt into the
+    # OAuth beta and present the Claude Code identity, otherwise the API
+    # rejects them with a misleading ``429 rate_limit_error``.
+    _OAUTH_BETA_HEADER = "oauth-2025-04-20"
+    # The system prompt's first block must be EXACTLY this string. A concatenated
+    # single-string system prompt fails the check — it must be sent as an array
+    # of blocks with this as block zero (see _wrap_system_for_subscription).
+    _CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
+
     CAPABILITIES = ProviderCapabilities(
         tier="stable",
         # Claude provider accepts ``runtime.mcp_servers`` (stdio only —
@@ -270,6 +279,9 @@ class ClaudeProvider(AgentProvider):
             # Explicitly suppress the SDK's ANTHROPIC_API_KEY env-var fallback so
             # only the Authorization: Bearer header is sent, not both auth headers.
             kwargs["api_key"] = None
+            # Subscription (OAuth) requests must opt into the OAuth beta on every
+            # call; set it once at the client level via default_headers.
+            kwargs["default_headers"] = {"anthropic-beta": self._OAUTH_BETA_HEADER}
         else:
             kwargs["api_key"] = self._api_key
 
@@ -624,7 +636,7 @@ class ClaudeProvider(AgentProvider):
             kwargs: dict[str, Any] = {
                 "model": model or self._default_model,
                 "max_tokens": 4096,
-                "system": system_prompt,
+                "system": self._wrap_system_for_subscription(system_prompt),
                 "messages": messages,
             }
 
@@ -1321,6 +1333,12 @@ class ClaudeProvider(AgentProvider):
             "messages": messages,
             "max_tokens": effective_max_tokens,
         }
+
+        # Subscription mode requires the Claude Code identity in the system
+        # prompt; this returns None (and is skipped) for API-key mode.
+        system = self._wrap_system_for_subscription(None)
+        if system is not None:
+            kwargs["system"] = system
 
         if effective_temperature is not None:
             kwargs["temperature"] = effective_temperature
@@ -2045,6 +2063,33 @@ class ClaudeProvider(AgentProvider):
                 "content": rendered_prompt,
             }
         ]
+
+    def _wrap_system_for_subscription(
+        self, system: str | None
+    ) -> str | list[dict[str, str]] | None:
+        """Wrap a system prompt for Claude subscription (OAuth) requests.
+
+        Subscription tokens require the system prompt to be sent as an array
+        whose first block is exactly the Claude Code identity string; a plain
+        concatenated string fails the API's identity check and surfaces as a
+        misleading ``429 rate_limit_error``. For API-key mode the input is
+        returned unchanged.
+
+        Args:
+            system: The agent/dialog system prompt, or None when there isn't one.
+
+        Returns:
+            - API-key mode: ``system`` unchanged (may be None).
+            - Subscription mode: a list of text blocks with the Claude Code
+              identity as block zero, followed by ``system`` if non-empty.
+        """
+        if self._auth_token is None:
+            return system
+
+        blocks: list[dict[str, str]] = [{"type": "text", "text": self._CLAUDE_CODE_SYSTEM_PREFIX}]
+        if system and system.strip():
+            blocks.append({"type": "text", "text": system})
+        return blocks
 
     def _build_tools_for_structured_output(
         self, output_schema: dict[str, OutputField]
