@@ -63,7 +63,7 @@ for_each:
     agent:
       name: run_one_feature
       type: workflow
-      workflow: ./phases/run-feature.yaml
+      workflow: ./run/feature.yaml
       input_mapping:
         mission_dir:         "{{ workflow.input.mission_dir }}"
         feature_id:          "{{ feature.id }}"
@@ -244,7 +244,7 @@ agents:
       Review all worker handoff issues (return_to_orchestrator: true) and
       any knowledge surfaced during the mission. Applies guidance updates
       and optionally escalates unresolved issues to the user.
-    workflow: ./phases/orchestrator-review.yaml
+    workflow: ./run/orchestrator-review.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -259,7 +259,7 @@ agents:
       pending with updated guidance, accepts them, or escalates to the user;
       every returned feature leaves "returned" status so this never loops.
       Routes back to get_milestone so resolved features re-enter the run.
-    workflow: ./phases/orchestrator-review.yaml
+    workflow: ./run/orchestrator-review.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -272,7 +272,7 @@ agents:
       Run programmatic validators (test, typecheck, lint) and spawn per-feature
       code review subagents for the completed milestone. Fails → features reset
       to pending and feature_runner re-runs them.
-    workflow: ./phases/scrutiny-phase.yaml
+    workflow: ./run/scrutiny.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -290,7 +290,7 @@ agents:
       Updates validation-state.yaml with pass/fail results.
       Fails → fix features injected, loops back to feature_runner via get_milestone.
       Passes → seal_milestone, then prompt for mid-mission changes.
-    workflow: ./phases/user-testing-phase.yaml
+    workflow: ./run/user-testing.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -398,7 +398,7 @@ agents:
     description: |
       Propagate user-requested scope or guidance changes to mission.md, AGENTS.md,
       validation-contract.md, features.yaml, and validation-state.yaml.
-    workflow: ./phases/scope-change.yaml
+    workflow: ./run/scope-change.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:

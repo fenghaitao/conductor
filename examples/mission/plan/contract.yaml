@@ -142,7 +142,7 @@ agents:
                 continue
             if in_functionality:
                 # New top-level section ends the block
-                if re.match(r"^#\s", stripped):
+                if re.match(r"^#{1,2}\s", stripped):
                     break
                 # Sub-sections within are milestones/areas
                 m = re.match(r"^#{2,3}\s+(.+)", stripped)

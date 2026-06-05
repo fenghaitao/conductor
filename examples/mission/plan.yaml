@@ -58,7 +58,7 @@ agents:
       Iterative Q&A + investigation to deeply understand requirements,
       architecture approach, infrastructure needs, and validation strategy.
       Produces a structured planning summary for the propose phase.
-    workflow: ./phases/plan-understand.yaml
+    workflow: ./plan/understand.yaml
     input_mapping:
       mission_name: "{{ workflow.input.mission_name }}"
       working_directory: "{{ workflow.input.working_directory }}"
@@ -73,7 +73,7 @@ agents:
       Generate the mission proposal and present it to the user for acceptance.
       On acceptance, writes mission.md and creates missionDir.
       Routes back to understand_phase if the user requests edits.
-    workflow: ./phases/plan-propose.yaml
+    workflow: ./plan/propose.yaml
     input_mapping:
       mission_name: "{{ workflow.input.mission_name }}"
       working_directory: "{{ workflow.input.working_directory }}"
@@ -96,7 +96,7 @@ agents:
       conductor cannot set it from a runtime value).
       On blockers → human gate for user to resolve, then retry.
       Skips if readiness-report.yaml already exists with has_blockers=false.
-    workflow: ./phases/readiness-check.yaml
+    workflow: ./plan/readiness-check.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
@@ -108,7 +108,7 @@ agents:
     description: |
       Write architecture.md — the authoritative system design document.
       Skips if already written.
-    workflow: ./phases/plan-architecture.yaml
+    workflow: ./plan/architecture.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
@@ -120,7 +120,7 @@ agents:
     description: |
       Generate validation-contract.md (per-area + cross-area assertions)
       and validation-state.yaml. Skips if already written.
-    workflow: ./phases/plan-contract.yaml
+    workflow: ./plan/contract.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
@@ -133,7 +133,7 @@ agents:
       Decompose the contract into features.yaml.
       Validates the coverage invariant: every VAL-* ID claimed by exactly one feature.
       Skips if features.yaml already exists and passes coverage check.
-    workflow: ./phases/plan-features.yaml
+    workflow: ./plan/features.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
@@ -146,7 +146,7 @@ agents:
       Write all remaining worker artifacts: AGENTS.md, services.yaml,
       skills/<type>/SKILL.md (one per unique skill_name in features.yaml),
       and init.sh. Skips artifacts that already exist.
-    workflow: ./phases/plan-write-artifacts.yaml
+    workflow: ./plan/write-artifacts.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:

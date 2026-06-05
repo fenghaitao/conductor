@@ -422,6 +422,9 @@ agents:
             # If YAML extraction failed, store raw text
             data = {"raw": handoff_yaml}
 
+        if not isinstance(data, dict):
+            data = {"raw": str(data)}
+
         data["feature_id"] = feature_id
 
         with open(path, "w") as f:
