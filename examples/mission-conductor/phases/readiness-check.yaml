@@ -7,8 +7,10 @@
 #   1. Dependency readiness  — packages, external APIs, credentials, CLI tools
 #   2. Validation readiness  — test toolchain, dev server startup, browser automation
 #
-# Also measures system resources and writes readiness-report.yaml so that
-# user-testing-phase.yaml can set max_concurrent correctly.
+# Also measures system resources and writes an ADVISORY
+# recommended_max_concurrent into readiness-report.yaml for the user to
+# review. (user-testing-phase.yaml uses a static max_concurrent — conductor
+# does not support setting it from a runtime value.)
 #
 # On blockers → human gate for user to resolve, then retry.
 # Idempotent: if readiness-report.yaml exists and has_blockers == false, skip.
@@ -207,7 +209,10 @@ agents:
             }
 
         blockers = check.get("blockers", [])
-        has_blockers = len(blockers) > 0 and not check.get("all_clear", False)
+        # Any listed blocker means blocked — never let an inconsistent
+        # all_clear:true (model said "clear" yet still listed blockers)
+        # silently wave the mission through. all_clear:false alone also blocks.
+        has_blockers = len(blockers) > 0 or check.get("all_clear", True) is False
         rec = check.get("resource_assessment", {}).get("recommended_max_concurrent", 2)
 
         report = {

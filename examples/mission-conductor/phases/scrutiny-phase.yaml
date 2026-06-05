@@ -278,8 +278,8 @@ agents:
       VALIDATOR RESULTS:
       {{ run_validators.output.results | tojson }}
 
-      FEATURE REVIEWS:
-      (collected from review_features above)
+      FEATURE REVIEWS (one review_yaml block per completed feature):
+      {{ review_features.outputs | tojson }}
 
       MISSION.MD (for context):
       {{ load_milestone_data.output.mission_md }}

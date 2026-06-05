@@ -126,10 +126,16 @@ agents:
                     parts.append(f"### {lf.relative_to(library_dir)}\n{lf.read_text()}")
                 library_context = "\n\n".join(parts)
 
-        # Validate services.yaml schema before passing to worker
+        # Validate services.yaml schema before passing to worker. A missing
+        # or empty file is itself a problem — the planning phase failed to
+        # produce it (e.g. the LLM emitted unparseable YAML that save_services
+        # rejected) — so flag it rather than letting services_ok default True.
         services_ok = True
         services_warn = ""
-        if services_yaml:
+        if not services_yaml:
+            services_ok = False
+            services_warn = "services.yaml is missing or empty"
+        elif services_yaml:
             try:
                 svcs = yaml.load(services_yaml)
                 if not isinstance(svcs, dict):

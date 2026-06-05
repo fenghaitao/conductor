@@ -91,7 +91,9 @@ agents:
       Actively verify all dependencies (packages, APIs, credentials, tools)
       and the validation toolchain (test runner, dev server, browser) before
       committing to an architecture. Measures system resources and writes
-      readiness-report.yaml (used by user-testing-phase for max_concurrent).
+      readiness-report.yaml with an ADVISORY recommended_max_concurrent for
+      the user to review (user-testing-phase uses a static max_concurrent —
+      conductor cannot set it from a runtime value).
       On blockers → human gate for user to resolve, then retry.
       Skips if readiness-report.yaml already exists with has_blockers=false.
     workflow: ./phases/readiness-check.yaml
