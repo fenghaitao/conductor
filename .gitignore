@@ -84,3 +84,6 @@ src/conductor/designer/frontend/node_modules/
 
 .playwright-mcp/
 tmp/
+
+# Claude CLI credentials (OAuth tokens for subscription auth)
+.claude/
