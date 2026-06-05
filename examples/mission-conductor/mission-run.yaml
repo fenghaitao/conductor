@@ -105,6 +105,9 @@ agents:
             if f.get("status") == "pending":
                 milestone_pending.setdefault(ms, []).append(f)
 
+        # Features a worker handed back for an orchestrator decision.
+        returned = [f for f in features if f.get("status") == "returned"]
+
         # Pick first milestone (in order) with pending features
         current_milestone = None
         for ms in seen_milestones:
@@ -112,22 +115,24 @@ agents:
                 current_milestone = ms
                 break
 
-        if not current_milestone:
-            print(json.dumps({
-                "state": "all_done",
-                "milestone": "",
-                "pending_features": [],
-                "total_features": len(features),
-                "completed_features": sum(1 for f in features if f.get("status") == "completed"),
-            }))
-            sys.exit(0)
+        # Priority: pending work first; then resolve returned features via
+        # orchestrator review; only then is the mission truly done. Without
+        # the "returned" branch a worker that returned a feature would let
+        # the mission reach all_done with that feature silently unaddressed.
+        if current_milestone:
+            state = "ready"
+        elif returned:
+            state = "returned"
+        else:
+            state = "all_done"
 
         print(json.dumps({
-            "state": "ready",
-            "milestone": current_milestone,
-            "pending_features": milestone_pending[current_milestone],
+            "state": state,
+            "milestone": current_milestone or "",
+            "pending_features": milestone_pending.get(current_milestone, []),
             "total_features": len(features),
             "completed_features": sum(1 for f in features if f.get("status") == "completed"),
+            "returned_features": [f.get("id") for f in returned],
         }))
       - "{{ workflow.input.mission_dir }}"
     output:
@@ -136,7 +141,10 @@ agents:
       pending_features:   { type: array }
       total_features:     { type: number }
       completed_features: { type: number }
+      returned_features:  { type: array }
     routes:
+      - to: orchestrator_review_returned
+        when: "state == 'returned'"
       - to: collect_skill_feedback
         when: "state == 'all_done'"
       - to: feature_runner
@@ -241,6 +249,21 @@ agents:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
       - to: $end
+
+  # ── Orchestrator review (mid-mission, returned features) ───────────────────
+  - name: orchestrator_review_returned
+    type: workflow
+    description: |
+      Resolve features a worker handed back (return_to_orchestrator → status
+      "returned") before the mission can complete. The review resets them to
+      pending with updated guidance, accepts them, or escalates to the user;
+      every returned feature leaves "returned" status so this never loops.
+      Routes back to get_milestone so resolved features re-enter the run.
+    workflow: ./phases/orchestrator-review.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: get_milestone
 
   # ── Scrutiny phase ────────────────────────────────────────────────────────
   - name: run_scrutiny

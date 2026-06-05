@@ -51,22 +51,35 @@ agents:
         mission_dir = pathlib.Path(sys.argv[1])
         yaml = YAML()
 
-        # Find handoffs where return_to_orchestrator is true
-        issues = []
-        handoffs_dir = mission_dir / "handoffs"
-        if handoffs_dir.exists():
-            for f in sorted(handoffs_dir.glob("*.yaml")):
+        # Returned features (status == "returned", set by run-feature's
+        # mark_complete when a worker sets return_to_orchestrator) are the
+        # authoritative work list. Driving off features.yaml — not just the
+        # handoff flag — guarantees the mid-loop review always has something
+        # to resolve, so get_milestone's "returned" branch can't spin.
+        def load_handoff(fid):
+            hp = mission_dir / "handoffs" / f"{str(fid).replace('.', '-')}.yaml"
+            if hp.exists():
                 try:
-                    data = yaml.load(f.read_text())
-                    if data.get("return_to_orchestrator"):
-                        issues.append({
-                            "feature_id": data.get("feature_id", f.stem),
-                            "salient_summary": data.get("salient_summary", ""),
-                            "what_was_left_undone": data.get("what_was_left_undone", ""),
-                            "discovered_issues": data.get("discovered_issues", []),
-                        })
+                    return yaml.load(hp.read_text()) or {}
                 except Exception:
-                    pass
+                    return {}
+            return {}
+
+        issues = []
+        features_path = mission_dir / "features.yaml"
+        if features_path.exists():
+            fdata = yaml.load(features_path.read_text()) or {}
+            for f in fdata.get("features", []):
+                if f.get("status") != "returned":
+                    continue
+                ho = load_handoff(f.get("id"))
+                issues.append({
+                    "feature_id": f.get("id"),
+                    "return_count": int(f.get("return_count", 0) or 0),
+                    "salient_summary": ho.get("salient_summary", ""),
+                    "what_was_left_undone": ho.get("what_was_left_undone", ""),
+                    "discovered_issues": ho.get("discovered_issues", []),
+                })
 
         def read(p): return p.read_text() if p.exists() else ""
         print(json.dumps({
@@ -190,34 +203,69 @@ agents:
         escalation_summary = triage.get("escalation_summary", "")
         actions = triage.get("actions", [])
 
+        MAX_RETURNS = 2  # re-attempt cap before a returned feature is escalated
+
         applied = 0
         agents_md_path = mission_dir / "AGENTS.md"
         features_path = mission_dir / "features.yaml"
         features_data = yaml.load(features_path.read_text())
+        features = features_data.get("features", [])
+        by_id = {f.get("id"): f for f in features}
 
+        # Apply each triage action, remembering the decision per feature so
+        # the sweep below can resolve EVERY returned feature.
+        action_by_id = {}
         for action in actions:
+            fid = action.get("feature_id", "")
             a_type = action.get("action")
-            feature_id = action.get("feature_id", "")
+            action_by_id[fid] = a_type
 
             if a_type == "update_guidance":
                 addition = action.get("agents_md_addition", "")
                 if addition and agents_md_path.exists():
-                    current = agents_md_path.read_text()
-                    agents_md_path.write_text(current + "\n\n" + addition)
+                    agents_md_path.write_text(agents_md_path.read_text() + "\n\n" + addition)
                     applied += 1
-
             elif a_type == "reset_feature":
-                new_desc = action.get("new_feature_description", "")
-                for f in features_data.get("features", []):
-                    if f.get("id") == feature_id:
-                        f["status"] = "pending"
-                        if new_desc:
-                            f["description"] = new_desc
-                        applied += 1
-                        break
-
+                f = by_id.get(fid)
+                if f is not None:
+                    new_desc = action.get("new_feature_description", "")
+                    if new_desc:
+                        f["description"] = new_desc
+                    applied += 1
             elif a_type == "dismiss":
-                applied += 1  # nothing to write, just acknowledge
+                applied += 1  # acknowledged; status resolved in the sweep
+
+        # Forward-progress sweep: move every still-"returned" feature to a
+        # non-returned status so get_milestone advances and never re-routes
+        # here for the same feature (which would loop forever).
+        forced_escalation = False
+        escalated_ids = []
+        for f in features:
+            if f.get("status") != "returned":
+                continue
+            fid = f.get("id")
+            decision = action_by_id.get(fid, "escalate")
+            attempts = int(f.get("return_count", 0) or 0)
+            if attempts >= MAX_RETURNS:
+                f["status"] = "escalated"          # too many returns — park it
+                escalated_ids.append(fid)
+                forced_escalation = True
+            elif decision in ("reset_feature", "update_guidance"):
+                f["status"] = "pending"            # re-attempt with new context
+            elif decision == "dismiss":
+                f["status"] = "completed"          # accepted as-is
+            else:                                  # escalate / no decision
+                f["status"] = "escalated"
+                escalated_ids.append(fid)
+                forced_escalation = True
+
+        needs_escalation = bool(needs_escalation) or forced_escalation
+        if forced_escalation and not escalation_summary:
+            escalation_summary = (
+                "These returned features could not be resolved automatically "
+                "(retry limit reached or flagged for escalation): "
+                f"{', '.join(str(i) for i in escalated_ids)}. Please advise."
+            )
 
         with open(features_path, "w") as fp:
             yaml.dump(features_data, fp)

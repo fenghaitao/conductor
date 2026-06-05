@@ -457,15 +457,27 @@ agents:
         path = mission_dir / "features.yaml"
         data = yaml.load(path.read_text())
 
+        new_status = "completed"
         for f in data.get("features", []):
             if f.get("id") == feature_id:
-                f["status"] = "completed" if not return_to_orch else "failed"
+                if return_to_orch:
+                    # Distinct from "failed": the worker explicitly handed
+                    # this back for an orchestrator decision. get_milestone
+                    # surfaces "returned" features to orchestrator review
+                    # instead of silently dropping them. return_count bounds
+                    # how many times we re-attempt before forcing escalation.
+                    new_status = "returned"
+                    f["status"] = "returned"
+                    f["return_count"] = int(f.get("return_count", 0) or 0) + 1
+                else:
+                    new_status = "completed"
+                    f["status"] = "completed"
                 break
 
         with open(path, "w") as fp:
             yaml.dump(data, fp)
 
-        print(json.dumps({"feature_id": feature_id, "status": "failed" if return_to_orch else "completed"}))
+        print(json.dumps({"feature_id": feature_id, "status": new_status}))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.feature_id }}"
       - "{{ save_handoff.output.return_to_orchestrator }}"
