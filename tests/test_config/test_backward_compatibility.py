@@ -36,6 +36,12 @@ EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
 def get_copilot_example_files() -> list[Path]:
     """Get all example YAML files that use the Copilot provider.
 
+    Selects examples by their actual resolved provider name rather than a
+    filename heuristic, so non-Copilot examples (e.g. ``pydantic-deep-qa``,
+    Claude variants) are excluded even if their filename doesn't say so.
+    Unloadable examples are skipped here — ``test_all_examples_load_successfully``
+    is responsible for catching those.
+
     Returns:
         List of paths to Copilot example YAML files
     """
@@ -43,11 +49,13 @@ def get_copilot_example_files() -> list[Path]:
     copilot_examples = []
 
     for example in all_examples:
-        # Skip Claude-specific examples
-        if "claude" in example.name.lower():
+        try:
+            config = load_config(example)
+        except Exception:
             continue
 
-        copilot_examples.append(example)
+        if config.workflow.runtime.provider.name in ("copilot", "openai-agents"):
+            copilot_examples.append(example)
 
     return copilot_examples
 

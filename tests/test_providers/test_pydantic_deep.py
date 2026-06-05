@@ -667,7 +667,9 @@ class TestSchemaWiring:
         from conductor.config.schema import RuntimeConfig
 
         config = RuntimeConfig(provider="pydantic-deep")
-        assert config.provider == "pydantic-deep"
+        # provider is coerced to a ProviderSettings object (string shorthand
+        # -> {"name": ...}), so compare the resolved name.
+        assert config.provider.name == "pydantic-deep"
 
     def test_agent_def_accepts_pydantic_deep_provider(self) -> None:
         agent = AgentDef(

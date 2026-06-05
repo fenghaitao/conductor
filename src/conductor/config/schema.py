@@ -1352,7 +1352,12 @@ class ProviderSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: Literal[
-        "copilot", "openai-agents", "claude", "claude-agent-sdk", "claude-subscription"
+        "copilot",
+        "openai-agents",
+        "claude",
+        "claude-agent-sdk",
+        "claude-subscription",
+        "pydantic-deep",
     ] = "copilot"
     """SDK provider to use for agent execution."""
 
