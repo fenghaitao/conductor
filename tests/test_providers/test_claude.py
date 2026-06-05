@@ -3181,6 +3181,7 @@ class TestClaudeProviderAuthToken:
 
         mock_async_anthropic.assert_called_once_with(
             auth_token="test-token",
+            api_key=None,
             timeout=600.0,
         )
 

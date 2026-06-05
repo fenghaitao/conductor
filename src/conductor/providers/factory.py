@@ -104,31 +104,15 @@ async def create_provider(
                 "OpenAI Agents provider not yet implemented",
                 suggestion="Use 'copilot' provider for now",
             )
-        case "claude":
+        case "claude" | "claude-subscription":
             if not ANTHROPIC_SDK_AVAILABLE:
                 raise ProviderError(
                     "Claude provider requires anthropic SDK",
                     suggestion="Install with: uv add 'anthropic>=0.77.0,<1.0.0'",
                 )
+            auth_token = resolve_auth_token() if provider_type == "claude-subscription" else None
             provider = ClaudeProvider(
-                model=default_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout if timeout is not None else 600.0,
-                mcp_servers=mcp_servers,
-                max_agent_iterations=max_agent_iterations,
-                max_session_seconds=max_session_seconds,
-                default_reasoning_effort=default_reasoning_effort,
-            )
-        case "claude-subscription":
-            if not ANTHROPIC_SDK_AVAILABLE:
-                raise ProviderError(
-                    "Claude provider requires anthropic SDK",
-                    suggestion="Install with: uv add 'anthropic>=0.77.0,<1.0.0'",
-                )
-            token = resolve_auth_token()
-            provider = ClaudeProvider(
-                auth_token=token,
+                auth_token=auth_token,
                 model=default_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -203,9 +187,15 @@ async def create_provider(
             )
 
     if validate and not await provider.validate_connection():
+        suggestion = (
+            "Run 'claude login' to refresh your subscription token, "
+            "or check your network connection"
+            if provider_type == "claude-subscription"
+            else "Check your credentials and network connection"
+        )
         raise ProviderError(
             f"Failed to connect to {provider_type} provider",
-            suggestion="Check your credentials and network connection",
+            suggestion=suggestion,
         )
 
     return provider

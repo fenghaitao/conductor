@@ -40,6 +40,7 @@ class TestClaudeParameterPassing:
 
         # Verify parameters were passed to ClaudeProvider constructor
         mock_claude_class.assert_called_once_with(
+            auth_token=None,
             model="claude-3-opus-20240229",
             temperature=0.7,
             max_tokens=4096,

@@ -1404,12 +1404,13 @@ class ProviderSettings(BaseModel):
             if extras:
                 raise ValueError(
                     f"Provider fields {extras} are only supported when name='copilot'. "
-                    "Structured provider config for other providers is not yet implemented."
+                    "Structured routing config for other providers is not supported."
                 )
             if self.base_url is not None or self.api_key is not None:
                 raise ValueError(
-                    f"Structured provider config (base_url/api_key) for name='{self.name}' "
-                    "is not yet implemented; use environment variables for the underlying SDK."
+                    f"Structured provider config (base_url/api_key) is not supported "
+                    f"for name='{self.name}'; use the string shorthand "
+                    f"(provider: {self.name}) and configure credentials via environment variables."
                 )
 
         if self.azure is not None and self.type != "azure":

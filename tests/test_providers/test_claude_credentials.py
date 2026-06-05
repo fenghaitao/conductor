@@ -98,6 +98,20 @@ class TestResolveAuthToken:
             result = resolve_auth_token(auth_token="")
             assert result == "env-token"
 
+    def test_empty_oauth_token_in_file_raises_specific_error(self, tmp_path: Path) -> None:
+        """A credentials file with oauth_token: '' raises a specific ProviderError."""
+        creds_file = tmp_path / ".credentials.json"
+        creds_file.write_text(json.dumps({"oauth_token": ""}))
+
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+            creds_file,
+        ):
+            with pytest.raises(ProviderError) as exc_info:
+                resolve_auth_token()
+            assert "empty oauth_token" in str(exc_info.value)
+            assert str(creds_file) in str(exc_info.value)
+
     def test_never_reads_api_key_env(self, tmp_path: Path) -> None:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(json.dumps({"oauth_token": "file-token"}))

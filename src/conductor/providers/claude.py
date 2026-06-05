@@ -214,7 +214,9 @@ class ClaudeProvider(AgentProvider):
 
         self._client: AsyncAnthropic | None = None
         self._api_key = api_key
-        self._auth_token = auth_token
+        # Normalize empty string to None so the is-not-None guard in
+        # _initialize_client and the truthiness check in resolve_auth_token agree.
+        self._auth_token = auth_token or None
         self._default_model = model or "claude-3-5-sonnet-latest"
 
         # Validate and store temperature (enforce schema bounds at instantiation)
@@ -265,6 +267,9 @@ class ClaudeProvider(AgentProvider):
         kwargs: dict[str, Any] = {"timeout": self._timeout}
         if self._auth_token is not None:
             kwargs["auth_token"] = self._auth_token
+            # Explicitly suppress the SDK's ANTHROPIC_API_KEY env-var fallback so
+            # only the Authorization: Bearer header is sent, not both auth headers.
+            kwargs["api_key"] = None
         else:
             kwargs["api_key"] = self._api_key
 

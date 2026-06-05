@@ -73,7 +73,7 @@ class TestProviderSettingsValidation:
             ProviderSettings(name="claude", type="anthropic")
 
     def test_non_copilot_with_base_url_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="not yet implemented"):
+        with pytest.raises(ValidationError, match="not supported"):
             ProviderSettings(name="claude", base_url="http://anthropic-proxy/v1")
 
     def test_azure_options_require_azure_type(self) -> None:
