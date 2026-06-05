@@ -148,12 +148,17 @@ agents:
                 for vid in f.get("fulfills", []):
                     milestone_assertion_ids.add(vid)
 
-        # Filter to only pending assertions
+        # Collect every assertion not yet confirmed passing. "failed" and
+        # "blocked" MUST be re-collected here: a fix feature gets implemented
+        # for a failed assertion, but if we only re-tested "pending" ids the
+        # assertion would never be re-exercised and the milestone would seal
+        # with it still failing. "blocked" is re-tried in case the blocking
+        # dependency has since become available.
         state_path = mission_dir / "validation-state.yaml"
         state = yaml.load(state_path.read_text()) if state_path.exists() else {}
         pending_ids = [
             vid for vid in milestone_assertion_ids
-            if state.get(vid, "pending") == "pending"
+            if state.get(vid, "pending") in ("pending", "failed", "blocked")
         ]
 
         if not pending_ids:
@@ -274,20 +279,26 @@ agents:
             except Exception:
                 pass
 
-        # Update state
+        # Record every outcome — including blocked — so the next
+        # collect_assertions pass can re-test still-unverified ids.
         for vid in passed:
             state[vid] = "passed"
         for vid in failed:
             state[vid] = "failed"
+        for vid in blocked:
+            state[vid] = "blocked"
 
         with open(state_path, "w") as f:
             yaml.dump(state, f)
 
+        # A blocked assertion is NOT a pass — E2E could not be exercised, so
+        # the milestone must not seal on it. The gate clears only when there
+        # are zero failed AND zero blocked assertions.
         print(json.dumps({
             "passed": passed,
             "failed": failed,
             "blocked": blocked,
-            "testing_passed": len(failed) == 0,
+            "testing_passed": len(failed) == 0 and len(blocked) == 0,
         }))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
@@ -352,14 +363,34 @@ agents:
             for vid in failed_ids
         }
 
+        def is_fix_for(f, vid):
+            return (vid in f.get("fulfills", [])
+                    and str(f.get("description", "")).startswith(
+                        f"Fix failing assertion {vid}"))
+
         injected = 0
-        for i, vid in enumerate(failed_ids):
+        reset = 0
+        fix_ids = []
+        next_sub = max_sub
+        for vid in failed_ids:
+            # If a fix feature for this assertion already exists (the
+            # assertion failed on a prior round), re-attempt it rather than
+            # appending a duplicate — two features fulfilling the same VAL-*
+            # id would violate the coverage invariant.
+            existing = next((f for f in features if is_fix_for(f, vid)), None)
+            if existing is not None:
+                existing["status"] = "pending"
+                fix_ids.append(existing["id"])
+                reset += 1
+                continue
+
             orig = original_features.get(vid)
             orig_desc = orig.get("description", "unknown feature") if orig else "unknown feature"
             skill = orig.get("skill_name", "backend-worker") if orig else "backend-worker"
 
-            fix_id = f"{ms_num}.{max_sub + i + 1}"
-            fix_feature = {
+            next_sub += 1
+            fix_id = f"{ms_num}.{next_sub}"
+            features.append({
                 "id": fix_id,
                 "milestone": milestone,
                 "description": f"Fix failing assertion {vid} (originally in: {orig_desc})",
@@ -368,17 +399,15 @@ agents:
                 "fulfills": [vid],
                 "status": "pending",
                 "worker_session_id": "",
-            }
-            features.append(fix_feature)
+            })
+            fix_ids.append(fix_id)
             injected += 1
 
         data["features"] = features
         with open(features_path, "w") as f:
             yaml.dump(data, f)
 
-        print(json.dumps({"injected": injected, "fix_feature_ids": [
-            f"{ms_num}.{max_sub + i + 1}" for i in range(len(failed_ids))
-        ]}))
+        print(json.dumps({"injected": injected, "reset": reset, "fix_feature_ids": fix_ids}))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
       - "{{ update_state.output.failed | tojson }}"
