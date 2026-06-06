@@ -1,0 +1,16 @@
+has_blockers: false
+blockers: []
+warnings:
+- "Mission references 'pyyaml' but project uses 'ruamel.yaml' — functionally equivalent,
+  API differs slightly (YAML(typ='safe').load() vs yaml.safe_load()). Implementation
+  must use ruamel.yaml."
+- "35 pre-existing ruff lint errors in codebase (not from this mission)."
+- "_conductor_run_dir() resolves to CWD-relative 'tmp/' when CONDUCTOR_TMPDIR/TMPDIR
+  unset — event logs and checkpoints live in ./tmp/, not system $TMPDIR. This is expected
+  behavior."
+resource_assessment:
+  available_memory_mb: 8876
+  cpu_count: 8
+  dev_server_startup_seconds:
+  recommended_max_concurrent: 4
+  rationale: "CLI/API only — no browser. min(cpu_count/2, 4) = 4. Plenty of memory."

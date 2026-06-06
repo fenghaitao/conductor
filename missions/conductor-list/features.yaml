@@ -1,0 +1,30 @@
+features:
+  - id: "4.1"
+    milestone: "templates"
+    description: "Implement `conductor list templates` command — enumerates built-in and plugin-provided workflow templates with Rich table output (Name, Description, Path columns) and `--json` flag for machine-readable JSON array output. Extracts template name and description from YAML frontmatter comment headers. Degrades gracefully when no template directory exists and excludes non-template files."
+    skill_name: "cli-worker"
+    expected_behavior: "Running `conductor list templates` displays a Rich table with at least 3 entries (pipeline, fan-out, loop) each with non-empty Name, Description, and Path. `--json` emits a valid JSON array where each object has `name`, `description`, and `path` fields matching the table. Exit code is 0 on success. When the template directory is empty or missing, prints a friendly message and exits 0. Non-template YAML files without parsable comment headers are excluded."
+    fulfills:
+      - VAL-TMPL-001
+      - VAL-TMPL-002
+      - VAL-TMPL-003
+      - VAL-TMPL-004
+      - VAL-TMPL-005
+      - VAL-TMPL-006
+    status: pending
+    worker_session_id: ""
+
+  - id: "5.1"
+    milestone: "cross-area"
+    description: "Cross-area integration validation tests ensuring all `conductor list` subcommands work together cohesively. Covers: summary dashboard reflecting all discovery areas (runs, workflows, registries, templates), running workflows appearing in both live list and recent history, template-initiated workflows surfacing in local workflow discovery, checkpoint-resume lifecycle reflected across list commands, registry listing consistency between `list registries` and `registry list`, and JSON scripting contract consistency across all subcommands."
+    skill_name: "test-worker"
+    expected_behavior: "All cross-area validation test cases pass. The summary dashboard shows zero counts gracefully. A background workflow transitions from `list runs` (running) to `list runs --recent` (completed/failed). A template-initiated workflow appears in `list workflows`. A resumed workflow appears as running in `list runs` and completes in recent history. `list registries` and `registry list` produce identical output. All `--json` invocations emit valid JSON arrays to stdout with exit code 0; `conductor list --json` is rejected with exit code 1 and guidance."
+    fulfills:
+      - VAL-CROSS-001
+      - VAL-CROSS-002
+      - VAL-CROSS-003
+      - VAL-CROSS-004
+      - VAL-CROSS-005
+      - VAL-CROSS-006
+    status: pending
+    worker_session_id: ""
