@@ -1,0 +1,69 @@
+# Implement Milestone
+#
+# Sub-workflow invoked by run.yaml.
+# Implements ALL pending features in one milestone, sequentially.
+
+workflow:
+  name: mission-implement
+  description: Implement all pending features in a single milestone
+  version: "1.0.0"
+  entry_point: feature_runner
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    milestone:
+      type: string
+      required: true
+    pending_features:
+      type: array
+      required: true
+      description: Array of {id, description, skill_name, expected_behavior, fulfills, milestone} objects
+
+  limits:
+    max_iterations: 300
+
+  context:
+    mode: accumulate
+
+agents: []
+
+for_each:
+  - name: feature_runner
+    type: for_each
+    description: |
+      Implement each pending feature in this milestone, one at a time.
+      Sequential (max_concurrent: 1) — features may touch the same files.
+      Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
+    source: workflow.input.pending_features
+    as: feature
+    max_concurrent: 1
+    failure_mode: continue_on_error
+
+    agent:
+      name: run_one_feature
+      type: workflow
+      workflow: ./0-implement-feature.yaml
+      input_mapping:
+        mission_dir:         "{{ workflow.input.mission_dir }}"
+        feature_id:          "{{ feature.id }}"
+        feature_description: "{{ feature.description }}"
+        skill_name:          "{{ feature.skill_name }}"
+        expected_behavior:   "{{ feature.expected_behavior }}"
+        fulfills:            "{{ feature.fulfills | join(', ') }}"
+        milestone:           "{{ workflow.input.milestone }}"
+
+    routes:
+      - to: $end
+
+output:
+  milestone: "{{ workflow.input.milestone }}"

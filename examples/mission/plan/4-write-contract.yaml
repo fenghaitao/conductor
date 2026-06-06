@@ -326,7 +326,7 @@ agents:
         contract = (mission_dir / "validation-contract.md").read_text()
 
         # Extract all VAL-AREA-NNN IDs in order of appearance
-        ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z]+-\d+", contract)))
+        ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z0-9]+-\d+", contract)))
 
         yaml = YAML()
         yaml.default_flow_style = False

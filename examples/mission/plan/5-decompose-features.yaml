@@ -61,7 +61,7 @@ agents:
         data = yaml.load(features_path)
         contract = contract_path.read_text()
 
-        contract_ids = set(re.findall(r"VAL-[A-Z]+-\d+", contract))
+        contract_ids = set(re.findall(r"VAL-[A-Z0-9]+-\d+", contract))
         features = data.get("features", [])
         all_fulfills = []
         for f in features:
@@ -106,7 +106,7 @@ agents:
         def read(p): return p.read_text() if p.exists() else ""
         contract_md = read(mission_dir / "validation-contract.md")
         # Extract VAL-* IDs in order so the LLM knows exactly which to fulfill
-        contract_ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z]+-\d+", contract_md)))
+        contract_ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z0-9]+-\d+", contract_md)))
         print(json.dumps({
             "mission_md":      read(mission_dir / "mission.md"),
             "architecture_md": read(mission_dir / "architecture.md"),
@@ -248,7 +248,7 @@ agents:
         data = yaml.load((mission_dir / "features.yaml").read_text())
         contract = (mission_dir / "validation-contract.md").read_text()
 
-        contract_ids = set(re.findall(r"VAL-[A-Z]+-\d+", contract))
+        contract_ids = set(re.findall(r"VAL-[A-Z0-9]+-\d+", contract))
         all_fulfills = []
         for f in data.get("features", []):
             all_fulfills.extend(f.get("fulfills", []))

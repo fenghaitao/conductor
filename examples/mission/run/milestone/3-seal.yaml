@@ -1,0 +1,96 @@
+# Seal Milestone
+#
+# Writes validation/<milestone>/sealed.yaml to mark this milestone as sealed.
+# Counts assertions passed for the milestone's features.
+# Once sealed, future scope changes target new milestones.
+
+workflow:
+  name: mission-seal
+  description: Seal a completed milestone
+  version: "1.0.0"
+  entry_point: seal_milestone
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    milestone:
+      type: string
+      required: true
+
+  limits:
+    max_iterations: 5
+
+agents:
+  - name: seal_milestone
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import datetime, json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        seal_dir = mission_dir / "validation" / milestone
+        seal_dir.mkdir(parents=True, exist_ok=True)
+        seal_path = seal_dir / "sealed.yaml"
+
+        state_path = mission_dir / "validation-state.yaml"
+        state = yaml.load(state_path.read_text()) if state_path.exists() else {}
+
+        features_path = mission_dir / "features.yaml"
+        features_data = yaml.load(features_path.read_text()) if features_path.exists() else {}
+        if not isinstance(features_data, dict):
+            features_data = {}
+        milestone_features = [
+            f for f in features_data.get("features", [])
+            if f.get("milestone") == milestone and f.get("status") == "completed"
+        ]
+        milestone_val_ids = set()
+        for f in milestone_features:
+            for vid in f.get("fulfills", []):
+                milestone_val_ids.add(vid)
+
+        passed = sum(1 for vid in milestone_val_ids if state.get(vid) == "passed")
+
+        seal_data = {
+            "milestone": milestone,
+            "sealed_at": datetime.datetime.now().isoformat(),
+            "features_completed": len(milestone_features),
+            "assertions_passed": passed,
+            "assertions_total": len(milestone_val_ids),
+        }
+        with open(seal_path, "w") as f:
+            yaml.dump(seal_data, f)
+
+        print(json.dumps({
+            "sealed": True,
+            "seal_path": str(seal_path),
+            "milestone": milestone,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      sealed:     { type: boolean }
+      seal_path:  { type: string }
+      milestone:  { type: string }
+    routes:
+      - to: $end
+
+output:
+  sealed:     "{{ seal_milestone.output.sealed }}"
+  seal_path:  "{{ seal_milestone.output.seal_path }}"
+  milestone:  "{{ seal_milestone.output.milestone }}"

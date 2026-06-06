@@ -1,4 +1,4 @@
-# Verify Assertions
+# Verify Milestone
 #
 # Auto-injected quality gate after scrutiny passes for each milestone.
 # Tests pending VAL-* assertions through REAL user surfaces.
@@ -16,7 +16,7 @@
 #   4. inject_fix_features — script: for failed assertions, add fix features to features.yaml
 
 workflow:
-  name: mission-verify-assertions
+  name: mission-verify
   description: Test VAL-* assertions through real user surfaces for a milestone
   version: "1.0.0"
   entry_point: collect_assertions

@@ -1,4 +1,4 @@
-# Review Features
+# Review Milestone
 #
 # Auto-injected quality gate at the end of each milestone.
 #   1. Run programmatic validators (test, typecheck, lint)
@@ -13,7 +13,7 @@
 #   5. handle_failures       — script: reset failed features to pending
 
 workflow:
-  name: mission-review-features
+  name: mission-review
   description: Run validators and review completed features for a milestone
   version: "1.0.0"
   entry_point: run_validators
