@@ -4,18 +4,19 @@
 # consumed by 1-propose.yaml.
 #
 # Steps:
-#   1. inspect_codebase  — script: directory listing, README, package files
-#   2. clarify           — LLM asks user clarifying questions about requirements,
-#                          infrastructure, tech choices, validation approach
-#  2b. clarify_answers   — human gate: user answers the clarifying questions
-#   3. investigate       — LLM deep-dives into codebase, researches tech if needed
-#   4. summarize_plan    — LLM produces a structured planning_summary
+#   0. check_existing     — skip if mission.md already written (idempotent)
+#   1. inspect_codebase   — script: directory listing, README, package files
+#   2. clarify            — LLM asks user clarifying questions about requirements,
+#                           infrastructure, tech choices, validation approach
+#  2b. clarify_answers    — human gate: user answers the clarifying questions
+#   3. investigate        — LLM deep-dives into codebase, researches tech if needed
+#   4. summarize_plan     — LLM produces a structured planning_summary
 
 workflow:
   name: mission-plan-understand
   description: Understand requirements and codebase before proposing
   version: "1.0.0"
-  entry_point: inspect_codebase
+  entry_point: check_existing
 
   runtime:
     provider:
@@ -44,6 +45,37 @@ workflow:
     max_iterations: 60
 
 agents:
+  # ── Step 0 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    description: Skip if mission.md already exists (idempotent).
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+
+        mission_name = sys.argv[1]
+        mission_dir = pathlib.Path("missions") / mission_name
+        mission_md = mission_dir / "mission.md"
+
+        if mission_md.exists():
+            print(json.dumps({
+                "state": "done",
+                "working_directory": (mission_dir / "working_directory.txt").read_text().strip()
+                    if (mission_dir / "working_directory.txt").exists() else str(pathlib.Path.cwd()),
+            }))
+        else:
+            print(json.dumps({"state": "ready"}))
+      - "{{ workflow.input.mission_name }}"
+    output:
+      state:             { type: string }
+      working_directory: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: inspect_codebase
+
   # ── Step 1 ──────────────────────────────────────────────────────────────────
   - name: inspect_codebase
     type: script
@@ -234,5 +266,5 @@ agents:
       - to: $end
 
 output:
-  planning_summary: "{{ investigate.output.planning_summary }}"
-  working_directory: "{{ inspect_codebase.output.working_directory }}"
+  planning_summary: "{{ investigate.output.planning_summary if investigate is defined else '' }}"
+  working_directory: "{{ check_existing.output.working_directory if check_existing is defined else inspect_codebase.output.working_directory }}"

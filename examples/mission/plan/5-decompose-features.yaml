@@ -101,19 +101,24 @@ agents:
     args:
       - "-c"
       - |
-        import json, pathlib, sys
+        import json, pathlib, re, sys
         mission_dir = pathlib.Path(sys.argv[1])
         def read(p): return p.read_text() if p.exists() else ""
+        contract_md = read(mission_dir / "validation-contract.md")
+        # Extract VAL-* IDs in order so the LLM knows exactly which to fulfill
+        contract_ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z]+-\d+", contract_md)))
         print(json.dumps({
             "mission_md":      read(mission_dir / "mission.md"),
             "architecture_md": read(mission_dir / "architecture.md"),
-            "contract_md":     read(mission_dir / "validation-contract.md"),
+            "contract_md":     contract_md,
+            "contract_ids":    contract_ids,
         }))
       - "{{ workflow.input.mission_dir }}"
     output:
       mission_md:      { type: string }
       architecture_md: { type: string }
       contract_md:     { type: string }
+      contract_ids:    { type: array }
     routes:
       - to: generate_features
 
@@ -141,6 +146,14 @@ agents:
       COVERAGE ISSUES TO FIX FROM PRIOR ATTEMPT:
       {{ check_existing.output.coverage_issues }}
       {% endif %}
+
+      ════════════════════════════════════════════
+      CRITICAL: You MUST use EXACTLY these VAL-* IDs from the contract.
+      Do NOT invent new IDs. Each ID must appear in exactly one feature.
+      ════════════════════════════════════════════
+      {% for vid in load_context.output.contract_ids %}
+      - {{ vid }}
+      {% endfor %}
 
       Produce a YAML document with this exact structure:
 
