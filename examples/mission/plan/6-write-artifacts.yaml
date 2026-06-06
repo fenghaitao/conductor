@@ -339,6 +339,43 @@ agents:
       path:    { type: string }
       skipped: { type: boolean }
     routes:
+      - to: write_feature_state
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: write_feature_state
+    type: script
+    description: |
+      Generate feature-state.yaml from features.yaml — all features start pending.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        features = yaml.load((mission_dir / "features.yaml").read_text())
+        state = {}
+        for f in features.get("features", []):
+            fid = f.get("id", "")
+            if fid:
+                state[fid] = {"status": "pending", "attempts": 0}
+
+        state_data = {"features": dict(sorted(state.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))}
+        state_path = mission_dir / "feature-state.yaml"
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
+
+        print(json.dumps({"path": str(state_path), "feature_count": len(state)}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      path:          { type: string }
+      feature_count: { type: number }
+    routes:
       - to: skill_writers
 
 output:

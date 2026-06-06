@@ -167,8 +167,6 @@ agents:
           fulfills:
             - VAL-AUTH-001
             - VAL-AUTH-002
-          status: pending
-          worker_session_id: ""
 
         - id: "1.2"
           ...
@@ -181,8 +179,6 @@ agents:
       - No VAL-* ID may appear in more than one feature's fulfills
       - skill_name matches a worker type (e.g., "backend-worker", "frontend-worker")
       - Features within a milestone should be sequenced so dependencies come first
-      - status is always "pending" for new features
-      - worker_session_id is always empty string for new features
 
       Output ONLY the YAML — no markdown fences, no explanation.
     output:
