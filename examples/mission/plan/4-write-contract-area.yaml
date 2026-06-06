@@ -131,6 +131,8 @@ agents:
       - "Shopping Cart" → CART
       - "Foundation" → FOUND
       Keep it recognizable and unique across areas.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
     output:
       content:
         type: string

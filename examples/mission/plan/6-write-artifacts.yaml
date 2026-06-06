@@ -161,6 +161,9 @@ agents:
       Be specific about port ranges and boundaries. Workers that violate boundaries
       could damage the user's existing system.
       {% endif %}
+
+      IMPORTANT: Output ONLY the raw text — do NOT wrap it in JSON, YAML, or code fences.
+      If skipping, output exactly: SKIP
     output:
       content:
         type: string
@@ -235,6 +238,9 @@ agents:
 
       Only include services the mission actually needs based on the architecture.
       {% endif %}
+
+      IMPORTANT: Output ONLY the raw YAML/text — do NOT wrap it in JSON or code fences.
+      If skipping, output exactly: SKIP
     output:
       content: { type: string }
     routes:
@@ -303,6 +309,9 @@ agents:
 
       Start with: #!/usr/bin/env bash\nset -e
       {% endif %}
+
+      IMPORTANT: Output ONLY the raw script/text — do NOT wrap it in JSON, YAML, or code fences.
+      If skipping, output exactly: SKIP
     output:
       content: { type: string }
     routes:

@@ -202,6 +202,8 @@ agents:
       - Tool must be one of: agent-browser (web UI), curl (API), exec (CLI)
       - Evidence must match what the tool can actually collect
       - Number assertions VAL-CROSS-001, VAL-CROSS-002, etc.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
     output:
       content:
         type: string
@@ -276,6 +278,8 @@ agents:
       Output the complete, corrected validation-contract.md content.
       Keep all existing VAL-* IDs stable. Only add new ones if gaps require new assertions.
       New assertions in existing areas: VAL-AREA-NNN continuing the sequence.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
     output:
       content:
         type: string

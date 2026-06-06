@@ -187,6 +187,8 @@ agents:
 
       Be specific to this worker type and mission. The Example Handoff defines
       the upper bound of expected effort — make it realistic and thorough.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
     output:
       content:
         type: string

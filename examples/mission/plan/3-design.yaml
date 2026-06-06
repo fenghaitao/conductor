@@ -114,6 +114,8 @@ agents:
 
       Be precise and specific — this document is what workers read to understand
       where to add code and how to integrate with existing components.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
     output:
       content:
         type: string
