@@ -81,6 +81,9 @@ def _unwrap_string(value: dict[str, Any]) -> str | None:
     ``{"text": "actual content"}`` or ``{"type": "text", "text": "..."}``
     instead of a plain string. This helper attempts to unwrap such dicts.
 
+    As a fallback for complex nested dicts (parsed YAML/JSON), the dict is
+    re-serialized as YAML so downstream scripts receive the original text.
+
     Returns the extracted string, or None if the dict doesn't look like
     a wrapped string.
     """
@@ -91,7 +94,18 @@ def _unwrap_string(value: dict[str, Any]) -> str | None:
     str_vals = {k: v for k, v in value.items() if isinstance(v, str)}
     if len(str_vals) == 1 and len(value) <= 2:
         return list(str_vals.values())[0]
-    return None
+    # Complex nested dict (parsed YAML/JSON): re-serialize as YAML
+    try:
+        from ruamel.yaml import YAML
+
+        from io import StringIO
+
+        yaml = YAML()
+        buf = StringIO()
+        yaml.dump(value, buf)
+        return buf.getvalue()
+    except Exception:
+        return None
 
 
 def _check_type(value: Any, expected: str) -> bool:
