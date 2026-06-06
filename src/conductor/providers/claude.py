@@ -173,6 +173,7 @@ class ClaudeProvider(AgentProvider):
         self,
         api_key: str | None = None,
         auth_token: str | None = None,
+        base_url: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -191,6 +192,12 @@ class ClaudeProvider(AgentProvider):
                 When set, ``api_key`` is forced to ``None`` so the SDK sends
                 ``Authorization: Bearer <token>`` instead of ``x-api-key``.
                 Defaults to None (use ANTHROPIC_API_KEY env var).
+            base_url: Custom Anthropic-wire endpoint (e.g. DeepSeek's
+                ``https://api.deepseek.com/anthropic``). When set, the
+                ``models.list()`` connectivity probe is skipped in
+                ``validate_connection`` because third-party endpoints often
+                do not implement ``/v1/models``. Defaults to None (use the
+                Anthropic SDK's native ``ANTHROPIC_BASE_URL`` env var).
             model: Default model to use. Defaults to "claude-3-5-sonnet-latest".
                 This default is chosen for stability and to avoid dated model
                 deprecation risk. The "-latest" suffix ensures compatibility
@@ -226,6 +233,9 @@ class ClaudeProvider(AgentProvider):
         # Normalize empty string to None so the is-not-None guard in
         # _initialize_client and the truthiness check in resolve_auth_token agree.
         self._auth_token = auth_token or None
+        # Normalize empty string to None so the is-not-None guards in
+        # _initialize_client and validate_connection agree.
+        self._base_url = base_url or None
         self._default_model = model or "claude-3-5-sonnet-latest"
 
         # Validate and store temperature (enforce schema bounds at instantiation)
@@ -274,6 +284,8 @@ class ClaudeProvider(AgentProvider):
             return
 
         kwargs: dict[str, Any] = {"timeout": self._timeout}
+        if self._base_url is not None:
+            kwargs["base_url"] = self._base_url
         if self._auth_token is not None:
             kwargs["auth_token"] = self._auth_token
             # Explicitly suppress the SDK's ANTHROPIC_API_KEY env-var fallback so
@@ -401,6 +413,18 @@ class ClaudeProvider(AgentProvider):
         """
         if self._client is None:
             return False
+
+        # Custom anthropic-wire endpoints (e.g. DeepSeek's /anthropic API)
+        # frequently do not implement the /v1/models route, which would make
+        # the probe below fail and abort startup. Skip it and trust the
+        # endpoint; credential/model errors then surface on the first execute.
+        if self._base_url is not None:
+            logger.info(
+                "Custom Anthropic base_url set (%s); skipping models.list() "
+                "connectivity probe.",
+                self._base_url,
+            )
+            return True
 
         try:
             # Test: list models to verify API key works and perform model verification

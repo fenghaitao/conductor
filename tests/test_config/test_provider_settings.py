@@ -68,13 +68,34 @@ class TestProviderSettingsCoercion:
 class TestProviderSettingsValidation:
     """Cross-field validators reject incompatible combinations."""
 
-    def test_non_copilot_with_copilot_only_field_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="only supported when name='copilot'"):
-            ProviderSettings(name="claude", type="anthropic")
+    def test_claude_with_anthropic_routing_accepted(self) -> None:
+        s = ProviderSettings(
+            name="claude",
+            type="anthropic",
+            base_url="https://api.deepseek.com/anthropic",
+            api_key="sk-deepseek",  # type: ignore[arg-type]
+        )
+        assert s.has_custom_routing()
+        base_url, api_key = s.resolve_anthropic_routing()
+        assert base_url == "https://api.deepseek.com/anthropic"
+        assert api_key == "sk-deepseek"
 
-    def test_non_copilot_with_base_url_rejected(self) -> None:
+    def test_claude_with_base_url_only_accepted(self) -> None:
+        s = ProviderSettings(name="claude", base_url="http://anthropic-proxy/v1")
+        assert s.has_custom_routing()
+        assert s.resolve_anthropic_routing() == ("http://anthropic-proxy/v1", None)
+
+    def test_claude_with_non_anthropic_type_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="only supports type='anthropic'"):
+            ProviderSettings(name="claude", type="openai", base_url="http://x/v1")
+
+    def test_claude_with_copilot_only_field_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="only supported when name='copilot'"):
+            ProviderSettings(name="claude", base_url="http://x/v1", wire_api="completions")
+
+    def test_pydantic_deep_with_base_url_rejected(self) -> None:
         with pytest.raises(ValidationError, match="not supported"):
-            ProviderSettings(name="claude", base_url="http://anthropic-proxy/v1")
+            ProviderSettings(name="pydantic-deep", base_url="http://proxy/v1")
 
     def test_azure_options_require_azure_type(self) -> None:
         with pytest.raises(ValidationError, match="require type='azure'"):
