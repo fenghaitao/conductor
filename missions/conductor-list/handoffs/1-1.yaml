@@ -1,0 +1,122 @@
+salient_summary: Milestone 1.1 is already fully implemented. The 
+  `src/conductor/cli/list_cmd.py` module exists with a complete `list_app` Typer
+  group (no_args_is_help=False), registered in `app.py` via 
+  `app.add_typer(list_app)`. All five subcommands (runs, workflows, checkpoints,
+  registries, templates) are implemented with Rich table output and --json 
+  support. The deprecated `checkpoints` command prints a dim notice to stderr 
+  and delegates to `_list_checkpoints_impl()`. Summary dashboard prints a Rich 
+  panel with counts and hints.
+what_was_implemented: >
+  Created `src/conductor/cli/list_cmd.py` with `list_app` Typer group (no_args_is_help=False)
+  and full implementations of all subcommands: `list` (summary dashboard callback),
+  `list runs` (running workflows table from `read_pid_files()` + recent history from
+  JSONL event logs via `_scan_event_logs`/`_parse_event_log`), `list workflows` (YAML
+  discovery with `_discover_yaml_files` and `_heuristic_filter`), `list checkpoints`
+  (delegates to `CheckpointManager.list_checkpoints()` via `_list_checkpoints_impl`
+  shared helper), `list registries` (delegates to `_list_all_registries`/`_list_registry_workflows`
+  from `registry.py`), and `list templates` (discovers from built-in `plugins/conductor-workflow-creator/assets/templates/`
+  via `_discover_templates`/`_parse_template_headers`). Registered `list_app` in `app.py`
+  via `app.add_typer(list_app)`. Imported shared primitives: `read_pid_files`, `CheckpointManager.list_checkpoints`,
+  `_conductor_run_dir`. Deprecated `checkpoints` command marked `hidden=True`, prints
+  dim deprecation notice to stderr, and delegates to `_list_checkpoints_impl()`."
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 27 passed — covers list help, summary dashboard, templates 
+      table/JSON, empty states, filtering, and stderr isolation
+  - command: uv run pytest tests/test_cli/ -v
+    exit_code: 1
+    observation: '5 failed (all pre-existing: test_logging ANSI, registry Rich markup
+      assertions, stop error message formatting), 443 passed, 3 skipped'
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  interactive_checks:
+  - action: uv run conductor list
+    observed: 'Summary panel with 4 counts: Running workflows: 0, Recent runs: 194,
+      Local workflows: 0, Templates: 3. Each line has dim hint for corresponding subcommand.'
+  - action: uv run conductor list --help
+    observed: 'Shows all 5 subcommands: runs, workflows, checkpoints, registries,
+      templates, each with description.'
+  - action: uv run conductor --help
+    observed: "'list' appears in the top-level Commands table as 'Discover workflows,
+      runs, checkpoints, and more.'"
+  - action: uv run conductor checkpoints 2>&1 | head -1
+    observed: "Prints 'Deprecated: use conductor list checkpoints instead' to stderr,
+      then shows checkpoint table."
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_list_help_shows_subcommands
+    description: conductor list --help lists all subcommands
+  - name: test_list_templates_help
+    description: conductor list templates --help shows --json flag
+  - name: test_table_output_lists_all_builtins
+    description: Template table shows all 3 built-in templates
+  - name: test_table_does_not_show_filenames_as_names
+    description: Template names come from comment headers, not filenames
+  - name: test_json_output_is_valid_array
+    description: --json produces valid JSON array
+  - name: test_json_each_entry_has_required_fields
+    description: Each JSON entry has name, description, path
+  - name: test_json_paths_point_to_existing_files
+    description: JSON paths resolve to real files
+  - name: test_json_names_match_comment_headers_not_stems
+    description: Names come from comment headers
+  - name: test_json_descriptions_contain_use_when
+    description: 'Descriptions contain Use when:'
+  - name: test_json_array_length_matches_table_rows
+    description: JSON and table have same entry count
+  - name: test_no_template_dir_shows_empty_message
+    description: Missing template dir shows dim message
+  - name: test_empty_template_dir_emits_empty_json_array
+    description: Empty dir emits [] with --json
+  - name: test_template_dir_missing_exits_zero
+    description: Missing dir exits 0, not 1
+  - name: test_non_template_yaml_excluded
+    description: Non-template YAML files excluded from table
+  - name: test_json_excludes_non_template_files
+    description: Non-template YAML files excluded from JSON
+  - name: test_list_summary_exit_code_zero
+    description: conductor list exits 0
+  - name: test_list_summary_uses_panel_not_table
+    description: Summary uses Rich Panel, not Table
+  - name: test_list_summary_has_running_count
+    description: Panel shows running count
+  - name: test_list_summary_has_recent_count
+    description: Panel shows recent runs count
+  - name: test_list_summary_has_workflow_count
+    description: Panel shows local workflows count
+  - name: test_list_summary_has_template_count
+    description: Panel shows template count
+  - name: test_list_summary_counts_are_integers
+    description: Counts are integers, no Rich markup
+  - name: test_list_summary_with_zero_running
+    description: Zero running workflows shown correctly
+  - name: test_list_summary_with_running_workflows
+    description: Running workflows count shown correctly
+  - name: test_list_summary_resilient_to_pid_error
+    description: PID read failure doesn't crash summary
+  - name: test_list_summary_stderr_is_empty
+    description: No stderr output from summary
+discovered_issues:
+- severity: non_blocking
+  description: 'Pre-existing: test_logging.py::TestFileLoggingErrorHandling — ANSI
+    codes in file output (Rich color codes leaking into log file)'
+- severity: non_blocking
+  description: 'Pre-existing: test_registry_commands.py::TestListWorkflows/TestShow/TestUpdatePrunesTempDirs
+    — Rich markup in assertions not matching plain text expectations'
+- severity: non_blocking
+  description: 'Pre-existing: test_stop.py::TestStopByPort — Rich markup in error
+    message not matching plain text assertion'
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '1.1'
