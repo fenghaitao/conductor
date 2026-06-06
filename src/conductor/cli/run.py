@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -192,6 +191,32 @@ def verbose_log(message: str, style: str = "dim") -> None:
         _verbose_console.print(f"[{style}]{message}[/{style}]")
     if _file_console is not None:
         _file_console.print(message)
+
+
+_STRUCTURED_ROUTING_PROVIDERS = frozenset({"copilot", "claude", "claude-subscription"})
+
+
+def _apply_provider_override(
+    config_provider: ProviderSettings,
+    provider_override: str,
+) -> ProviderSettings:
+    """Return a new ProviderSettings with name swapped to ``provider_override``.
+
+    When the YAML has structured routing (base_url/api_key/etc.) and the
+    target provider supports it, only the ``name`` field is swapped so the
+    endpoint, credentials, and type carry over. For all other combinations
+    the override is a full replacement (original behavior).
+    """
+    from conductor.config.schema import ProviderSettings as _PS
+
+    if (
+        config_provider.has_custom_routing()
+        and provider_override in _STRUCTURED_ROUTING_PROVIDERS
+    ):
+        data = config_provider.model_dump(mode="python")
+        data["name"] = provider_override
+        return _PS(**data)
+    return _PS(name=provider_override)
 
 
 def _describe_provider(provider: ProviderSettings) -> str:
@@ -752,8 +777,9 @@ def verbose_log_agent_message(content: str) -> None:
     Args:
         content: The model response text to display.
     """
-    from conductor.cli.app import is_verbose
     from rich.markdown import Markdown
+
+    from conductor.cli.app import is_verbose
 
     should_console = is_verbose()
     should_file = _file_console is not None
@@ -1437,15 +1463,23 @@ async def run_workflow_async(
         # ``ProviderSettings`` with default fields, intentionally
         # discarding any structured custom-routing config from YAML.
         if provider_override:
-            had_custom = config.workflow.runtime.provider.has_custom_routing()
-            verbose_log(f"Provider override: {provider_override}", style="yellow")
-            if had_custom:
+            existing = config.workflow.runtime.provider
+            new_provider = _apply_provider_override(existing, provider_override)
+            if existing.has_custom_routing() and new_provider.has_custom_routing():
                 verbose_log(
-                    "Provider override discards structured runtime.provider settings "
-                    "(base_url/type/etc.) from YAML; using SDK defaults.",
+                    f"Provider override: swapping name to '{provider_override}', "
+                    f"keeping structured routing ({_describe_provider(new_provider)}).",
                     style="yellow",
                 )
-            config.workflow.runtime.provider = provider_override  # type: ignore[assignment]
+            elif existing.has_custom_routing():
+                verbose_log(
+                    f"Provider override: '{provider_override}' does not support structured "
+                    "routing; discarding base_url/api_key/type from YAML, using SDK defaults.",
+                    style="yellow",
+                )
+            else:
+                verbose_log(f"Provider override: {provider_override}", style="yellow")
+            config.workflow.runtime.provider = new_provider  # type: ignore[assignment]
 
         # Build workspace instructions preamble
         instructions_preamble: str | None = None
@@ -1951,15 +1985,23 @@ async def resume_workflow_async(
         # Apply provider override if specified (parity with run).
         # See ``run_workflow_async`` for why we re-validate via assignment.
         if provider_override:
-            had_custom = config.workflow.runtime.provider.has_custom_routing()
-            verbose_log(f"Provider override: {provider_override}", style="yellow")
-            if had_custom:
+            existing = config.workflow.runtime.provider
+            new_provider = _apply_provider_override(existing, provider_override)
+            if existing.has_custom_routing() and new_provider.has_custom_routing():
                 verbose_log(
-                    "Provider override discards structured runtime.provider settings "
-                    "(base_url/type/etc.) from YAML; using SDK defaults.",
+                    f"Provider override: swapping name to '{provider_override}', "
+                    f"keeping structured routing ({_describe_provider(new_provider)}).",
                     style="yellow",
                 )
-            config.workflow.runtime.provider = provider_override  # type: ignore[assignment]
+            elif existing.has_custom_routing():
+                verbose_log(
+                    f"Provider override: '{provider_override}' does not support structured "
+                    "routing; discarding base_url/api_key/type from YAML, using SDK defaults.",
+                    style="yellow",
+                )
+            else:
+                verbose_log(f"Provider override: {provider_override}", style="yellow")
+            config.workflow.runtime.provider = new_provider  # type: ignore[assignment]
 
         # Verify the current_agent exists in the workflow
         agent_names = {a.name for a in config.agents}
