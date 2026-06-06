@@ -1,4 +1,4 @@
-# Wrap Up
+# Return to Orchestrator
 #
 # Final review after all milestones complete. Reviews worker handoff issues,
 # applies guidance updates, and escalates unresolved issues to the user.
@@ -14,7 +14,7 @@
 #   4. user_escalation  — human gate (only when triage decides escalation is needed)
 
 workflow:
-  name: mission-wrap-up
+  name: mission-return-to-orchestrator
   description: Review worker handoff issues and decide how to proceed
   version: "1.0.0"
   entry_point: load_issues

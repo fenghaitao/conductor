@@ -16,8 +16,8 @@
 # The loop:
 #   get_milestone → implement_milestone → review_milestone
 #     → [passed?] → verify_milestone → [passed?] → seal_milestone
-#     → prompt_for_changes → [change?] → apply_changes → loop
-#     → all done → collect_feedback → triage_issues → [human gate?] → $end
+#     → prompt_for_changes → [change?] → apply_scope_changes → loop
+#     → all done → collect_skill_feedback → return_to_orchestrator → $end
 #
 workflow:
   name: mission-run
@@ -45,20 +45,6 @@ workflow:
     max_iterations: 500   # generous — large missions have many features
 
 agents:
-  # ── Implement milestone (sequential feature runner) ───────────────────────
-  - name: implement_milestone
-    type: workflow
-    description: |
-      Implement all pending features in this milestone, one at a time.
-      Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
-    workflow: ./run/milestone/0-implement.yaml
-    input_mapping:
-      mission_dir:        "{{ workflow.input.mission_dir }}"
-      milestone:          "{{ get_milestone.output.milestone }}"
-      pending_features:   "{{ get_milestone.output.pending_features }}"
-    routes:
-      - to: review_milestone
-
   # ── Get next pending milestone ────────────────────────────────────────────
   - name: get_milestone
     type: script
@@ -87,7 +73,7 @@ agents:
             if f.get("status") == "pending":
                 milestone_pending.setdefault(ms, []).append(f)
 
-        # Features a worker handed back for an orchestrator decision.
+        # Features a worker handed back for a wrap-up decision.
         returned = [f for f in features if f.get("status") == "returned"]
 
         # Pick first milestone (in order) with pending features
@@ -125,51 +111,25 @@ agents:
       completed_features: { type: number }
       returned_features:  { type: array }
     routes:
-      - to: wrap_up_returned
+      - to: return_to_orchestrator
         when: "state == 'returned'"
       - to: collect_skill_feedback
         when: "state == 'all_done'"
       - to: implement_milestone
 
-  # ── Collect skill feedback (all milestones done) ─────────────────────────
-  - name: collect_skill_feedback
+  # ── Implement milestone ──────────────────────────────────────────────────
+  - name: implement_milestone
     type: workflow
     description: |
-      Scan all worker handoffs for skill deviation feedback and apply
-      improvements to skills/<type>/SKILL.md.
-    workflow: ./run/collect-skill-feedback.yaml
+      Implement all pending features in this milestone, one at a time.
+      Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
+    workflow: ./run/milestone/0-implement.yaml
     input_mapping:
-      mission_dir: "{{ workflow.input.mission_dir }}"
+      mission_dir:        "{{ workflow.input.mission_dir }}"
+      milestone:          "{{ get_milestone.output.milestone }}"
+      pending_features:   "{{ get_milestone.output.pending_features }}"
     routes:
-      - to: wrap_up
-
-  # ── Orchestrator review (all milestones complete) ─────────────────────────
-  - name: wrap_up
-    type: workflow
-    description: |
-      Review all worker handoff issues (return_to_orchestrator: true) and
-      any knowledge surfaced during the mission. Applies guidance updates
-      and optionally escalates unresolved issues to the user.
-    workflow: ./run/wrap-up.yaml
-    input_mapping:
-      mission_dir: "{{ workflow.input.mission_dir }}"
-    routes:
-      - to: $end
-
-  # ── Orchestrator review (mid-mission, returned features) ───────────────────
-  - name: wrap_up_returned
-    type: workflow
-    description: |
-      Resolve features a worker handed back (return_to_orchestrator → status
-      "returned") before the mission can complete. The review resets them to
-      pending with updated guidance, accepts them, or escalates to the user;
-      every returned feature leaves "returned" status so this never loops.
-      Routes back to get_milestone so resolved features re-enter the run.
-    workflow: ./run/wrap-up.yaml
-    input_mapping:
-      mission_dir: "{{ workflow.input.mission_dir }}"
-    routes:
-      - to: get_milestone
+      - to: review_milestone
 
   # ── Review milestone ─────────────────────────────────────────────────────
   - name: review_milestone
@@ -244,6 +204,33 @@ agents:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
       - to: get_milestone
+
+  # ── Collect skill feedback (all milestones done) ─────────────────────────
+  - name: collect_skill_feedback
+    type: workflow
+    description: |
+      Scan all worker handoffs for skill deviation feedback and apply
+      improvements to skills/<type>/SKILL.md.
+    workflow: ./run/collect-skill-feedback.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: return_to_orchestrator
+
+  # ── Return to Orchestrator ──────────────────────────────────────────────
+  - name: return_to_orchestrator
+    type: workflow
+    description: |
+      Review worker handoff issues (return_to_orchestrator: true) and any
+      knowledge surfaced during the mission. Applies guidance updates
+      and optionally escalates unresolved issues to the user.
+    workflow: ./run/return-to-orchestrator.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: get_milestone
+        when: "get_milestone.output.state == 'returned'"
+      - to: $end
 
 output:
   mission_dir:        "{{ workflow.input.mission_dir }}"
