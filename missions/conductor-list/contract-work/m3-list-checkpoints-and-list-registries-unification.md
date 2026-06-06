@@ -1,41 +1,41 @@
 ## Area: M3: `list checkpoints` and `list registries` (unification)
 
-### VAL-M3LIST-001: List checkpoints displays Rich table with checkpoint data
-Running `conductor list checkpoints` when at least one checkpoint exists prints a formatted Rich table to stdout containing columns for workflow, checkpoint timestamp, failure error type, and the agent that was current at the time of failure.
+### VAL-M3LIST-001: Running `conductor list checkpoints` with no arguments displays all saved checkpoints in a table
+When the user invokes `conductor list checkpoints` and at least one checkpoint exists on disk, a Rich-styled table is printed to stdout with columns for version, workflow path, created timestamp, failure error type, and the agent name at failure.
 Tool: exec
-Evidence: terminal-output — stdout contains a Rich-rendered table with recognizable column headers (e.g., Workflow, Created, Error, Agent).
+Evidence: terminal-output contains a table with column headers including "Version", "Workflow", "Created", "Error", and "Agent"; exit-code is 0.
 
-### VAL-M3LIST-002: List checkpoints `--json` outputs valid JSON array
-Running `conductor list checkpoints --json` when at least one checkpoint exists prints a valid JSON array of objects to stdout. Each object contains at minimum `workflow_path`, `created_at`, `failure`, and `current_agent` fields. The command exits with code 0.
+### VAL-M3LIST-002: Running `conductor list checkpoints --json` emits a valid JSON array
+When the user invokes `conductor list checkpoints --json` and checkpoints exist, stdout contains a JSON array where each element is an object with fields `version`, `workflow_path`, `workflow_hash`, `created_at`, `failure`, `current_agent`, `run_id`, and `file_path`. The output is valid JSON parseable by `jq` or any JSON parser.
 Tool: exec
-Evidence: exit-code = 0; terminal-output — stdout is parseable as a JSON array where every element is an object with the required keys.
+Evidence: exit-code is 0; piping stdout through `jq '.'` succeeds with no parse errors; the root JSON value is an array.
 
-### VAL-M3LIST-003: List checkpoints with workflow argument filters results
-Running `conductor list checkpoints <path-to-workflow.yaml>` displays only checkpoints whose `workflow_path` matches the given argument. Checkpoints from other workflow files are excluded from output.
+### VAL-M3LIST-003: Running `conductor list checkpoints <workflow-path>` filters results to that workflow only
+When the user invokes `conductor list checkpoints path/to/specific.yaml` and checkpoints exist for multiple workflows, only checkpoints whose `workflow_path` matches `path/to/specific.yaml` appear in the output.
 Tool: exec
-Evidence: terminal-output — every row in the table (or every object in `--json` output) has a workflow path matching the supplied argument.
+Evidence: terminal-output table rows all reference the given workflow path; exit-code is 0.
 
-### VAL-M3LIST-004: List checkpoints with no checkpoints shows empty-state message
-Running `conductor list checkpoints` when no checkpoints exist on disk prints a user-friendly message indicating no checkpoints were found (e.g., "No checkpoints found") and exits with code 0 rather than an error.
+### VAL-M3LIST-004: Running the deprecated `conductor checkpoints` command prints a deprecation notice to stderr and still produces the checkpoint table
+When the user invokes the old top-level `conductor checkpoints` command, a dimmed deprecation message reading "Deprecated: use 'conductor list checkpoints' instead" is printed to stderr, and the same checkpoint table is printed to stdout as `conductor list checkpoints` would produce.
 Tool: exec
-Evidence: exit-code = 0; terminal-output — stdout contains a message conveying "no checkpoints" without a traceback or error styling.
+Evidence: stderr contains the deprecation notice string; stdout contains the checkpoint table; exit-code is 0.
 
-### VAL-M3LIST-005: List registries displays configured registries
-Running `conductor list registries` when at least one registry is configured prints a table or list to stdout showing each registry's name and source URL. The output is the same as running `conductor registry list`.
+### VAL-M3LIST-005: Running `conductor list registries` with no arguments lists all configured registries in a table
+When the user invokes `conductor list registries` and at least one registry is configured in `~/.conductor/registries.json`, a table is printed to stdout with columns for registry name, URL, and type.
 Tool: exec
-Evidence: terminal-output — stdout of `conductor list registries` matches stdout of `conductor registry list` when run with the same configuration.
+Evidence: terminal-output contains a table with registry entries; exit-code is 0.
 
-### VAL-M3LIST-006: List registries with name argument shows workflows in that registry
-Running `conductor list registries <name>` where `<name>` is a configured registry prints a table or list of workflows published in that registry. The output matches `conductor registry list <name>`.
+### VAL-M3LIST-006: Running `conductor list registries <name>` lists workflows published in that registry
+When the user invokes `conductor list registries <name>` and the named registry exists in the local configuration, a table of workflows available in that registry is printed to stdout with columns for workflow name and description.
 Tool: exec
-Evidence: terminal-output — stdout of `conductor list registries <name>` matches stdout of `conductor registry list <name>` for the same registry name.
+Evidence: terminal-output contains a table with workflow entries from the named registry; exit-code is 0.
 
-### VAL-M3LIST-007: List registries with no configured registries handles gracefully
-Running `conductor list registries` when no registries are configured prints a message indicating no registries are available (e.g., "No registries configured") and exits with code 0 rather than an error.
+### VAL-M3LIST-007: Running `conductor list registries <nonexistent-name>` with an unknown registry name prints a clear error to stderr
+When the user invokes `conductor list registries unknown-registry` and no registry with that name is configured, a clear error message is printed to stderr indicating the registry was not found, and the command exits with a non-zero status.
 Tool: exec
-Evidence: exit-code = 0; terminal-output — stdout contains a message conveying "no registries" without a traceback or error styling.
+Evidence: stderr contains an error message mentioning the unknown registry name; exit-code is 1.
 
-### VAL-M3LIST-008: Deprecated `conductor checkpoints` command still works with notice
-Running the old `conductor checkpoints` command (without the `list` prefix) still executes the checkpoint listing, but prints a deprecation notice to stderr advising the user to use `conductor list checkpoints` instead. The stdout output is identical to `conductor list checkpoints`.
+### VAL-M3LIST-008: Running `conductor list checkpoints` when no checkpoints exist prints an informative empty-state message
+When the user invokes `conductor list checkpoints` and the checkpoint directory is empty or does not exist, a message indicating no checkpoints are available is printed to stdout, and the command exits successfully.
 Tool: exec
-Evidence: exit-code = 0; terminal-output — stderr contains the deprecation notice; stdout matches the output of `conductor list checkpoints` with the same arguments.
+Evidence: terminal-output contains a message like "No checkpoints found" or similar empty-state text; exit-code is 0; no error output on stderr.

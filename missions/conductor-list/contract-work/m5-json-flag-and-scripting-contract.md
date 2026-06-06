@@ -1,36 +1,41 @@
-## Area: M5: `--json` flag and scripting contract
+## Area: M5JSON: `--json` flag and scripting contract
 
-### VAL-M5JSON-001: `--json` produces valid JSON array on stdout with exit code 0
-Running any `conductor list` subcommand with `--json` emits a syntactically valid JSON array to stdout and exits with code 0 when the underlying data source is readable and accessible.
+### VAL-M5JSON-001: `--json` flag emits valid JSON array to stdout
+When `conductor list runs --json` is invoked, stdout contains a syntactically valid JSON array (parsable by `jq` or `python -m json.tool`) and stderr contains no JSON output (only diagnostic messages if any).
 Tool: exec
-Evidence: exit-code=0, terminal-output contains valid JSON array (parsable by `jq` or `python -m json.tool`)
+Evidence: terminal-output, exit-code
 
-### VAL-M5JSON-002: `--json` emits NOTHING to stderr on success
-When a `conductor list` subcommand with `--json` completes successfully, nothing is written to stderr — the entire JSON payload lands on stdout, making the output safe for pipes and shell substitution without noise contamination.
+### VAL-M5JSON-002: Exit code is 0 on successful JSON output
+When a `list` subcommand with `--json` completes without encountering missing files, unreadable event logs, or other runtime errors, the process exits with code 0.
 Tool: exec
-Evidence: terminal-output, console-errors is empty
+Evidence: exit-code
 
-### VAL-M5JSON-003: Errors cause exit code 1 with message on stderr, not a best-effort JSON on stdout
-When a `--json` invocation encounters a hard error (e.g., the event-log directory is unreadable or a required file is missing), the command exits with code 1, prints an error message to stderr, and does NOT emit a partial or empty JSON array to stdout.
+### VAL-M5JSON-003: Exit code is 1 when JSON output cannot be produced due to error
+When `conductor list runs --recent 5 --json` is pointed at a nonexistent or inaccessible event log directory, or when `conductor list checkpoints --json` targets a missing workflow file, the process exits with code 1.
 Tool: exec
-Evidence: exit-code=1, console-errors contains error text, terminal-output is empty or contains no valid JSON
+Evidence: exit-code
 
-### VAL-M5JSON-004: Empty result sets produce a valid empty JSON array `[]`
-When a `--json` invocation completes successfully but finds no data (e.g., `conductor list runs --json` when no workflows are running and no recent logs exist), stdout still receives a valid, parsable empty JSON array `[]` — not `null`, not `{}`, not a string like `"No results"`.
+### VAL-M5JSON-004: Error messages are written to stderr, keeping stdout parseable
+When a `--json` invocation fails, the error message appears on stderr only. Stdout is either empty or contains a valid (possibly empty) JSON array — never a plain-text error message interleaved with JSON.
 Tool: exec
-Evidence: exit-code=0, terminal-output is exactly `[]` (or whitespace-equivalent), console-errors is empty
+Evidence: terminal-output
 
-### VAL-M5JSON-005: Schema stability — repeated invocations produce objects with identical top-level keys
-Running the same `--json` subcommand twice (under the same filesystem state) produces JSON arrays whose objects have the same set of top-level keys in the same order. Keys are never omitted or renamed based on optional data presence (missing optional values appear as `null`).
+### VAL-M5JSON-005: Empty result set produces an empty JSON array
+When a `list` subcommand with `--json` finds zero results (e.g., `conductor list runs --json` with no running workflows, or `conductor list workflows --json` in a directory with no workflow YAML files), stdout contains exactly `[]` (an empty JSON array), not `null`, `{}`, or a plain-text "No results" message.
 Tool: exec
-Evidence: terminal-output — comparing `jq '.[0] | keys'` across two invocations yields identical output
+Evidence: terminal-output
 
-### VAL-M5JSON-006: `--json` on `list runs --recent` tolerates partially-written event logs
-When event-log JSONL files contain a truncated final line (e.g., a crash mid-write), `conductor list runs --recent --json` silently skips the malformed line, still produces a valid JSON array from the preceding valid lines, and exits with code 0 rather than crashing or printing a stack trace.
+### VAL-M5JSON-006: JSON output schema is stable across invocations
+Running the same `list` subcommand with `--json` twice against unchanged data produces JSON arrays with the same top-level keys in each object (field names and types are identical). Adding a new workflow YAML file or a new running workflow does not change the shape of existing entries — only appends new objects with the same schema.
 Tool: exec
-Evidence: exit-code=0, terminal-output is valid JSON array, console-errors is empty
+Evidence: terminal-output
 
-### VAL-M5JSON-007: `list` summary callback with `--json` is rejected or falls back gracefully
-If the top-level `conductor list --json` summary dashboard is invoked with `--json`, the command either rejects it with a clear error (exit 1, message to stderr) because the summary is a display artifact, or emits a structured summary object (not a Rich-rendered string) as a valid JSON object. The behavior is documented and deterministic.
+### VAL-M5JSON-007: `--json` output can be piped to downstream tools
+A pipe such as `conductor list runs --json | jq '.[0].port'` or `conductor list workflows --json | python3 -c "import sys,json; print(len(json.load(sys.stdin)))"` executes without error when results exist, confirming the output is a single, self-contained JSON document with no extra framing or interactive prompts.
 Tool: exec
-Evidence: exit-code consistent with documented contract; if rejected, console-errors contains explanation; if accepted, terminal-output is valid JSON
+Evidence: terminal-output, exit-code
+
+### VAL-M5JSON-008: `--json` flag is rejected when combined with unrecognized arguments
+When `conductor list runs --json --unknown-flag` is invoked, the command exits with a non-zero exit code and prints a usage/error message to stderr — it does not silently ignore the unknown flag and produce JSON output.
+Tool: exec
+Evidence: exit-code, terminal-output

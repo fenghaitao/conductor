@@ -1,7 +1,7 @@
 ## Area: M1: Core CLI scaffold and `list runs`
 
 ### VAL-LRUNS-001: Running workflow table displays all expected columns
-Running `conductor list runs` when at least one background workflow is active prints a table to stdout with columns: Port, PID, Workflow, Dashboard URL, and Started. Each row corresponds to exactly one running workflow.
+Running `conductor list runs` when at least one background workflow is active prints a table to stdout with columns: Port, PID, Workflow, Dashboard URL, and Started. Each row corresponds to exactly one running workflow discovered from PID files.
 Tool: exec
 Evidence: terminal-output(contains "Port"), terminal-output(contains "PID"), terminal-output(contains "Workflow"), terminal-output(contains "Dashboard"), terminal-output(contains "Started"), terminal-output(contains "http://127.0.0.1:")
 
@@ -16,7 +16,7 @@ Tool: exec
 Evidence: terminal-output(is valid JSON array), terminal-output(elements contain "pid" or array is empty), exit-code(0)
 
 ### VAL-LRUNS-004: Recent run history is sorted and limited to N entries
-Running `conductor list runs --recent N` prints at most N runs in a table, sorted by start time descending (most recent first). Each row includes the workflow name, run ID, start time, end time (or a running indicator), status, and duration. Runs that are currently active show status "running" even if no terminal status has been recorded yet.
+Running `conductor list runs --recent N` scans event log files and prints at most N runs in a table, sorted by start time descending (most recent first). Each row includes the workflow name, run ID, start time, end time (or a running indicator), status, and duration. Runs that match an active PID file entry show status "running" even if their event log lacks a terminal event.
 Tool: exec
 Evidence: terminal-output(row count ≤ N), terminal-output(contains "completed" or "failed" or "running"), exit-code(0)
 
@@ -25,8 +25,8 @@ Running `conductor list` (no subcommand) prints a summary panel to stdout with a
 Tool: exec
 Evidence: terminal-output(contains "running" or "0"), terminal-output(contains "conductor list runs"), terminal-output(contains "conductor list workflows"), exit-code(0)
 
-### VAL-LRUNS-006: Malformed run data is tolerated without crashing
-Running `conductor list runs --recent N` when some stored run history is malformed or incomplete completes successfully, printing the available runs from valid data. The command exits 0 — it does not crash, print a stack trace, or exit non-zero due to a single corrupt record.
+### VAL-LRUNS-006: Malformed event logs are tolerated without crashing
+Running `conductor list runs --recent N` when the event log directory contains a JSONL file with a truncated or invalid last line (e.g., partially written JSON) completes successfully, printing the available runs from valid log entries. The command exits 0 — it does not crash, print a stack trace, or exit non-zero due to a single corrupt log file.
 Tool: exec
 Evidence: exit-code(0), terminal-output(does NOT contain "Traceback"), terminal-output(does NOT contain "Error")
 
@@ -94,7 +94,7 @@ Evidence: terminal-output (depth-1 files present, depth-2+ absent), exit-code (0
 ## Area: M3: `list checkpoints` and `list registries` (unification)
 
 ### VAL-M3LIST-001: Running `conductor list checkpoints` with no arguments displays all saved checkpoints in a table
-When the user invokes `conductor list checkpoints` and at least one checkpoint has been saved, a Rich-styled table is printed to stdout with columns for version, workflow path, created timestamp, failure error type, and the agent name at failure.
+When the user invokes `conductor list checkpoints` and at least one checkpoint exists on disk, a Rich-styled table is printed to stdout with columns for version, workflow path, created timestamp, failure error type, and the agent name at failure.
 Tool: exec
 Evidence: terminal-output contains a table with column headers including "Version", "Workflow", "Created", "Error", and "Agent"; exit-code is 0.
 
@@ -114,7 +114,7 @@ Tool: exec
 Evidence: stderr contains the deprecation notice string; stdout contains the checkpoint table; exit-code is 0.
 
 ### VAL-M3LIST-005: Running `conductor list registries` with no arguments lists all configured registries in a table
-When the user invokes `conductor list registries` and at least one registry is configured, a table is printed to stdout with columns for registry name, URL, and type.
+When the user invokes `conductor list registries` and at least one registry is configured in `~/.conductor/registries.json`, a table is printed to stdout with columns for registry name, URL, and type.
 Tool: exec
 Evidence: terminal-output contains a table with registry entries; exit-code is 0.
 
@@ -129,7 +129,7 @@ Tool: exec
 Evidence: stderr contains an error message mentioning the unknown registry name; exit-code is 1.
 
 ### VAL-M3LIST-008: Running `conductor list checkpoints` when no checkpoints exist prints an informative empty-state message
-When the user invokes `conductor list checkpoints` and no checkpoints have been saved, a message indicating no checkpoints are available is printed to stdout, and the command exits successfully.
+When the user invokes `conductor list checkpoints` and the checkpoint directory is empty or does not exist, a message indicating no checkpoints are available is printed to stdout, and the command exits successfully.
 Tool: exec
 Evidence: terminal-output contains a message like "No checkpoints found" or similar empty-state text; exit-code is 0; no error output on stderr.
 
@@ -161,7 +161,7 @@ Tool: exec
 Evidence: count of table data rows equals `jq '. | length'` from JSON output; `jq -r '.[].name'` from JSON matches names extracted from table output
 
 ### VAL-M4LIST-006: Command succeeds when no user templates exist
-When no user-provided templates are available (only built-in templates exist), `conductor list templates` still prints a table listing the built-in templates and exits with code 0 — it does not error or print an empty table.
+When no user-provided template directories are configured (only built-in templates exist), `conductor list templates` still prints a table listing the built-in templates and exits with code 0 — it does not error or print an empty table.
 Tool: exec
 Evidence: exit-code = 0; terminal-output is a table with ≥ 1 data row
 
@@ -178,12 +178,12 @@ Tool: exec
 Evidence: terminal-output, exit-code
 
 ### VAL-M5JSON-002: Exit code is 0 on successful JSON output
-When a `list` subcommand with `--json` completes without encountering missing files, unreadable data, or other runtime errors, the process exits with code 0.
+When a `list` subcommand with `--json` completes without encountering missing files, unreadable event logs, or other runtime errors, the process exits with code 0.
 Tool: exec
 Evidence: exit-code
 
 ### VAL-M5JSON-003: Exit code is 1 when JSON output cannot be produced due to error
-When `conductor list runs --recent 5 --json` is pointed at unavailable or inaccessible run history data, or when `conductor list checkpoints --json` targets a missing workflow file, the process exits with code 1.
+When `conductor list runs --recent 5 --json` is pointed at a nonexistent or inaccessible event log directory, or when `conductor list checkpoints --json` targets a missing workflow file, the process exits with code 1.
 Tool: exec
 Evidence: exit-code
 
@@ -254,34 +254,52 @@ Running `conductor checkpoints` against a workflow that has saved checkpoints (e
 Tool: exec
 Evidence: terminal-output (checkpoint count matches between old and new commands; timestamps, error types, and agent names are identical between both outputs), exit-code (0)
 
-## Cross-Area Flows
-
-### VAL-CROSS-001: Discover running workflows from summary to detail to dashboard
-A user runs `conductor list` and sees a count of running workflows with a hint to run `conductor list runs`. They run `conductor list runs` and see a table of running background workflows showing Port, PID, Workflow name, Dashboard URL, and Started time. They open one of the Dashboard URLs in a browser and see the live workflow graph with agent states.
-Tool: exec
-Evidence: terminal-output(`conductor list` shows count ≥ 0 and hint), terminal-output(`conductor list runs` shows table with Port/PID/Workflow columns or empty-state message), exit-code(0)
-
-### VAL-CROSS-002: Find a workflow file, run it, and see it appear in recent history
-A user runs `conductor list workflows` and sees a table of discovered workflow YAML files with Name, Path, Agent count, and Topology tags. They pick one, run it with `conductor run <path>`, wait for completion, then run `conductor list runs --recent 5`. The recently completed run appears with status "completed" and a non-null duration.
-Tool: exec
-Evidence: terminal-output(`conductor list workflows` shows filtered YAML files), terminal-output(`conductor list runs --recent 5` includes the just-completed run with status=completed), exit-code(0)
-
-### VAL-CROSS-003: Background workflow lifecycle — list, stop, verify gone
-A user starts a workflow in background mode with `conductor run <path> --web-bg`. They run `conductor list runs` and see the new entry with a PID and Dashboard URL. They stop it with `conductor stop --port <port>`. Running `conductor list runs` again shows the workflow is no longer in the running table (though it may appear in `--recent` history with status=failed due to the stop).
-Tool: exec
-Evidence: terminal-output(`conductor list runs` after start shows the entry), terminal-output(`conductor list runs` after stop omits the entry from running table), exit-code(0)
-
-### VAL-CROSS-004: Checkpoint discovery and resume after failure
-A user runs `conductor list checkpoints` and sees a list of saved checkpoints with workflow path, failure reason, and timestamp. They resume the latest one with `conductor resume <path>`. The resumed run completes, and `conductor list runs --recent 1` shows the resumed run with status "completed" and the same run_id as in the checkpoint listing.
-Tool: exec
-Evidence: terminal-output(`conductor list checkpoints` shows at least one entry with file_path), terminal-output(`conductor list runs --recent 1` after resume shows completed status), exit-code(0)
-
-### VAL-CROSS-005: JSON export for CI scripting — runs and workflows
-A CI script runs `conductor list runs --json` and receives a valid JSON array of run history objects. Each object has `workflow`, `run_id`, `started_at`, `status`, and `duration_seconds` fields. The script also runs `conductor list workflows --json --recursive` and receives a JSON array of workflow file metadata with `name`, `path`, `agent_count`, and topology tags. Both commands exit 0 and the JSON can be piped to `jq` for filtering.
-Tool: exec
-Evidence: terminal-output(`conductor list runs --json | jq '.'` is valid JSON array), terminal-output(`conductor list workflows --json | jq '.[0].name'` extracts a field), exit-code(0) for both
-
-### VAL-CROSS-006: Template discovery to workflow instantiation
-A user runs `conductor list templates` and sees a table of available workflow templates with Name, Description, and Path. They pick a template and run `conductor init --template <template-name> <output-path>`. Running `conductor list workflows --path <output-dir>` shows the newly created workflow file with the expected agent count and topology from the template.
-Tool: exec
-Evidence: terminal-output(`conductor list templates` shows template names and paths), terminal-output(`conductor list workflows --path <output-dir>` includes the created file with correct metadata), exit-code(0)
+type: string
+content: "## Cross-Area Flows\n\n### VAL-CROSS-001: Discover running workflows from
+  summary to detail to dashboard\nA user runs `conductor list` and sees a count of
+  running workflows with a hint to run `conductor list runs`. They run `conductor
+  list runs` and see a table of running background workflows showing Port, PID, Workflow
+  name, Dashboard URL, and Started time. They open one of the Dashboard URLs in a
+  browser and see the live workflow graph with agent states.\n\nTool: exec\nEvidence:
+  terminal-output(`conductor list` shows count ≥ 0 and hint), terminal-output(`conductor
+  list runs` shows table with Port/PID/Workflow columns or empty-state message), exit-code(0)\n\
+  \n### VAL-CROSS-002: Find a workflow file, run it, and see it appear in recent history\n\
+  A user runs `conductor list workflows` and sees a table of discovered workflow YAML
+  files with Name, Path, Agent count, and Topology tags. They pick one, run it with
+  `conductor run <path>`, wait for completion, then run `conductor list runs --recent
+  5`. The recently completed run appears with status \"completed\" and a non-null
+  duration.\n\nTool: exec\nEvidence: terminal-output(`conductor list workflows` shows
+  filtered YAML files), terminal-output(`conductor list runs --recent 5` includes
+  the just-completed run with status=completed), exit-code(0)\n\n### VAL-CROSS-003:
+  Background workflow lifecycle — list, stop, verify gone\nA user starts a workflow
+  in background mode with `conductor run <path> --web-bg`. They run `conductor list
+  runs` and see the new entry with a PID and Dashboard URL. They stop it with `conductor
+  stop --port <port>`. Running `conductor list runs` again shows the workflow is no
+  longer in the running table (though it may appear in `--recent` history with status=failed
+  due to the stop).\n\nTool: exec\nEvidence: terminal-output(`conductor list runs`
+  after start shows the entry), terminal-output(`conductor list runs` after stop omits
+  the entry from running table), exit-code(0)\n\n### VAL-CROSS-004: Checkpoint discovery
+  and resume after failure\nA user runs `conductor list checkpoints` and sees a list
+  of saved checkpoints with workflow path, failure reason, and timestamp. They resume
+  the latest one with `conductor resume <path>`. The resumed run completes, and `conductor
+  list runs --recent 1` shows the resumed run with status \"completed\" and the same
+  run_id as in the checkpoint listing.\n\nTool: exec\nEvidence: terminal-output(`conductor
+  list checkpoints` shows at least one entry with file_path), terminal-output(`conductor
+  list runs --recent 1` after resume shows completed status), exit-code(0)\n\n###
+  VAL-CROSS-005: JSON export for CI scripting — runs and workflows\nA CI script runs
+  `conductor list runs --json` and receives a valid JSON array of run history objects.
+  Each object has `workflow`, `run_id`, `started_at`, `status`, and `duration_seconds`
+  fields. The script also runs `conductor list workflows --json --recursive` and receives
+  a JSON array of workflow file metadata with `name`, `path`, `agent_count`, and topology
+  tags. Both commands exit 0 and the JSON can be piped to `jq` for filtering.\n\n\
+  Tool: exec\nEvidence: terminal-output(`conductor list runs --json | jq '.'` is valid
+  JSON array), terminal-output(`conductor list workflows --json | jq '.[0].name'`
+  extracts a field), exit-code(0) for both\n\n### VAL-CROSS-006: Template discovery
+  to workflow instantiation\nA user runs `conductor list templates` and sees a table
+  of available workflow templates with Name, Description, and Path. They pick a template
+  and run `conductor init --template <template-name> <output-path>`. Running `conductor
+  list workflows --path <output-dir>` shows the newly created workflow file with the
+  expected agent count and topology from the template.\n\nTool: exec\nEvidence: terminal-output(`conductor
+  list templates` shows template names and paths), terminal-output(`conductor list
+  workflows --path <output-dir>` includes the created file with correct metadata),
+  exit-code(0)"

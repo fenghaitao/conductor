@@ -1,226 +1,183 @@
-# AGENTS.md — conductor-list
+# AGENTS.md — `conductor list` Mission
 
 ## Mission Boundaries
 
 ### Port Ranges
-**None.** This mission is purely read-only CLI — no ports are opened, no servers are started, no background processes are spawned. All data comes from local filesystem reads.
+- **No new ports allocated.** `conductor list` is a read-only CLI command that prints to stdout and exits. It does not start any servers or daemons.
+- Existing background workflow ports (as discovered via PID files at `~/.conductor/runs/*.pid`) are only read, never modified.
 
-### Filesystem Boundaries
-
-**Read-only access (DO NOT MODIFY):**
-- `~/.conductor/runs/*.pid` — PID files for running workflows
-- `$TMPDIR/conductor/conductor-*.events.jsonl` — event log files (default `$TMPDIR` = `./tmp/`)
-- `$TMPDIR/conductor/checkpoints/*.json` — checkpoint files
-- `~/.conductor/registries.json` — registry configuration
-- `plugins/conductor-workflow-creator/assets/templates/` — built-in templates
-- User's current working directory (for YAML discovery in `list workflows`)
-
-**Files workers MAY create:**
-- `src/conductor/cli/list_cmd.py` — NEW: all `list` subcommand implementations
-- `tests/test_cli/test_list.py` — NEW: comprehensive CLI tests
-
-**Files workers MAY modify:**
-- `src/conductor/cli/app.py` — ONLY: register `list_app` Typer group + deprecation wrapper on `checkpoints` command
-
-**Files that are OFF-LIMITS (do not touch):**
-- `src/conductor/cli/pid.py` — existing PID file handling (import, don't modify)
-- `src/conductor/engine/checkpoint.py` — existing checkpoint manager (import, don't modify)
-- `src/conductor/engine/event_log.py` — existing event log subscriber (import, don't modify)
-- `src/conductor/config/schema.py` — Pydantic models (import, don't modify)
-- `src/conductor/config/loader.py` — YAML loader (import, don't modify)
-- `src/conductor/cli/registry.py` — existing registry commands (import delegation functions, don't modify)
-- `src/conductor/cli/run.py` — existing run command (import `_conductor_run_dir`, don't modify)
-- `pyproject.toml` — no new dependencies to add
-- `Makefile` — no new targets needed
+### Directories OFF-LIMITS
+- `~/.conductor/runs/` — read PID files only; never write, delete, or rename.
+- `$TMPDIR/conductor/` (default `./tmp/`) — read event logs (`*.events.jsonl`) and checkpoints (`checkpoints/*.json`) only; never create, modify, or delete.
+- `~/.conductor/registries.json` — read-only through the existing `registry.config` module.
+- The `src/conductor/engine/` directory — import only; no modifications.
+- The `src/conductor/web/` directory — do not touch.
+- The `src/conductor/providers/` directory — do not touch.
 
 ### External Services
-**None to modify.** This mission does not introduce any new external service dependencies. The only external interaction is the existing registry HTTP calls to GitHub API (port 443, read-only) — these are delegated to existing `cli/registry.py` functions and are NOT modified by this mission.
+- **GitHub API** (HTTPS port 443) — only accessed indirectly via the existing `conductor registry list` delegation. Do not add new HTTP calls in `list_cmd.py`.
+- **No new network calls.** All local subcommands (`list`, `list runs`, `list workflows`, `list checkpoints`, `list templates`) are purely filesystem I/O.
 
 ### Git Rules
-- **Repository:** `fenghaitao/conductor` only. No commits to any other repos.
-- **Branch:** Work on a feature branch off `main` (e.g., `feat/conductor-list`).
-- **No force pushes** to `main` or shared branches.
-- **Do NOT commit** any PID files, event logs, checkpoint files, or registry configs — these are user data.
-- **Do NOT commit** `.pyc` files, `__pycache__`, or virtual environment directories.
+- **Commit to:** this repository (`/home/hfeng1/conductor`), on the current branch.
+- **Do NOT:**
+  - Add new dependencies to `pyproject.toml`. Use only `typer`, `rich`, `pyyaml`, `pathlib`, `json`, `logging` — all already present.
+  - Modify files outside `src/conductor/cli/list_cmd.py` (create) and `src/conductor/cli/app.py` (minor registration + deprecation wrapper only).
+  - Add new modules outside `src/conductor/cli/`.
+  - Reformat or refactor existing code unrelated to the `list` feature.
 
 ---
 
 ## Worker Guidance
 
-### Worker Types and Assignments
+### Technology Choices (BINDING — no substitutions)
 
-| Worker | File(s) | Scope |
-|--------|---------|-------|
-| **cli-worker** | `src/conductor/cli/list_cmd.py` (NEW), `src/conductor/cli/app.py` (MODIFIED) | All Typer subcommands, Rich table rendering, JSON output, deprecation wrapping |
-| **test-worker** | `tests/test_cli/test_list.py` (NEW) | pytest tests covering all subcommands, both table and JSON output, empty states, edge cases |
-
-### Binding Technology Choices (NO SUBSTITUTIONS)
-
-- **CLI framework:** `typer` (already in pyproject.toml). Do NOT use `click`, `argparse`, or any other CLI library.
-- **Output formatting:** `rich.table.Table` for table output, `json.dumps` for `--json` mode. Do NOT use `tabulate`, `prettytable`, or other table libraries.
-- **YAML parsing:** `yaml.safe_load` (from PyYAML, already in pyproject.toml). Do NOT install `ruamel.yaml`.
-- **File system:** `pathlib.Path` exclusively. Do NOT use `os.path`, `glob.glob`, or `shutil` for discovery.
-- **PID data:** Import `read_pid_files` from `conductor.cli.pid`. Do NOT duplicate PID-reading logic.
-- **Checkpoint data:** Import `CheckpointManager.list_checkpoints` from `conductor.engine.checkpoint`. Do NOT duplicate checkpoint-listing logic.
-- **Registry data:** Import and call `_list_all_registries` and `_list_registry_workflows` from `conductor.cli.registry`. Do NOT spawn subprocesses or duplicate registry logic.
-- **Event log path:** Import `_conductor_run_dir` from `conductor.engine.checkpoint`. Do NOT hardcode `tmp/` or `$TMPDIR`.
-- **Runtime:** Python 3.12+. Use type hints throughout. Use `async/await` only if needed for registry delegation — all local subcommands are synchronous.
+| Requirement | Choice |
+|---|---|
+| CLI framework | **Typer** (`typer.Typer` group + `@app.command()`) |
+| Table output | **Rich** (`rich.table.Table`) via `output_console` (stdout) |
+| Error/deprecation output | **Rich** via `console` (stderr) |
+| YAML parsing | **PyYAML** (`yaml.safe_load`) |
+| JSON output | **`json.dumps`** + `output_console.print_json()` |
+| Config loading | **`conductor.config.loader.load_config`** (full Pydantic) — only after cheap heuristic passes |
+| Filesystem walking | **`pathlib.Path.glob` / `Path.rglob`** (no `os.walk`) |
+| PID discovery | **`conductor.cli.pid.read_pid_files()`** — import and use directly |
+| Checkpoint listing | **`conductor.engine.checkpoint.CheckpointManager.list_checkpoints()`** — import and use directly |
+| Run directory | **`conductor.engine.checkpoint._conductor_run_dir()`** — import and use directly |
+| Registry listing | **`conductor.cli.registry._list_all_registries()`** and **`_list_registry_workflows()`** — call directly, no subprocess |
 
 ### Code Quality Standards
 
-1. **No god files.** All list logic lives in `list_cmd.py`. If a helper function exceeds 50 lines or could be reused by multiple commands, extract it to a module-level private function prefixed with `_`.
+1. **Single new file.** All list subcommand logic lives in `src/conductor/cli/list_cmd.py`. No god files — but this feature's surface area is small enough that one file with clearly named internal helpers is correct. Do not split into `list_runs.py`, `list_workflows.py`, etc.
 
-2. **Stay in scope.** Do NOT:
-   - Add new YAML schema fields to `config/schema.py`
-   - Change dashboard behavior
-   - Add new environment variables
-   - Add new dependencies to `pyproject.toml`
-   - Modify running workflows or event logs
-   - Add a server, daemon, or background process
-   - Change the `conductor stop` command or its output format
+2. **Reuse, don't reimplement.** Import and call `read_pid_files()`, `CheckpointManager.list_checkpoints()`, `_conductor_run_dir()`, `_list_all_registries()`, `_list_registry_workflows()` directly. Do not copy-paste their internals.
 
-3. **Google-style docstrings** for all public functions and commands. Private helpers need at minimum a one-line docstring.
+3. **Stay in scope.** This mission delivers CLI commands. Do not:
+   - Add fields to Pydantic schemas in `config/schema.py`.
+   - Add methods to `CheckpointManager` or `EventLogSubscriber`.
+   - Modify the web dashboard.
+   - Change the workflow engine.
+   - Add new environment variables.
 
-4. **Type hints required.** Every function signature must have type annotations for all parameters and return values. Use `from __future__ import annotations` if needed.
+4. **Defensive I/O.** All filesystem reads are wrapped in try/except. A corrupted PID file, truncated JSONL line, or unreadable YAML file is skipped with a `logger.debug()` or `logger.warning()` message — never crashes the command.
 
-5. **Lint compliance.** Code must pass `make lint` (Ruff, line length 100). No `# noqa` comments without explicit justification.
+5. **Type hints required.** All functions must have full type annotations (`from __future__ import annotations`). Run `make typecheck` before committing.
 
-6. **Type-check compliance.** Code must pass `make typecheck` (ty / Red Knot).
-
-7. **Reuse existing primitives.** Do NOT reimplement PID parsing, checkpoint listing, registry listing, or event log path resolution. Import and call the existing functions.
-
-8. **Defensive I/O.** All filesystem reads must be wrapped in try/except. A corrupted PID file or truncated event log line must be skipped with a debug log, never crashed.
+6. **Google-style docstrings.** Every public function and helper gets a docstring.
 
 ### Commit Message Format
 
-Use conventional commits:
-
 ```
-feat(list): add runs subcommand with --recent and --json support
+conductor list: <brief description>
 
-- Scans $TMPDIR/conductor/*.events.jsonl for recent run history
-- Cross-references PID files to mark active runs as "running"
-- Tolerates truncated event log lines gracefully
+<optional body with details>
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 ```
 
-Prefixes: `feat(list):` for new subcommands, `fix(list):` for bug fixes, `test(list):` for test-only changes, `refactor(list):` for code restructuring.
-
 ### Reporting Pre-Existing Bugs
 
-If you encounter a bug in existing code (files you are NOT modifying), do NOT fix it in this mission. Instead, report it:
+If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a crash in `CheckpointManager`) that is NOT caused by your changes:
 
-- Add an entry to `discoveredIssues` in the mission tracking document with: file path, line number (if known), symptom, and reproduction steps.
-- Mark as `non_blocking` unless it directly prevents implementing `list` functionality.
-- Example: "`pid.read_pid_files()` returns stale entries for killed processes — non_blocking, `list runs` will show them as running unless the PID is checked."
+- **Do NOT fix it** in your changeset.
+- **Document it** in the mission's issue tracker as a `non_blocking` note.
+- Focus on the `list` feature only.
 
 ---
 
 ## Known Pre-Existing Issues
 
-*(None reported at mission start. Workers: add discovered issues here as encountered.)*
+*(None documented yet — orchestrator fills this in during the run.)*
 
 ---
 
 ## Testing & Validation Guidance
 
-### Running Tests
+### Running Tests (scoped to this feature)
 
 ```bash
-# Run all tests (ensures no regressions)
-make test
-
-# Run only list-related tests
+# Run only the list command tests
 uv run pytest tests/test_cli/test_list.py -v
 
-# Run a specific test by pattern
-uv run pytest tests/test_cli/test_list.py -k "test_list_runs" -v
+# Run with coverage for the new module
+uv run pytest tests/test_cli/test_list.py --cov=conductor.cli.list_cmd --cov-report=term-missing
 
-# Run with coverage
-make test-cov
+# Run all CLI tests (to catch regressions)
+uv run pytest tests/test_cli/ -v
 ```
 
-### Linting and Type Checking
+### Running Typecheck and Lint
 
 ```bash
-# Lint check (must pass — no new violations)
-make lint
-
-# Auto-fix lint issues
-make format
-
-# Type check (must pass)
+# Type check (all code)
 make typecheck
 
-# Run all checks
-make check
+# Lint (all code)
+make lint
+
+# Auto-format before committing
+make format
 ```
 
-### Testing Tools
+### Testing Tools Available
 
-- **`typer.testing.CliRunner`** — Use for all CLI tests. Invoke `app` directly (no subprocess).
-- **`pytest` fixtures** — Use `tmp_path` for temporary files, `monkeypatch` for mocking environment variables and `read_pid_files()`.
-- **`unittest.mock.patch`** — Mock `read_pid_files()`, `CheckpointManager.list_checkpoints()`, and `_conductor_run_dir()` for unit tests.
+- **`typer.testing.CliRunner`** — for invoking CLI commands in-process. Use `CliRunner(mix_stderr=False)` so you can assert on stdout vs stderr independently.
+- **`pytest.tmp_path`** — for creating temp directories with `.yaml` files, `.pid` files, and `.events.jsonl` files.
+- **`unittest.mock.patch`** — for mocking `read_pid_files()`, `CheckpointManager.list_checkpoints()`, `_conductor_run_dir()`, and `_list_all_registries()`.
+- **`json.loads`** — for validating `--json` output is well-formed JSON matching the documented schemas.
 
-### Test Coverage Requirements
-
-Each subcommand must have tests for:
-
-| Scenario | `list` | `runs` | `workflows` | `checkpoints` | `registries` | `templates` |
-|----------|--------|--------|-------------|---------------|--------------|-------------|
-| Table output (default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| JSON output (`--json`) | N/A | ✅ | ✅ | ✅ | N/A | ✅ |
-| Empty state (no data) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Single entry | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Multiple entries | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `--recent` truncation | N/A | ✅ | N/A | N/A | N/A | N/A |
-| `--recursive` / `--max-depth` | N/A | N/A | ✅ | N/A | N/A | N/A |
-| `--all` flag | N/A | N/A | ✅ | N/A | N/A | N/A |
-| Heuristic filtering accuracy | N/A | N/A | ✅ | N/A | N/A | N/A |
-| Deprecation notice (stderr) | N/A | N/A | N/A | ✅ | N/A | N/A |
-| JSON schema stability | N/A | ✅ | ✅ | ✅ | N/A | ✅ |
-| Corrupted file tolerance | N/A | ✅ | ✅ | N/A | N/A | N/A |
-
-### Manual Validation
+### Manual Testing
 
 ```bash
-# Smoke test: summary dashboard
+# Summary dashboard
 uv run conductor list
 
-# Smoke test: list running workflows (may be empty)
+# Running workflows (start a background workflow first if needed)
 uv run conductor list runs
 
-# Smoke test: list runs with recent history (may be empty if no prior runs)
-uv run conductor list runs --recent 10
+# Recent runs with JSON output
+uv run conductor list runs --recent 5 --json
 
-# Smoke test: list runs as JSON
-uv run conductor list runs --json | python -m json.tool
-
-# Smoke test: discover workflow YAML files
+# Local workflow discovery
 uv run conductor list workflows
-uv run conductor list workflows --recursive
+uv run conductor list workflows --recursive --max-depth 2
 uv run conductor list workflows --path examples/
+uv run conductor list workflows --all
 
-# Smoke test: list checkpoints (both old and new commands)
-uv run conductor checkpoints
+# Checkpoints (new path)
 uv run conductor list checkpoints
+uv run conductor list checkpoints examples/simple-qa.yaml --json
 
-# Smoke test: list registries
+# Deprecated alias still works
+uv run conductor checkpoints
+
+# Registries
 uv run conductor list registries
+uv run conductor list registries <name>
 
-# Smoke test: list templates
-uv run conductor list templates
-
-# Verify deprecation notice goes to stderr
-uv run conductor checkpoints 2>&1 >/dev/null | grep -i deprecated
-
-# Verify --help shows list group
-uv run conductor --help | grep -A5 list
+# Templates
+uv run conductor list templates --json
 ```
 
-### Exit Code Contract
+### Expected Output Contracts
 
-- Exit code 0 on success (including empty results).
-- Exit code 1 on errors (unreadable event log, missing directory).
-- An empty result (no running workflows, no YAML files found) is NOT an error — exit 0 with a dim "nothing found" message.
+| Subcommand | Default output | `--json` output | Exit 0 | Exit 1 |
+|---|---|---|---|---|
+| `conductor list` | Rich summary panel to stdout | N/A | Always | Only on unexpected crash |
+| `list runs` | Rich table to stdout (columns: Port, PID, Workflow, Dashboard URL, Started) | JSON array of PID entries | Even with 0 running | Corrupted PID file (skip, not crash) |
+| `list runs --recent N` | Rich table (adds: Status, Duration) | JSON array of RunHistoryEntry | Even with 0 log files | Corrupted log file (skip, not crash) |
+| `list workflows` | Rich table to stdout (Name, Path, Agent count, Topology) | JSON array of WorkflowFileMeta | Even with 0 YAML files | Unreadable YAML (skip, not crash) |
+| `list checkpoints` | Rich table to stdout | JSON array of CheckpointData | Even with 0 checkpoints | Corrupted checkpoint (skip, not crash) |
+| `list registries` | Delegates to existing output | Delegates to existing output | Delegates | Delegates |
+| `list templates` | Rich table to stdout (Name, Description, Path) | JSON array of TemplateMeta | Even with 0 templates | Missing template dir (skip gracefully) |
+| `checkpoints` (deprecated) | Same as `list checkpoints` + `[dim]Deprecated: ...[/dim]` to stderr | Same | Same | Same |
+
+---
+
+## Implementation Order
+
+1. **Create `src/conductor/cli/list_cmd.py`** with all subcommands and helpers.
+2. **Register `list_app` in `src/conductor/cli/app.py`** (`app.add_typer(list_app)`).
+3. **Wrap the deprecated `checkpoints` command** in `app.py` to print deprecation notice and delegate to `list_cmd._list_checkpoints_impl()`.
+4. **Create `tests/test_cli/test_list.py`** with comprehensive tests.
+5. **Run `make lint && make typecheck && make test`** to verify everything passes.

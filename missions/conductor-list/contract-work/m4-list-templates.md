@@ -1,31 +1,36 @@
 ## Area: M4: `list templates`
 
-### VAL-TMPL-001: Table output lists all built-in templates
-Running `conductor list templates` displays a Rich table containing at least 3 template entries — pipeline, fan-out, and loop — each with a non-empty Name, Description, and Path column. The table header row is visible and the command exits within 2 seconds.
+### VAL-M4LIST-001: Table output lists built-in templates
+Running `conductor list templates` prints a Rich table to stdout containing at least 3 rows, each with a non-empty Name, a non-empty Description, and an absolute Path column. The command exits with code 0.
 Tool: exec
-Evidence: terminal-output, exit-code
+Evidence: terminal-output contains a table with columns "Name", "Description", "Path"; exit-code = 0
 
-### VAL-TMPL-002: JSON output returns a valid array of template objects
-Running `conductor list templates --json` emits a JSON array to stdout. Each element is an object containing at minimum the fields `name` (non-empty string), `description` (non-empty string), and `path` (non-empty string pointing to an existing `.yaml` or `.yml` file). The JSON is valid and the array length matches the number of table rows from the default (non-JSON) invocation.
+### VAL-M4LIST-002: JSON output is a valid JSON array of objects
+Running `conductor list templates --json` prints a JSON array to stdout where each element is an object with keys `name`, `description`, and `path`, all of type string. The array has at least 3 elements. The command exits with code 0.
 Tool: exec
-Evidence: terminal-output, exit-code
+Evidence: terminal-output parses as valid JSON array with `jq '. | length'` returning ≥ 3; `jq '.[0] | keys'` returns `["name","description","path"]`
 
-### VAL-TMPL-003: Template names and descriptions match their YAML comment headers
-For each template entry in `conductor list templates --json`, the `name` field contains the descriptive title from the first comment line of the template file (e.g., "Pipeline template: Sequential stages with conditional routing"), and the `description` field contains the text from the second non-empty comment line (e.g., "Use when: Work flows through ordered stages"). Neither field is simply the filename stem.
+### VAL-M4LIST-003: Template names and descriptions are non-empty strings
+Every template in `conductor list templates --json` has a non-empty `name` string and a non-empty `description` string. No template has a blank or null name or description.
 Tool: exec
-Evidence: terminal-output
+Evidence: `jq '.[] | select(.name == "" or .name == null)'` returns empty; `jq '.[] | select(.description == "" or .description == null)'` returns empty
 
-### VAL-TMPL-004: Exit code is 0 when templates are successfully listed
-`conductor list templates` and `conductor list templates --json` both exit with code 0 when templates are discovered and displayed. No errors or warnings are written to stderr during normal operation.
+### VAL-M4LIST-004: Template paths are absolute and point to existing files
+Every template in `conductor list templates --json` has a `path` that is an absolute path starting with `/` and pointing to a `.yaml` or `.yml` file that exists on disk. Substituting any returned path into `ls <path>` succeeds.
 Tool: exec
-Evidence: exit-code
+Evidence: `jq -r '.[].path' | while read p; do [ -f "$p" ]; done` exits 0; all paths start with `/`
 
-### VAL-TMPL-005: Command degrades gracefully when no template directory exists
-When the built-in template directory (`plugins/conductor-workflow-creator/assets/templates/`) does not exist or is empty, `conductor list templates` exits with code 0 and displays an empty-state message (e.g., "No templates found") instead of crashing or printing a traceback. `conductor list templates --json` emits an empty JSON array `[]`.
+### VAL-M4LIST-005: Table and JSON outputs are consistent
+Running `conductor list templates` (table) and `conductor list templates --json` reports the same number of templates, and the names in the table rows match the names in the JSON array (same set, same order).
 Tool: exec
-Evidence: terminal-output, exit-code
+Evidence: count of table data rows equals `jq '. | length'` from JSON output; `jq -r '.[].name'` from JSON matches names extracted from table output
 
-### VAL-TMPL-006: Non-template files in the template directory are excluded
-If a non-YAML file or a YAML file without the expected comment-header format (e.g., a plain config.yaml) is placed in the template directory, `conductor list templates --json` does not include it in the output array. Only files with parsable template metadata (name and description extracted from leading comment lines) appear in results.
+### VAL-M4LIST-006: Command succeeds when no user templates exist
+When no user-provided template directories are configured (only built-in templates exist), `conductor list templates` still prints a table listing the built-in templates and exits with code 0 — it does not error or print an empty table.
 Tool: exec
-Evidence: terminal-output
+Evidence: exit-code = 0; terminal-output is a table with ≥ 1 data row
+
+### VAL-M4LIST-007: Invalid --json combined with --help exits cleanly
+Running `conductor list templates --json --help` shows the help text (not JSON) and exits with code 0. Typer's built-in help flag takes precedence over the JSON flag.
+Tool: exec
+Evidence: terminal-output contains "--json" in help text; exit-code = 0
