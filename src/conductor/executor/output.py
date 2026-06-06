@@ -43,6 +43,15 @@ def validate_output(
         value = content[field_name]
         expected_type = field_def.type
 
+        # Unwrap dict-wrapped strings: some LLMs (e.g. DeepSeek via
+        # Anthropic-compatible endpoints) return {"text": "..."} or
+        # {"type": "text", "text": "..."} instead of a plain string.
+        if expected_type == "string" and isinstance(value, dict):
+            unwrapped = _unwrap_string(value)
+            if unwrapped is not None:
+                content[field_name] = unwrapped
+                value = unwrapped
+
         # Type checking
         if not _check_type(value, expected_type):
             raise ValidationError(
@@ -63,6 +72,26 @@ def validate_output(
                         f"expected {field_def.items.type}, got {type(item).__name__}",
                         suggestion=f"Ensure all items in '{field_name}' have correct type",
                     )
+
+
+def _unwrap_string(value: dict[str, Any]) -> str | None:
+    """Try to extract a string value from a dict-wrapped LLM output.
+
+    Some LLMs (e.g. DeepSeek via Anthropic-compatible endpoints) return
+    ``{"text": "actual content"}`` or ``{"type": "text", "text": "..."}``
+    instead of a plain string. This helper attempts to unwrap such dicts.
+
+    Returns the extracted string, or None if the dict doesn't look like
+    a wrapped string.
+    """
+    # Anthropic content block: {"type": "text", "text": "..."}
+    if "text" in value and isinstance(value.get("text"), str):
+        return str(value["text"])
+    # Generic single-string-key dict: {"content": "..."}
+    str_vals = {k: v for k, v in value.items() if isinstance(v, str)}
+    if len(str_vals) == 1 and len(value) <= 2:
+        return list(str_vals.values())[0]
+    return None
 
 
 def _check_type(value: Any, expected: str) -> bool:
