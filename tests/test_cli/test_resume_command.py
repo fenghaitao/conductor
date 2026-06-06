@@ -498,6 +498,8 @@ class TestCheckpointsCommand:
 
     def test_checkpoints_with_multiple(self, tmp_path: Path) -> None:
         """Test listing multiple checkpoints."""
+        import re
+
         checkpoints = [
             CheckpointData(
                 version=1,
@@ -539,13 +541,15 @@ class TestCheckpointsCommand:
             result = runner.invoke(app, ["checkpoints"])
 
         assert result.exit_code == 0
-        assert "workflow-a" in result.output
-        assert "workflow-b" in result.output
-        assert "researcher" in result.output
-        assert "synthesizer" in result.output
-        assert "ProviderError" in result.output
-        assert "TimeoutError" in result.output
-        assert "2 checkpoint(s)" in result.output
+        # Strip ANSI escape codes for reliable substring matching against Rich output
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "workflow-a" in clean
+        assert "workflow-b" in clean
+        assert "researcher" in clean
+        assert "synthesizer" in clean
+        assert "ProviderError" in clean
+        assert "TimeoutError" in clean
+        assert "2 checkpoint(s)" in clean
 
     def test_checkpoints_filtered_by_workflow(self, tmp_path: Path) -> None:
         """Test filtering checkpoints by workflow path."""
