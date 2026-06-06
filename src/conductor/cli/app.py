@@ -40,9 +40,11 @@ app = typer.Typer(
 )
 
 # Register subcommand groups
+from conductor.cli.list_cmd import list_app  # noqa: E402
 from conductor.cli.registry import registry_app  # noqa: E402
 
 app.add_typer(registry_app)
+app.add_typer(list_app)
 
 # Rich console for formatted output
 console = Console(stderr=True)
@@ -979,7 +981,7 @@ def resume(
         raise typer.Exit(code=1) from None
 
 
-@app.command()
+@app.command(hidden=True)
 def checkpoints(
     workflow: Annotated[
         Path | None,
@@ -990,56 +992,22 @@ def checkpoints(
 ) -> None:
     """List available workflow checkpoints.
 
+    .. deprecated::
+        Use ``conductor list checkpoints`` instead.
+
     Shows all checkpoint files with metadata including workflow name,
     timestamp, failed agent, and error type. Optionally filter by
     workflow file.
 
     \b
     Examples:
-        conductor checkpoints
-        conductor checkpoints workflow.yaml
+        conductor list checkpoints
+        conductor list checkpoints workflow.yaml
     """
-    from rich.table import Table
+    console.print("[dim]Deprecated: use 'conductor list checkpoints' instead[/dim]")
+    from conductor.cli.list_cmd import _list_checkpoints_impl
 
-    from conductor.engine.checkpoint import CheckpointManager
-
-    # Resolve workflow path for filtering
-    resolved_workflow: Path | None = None
-    if workflow is not None:
-        resolved_workflow = workflow.resolve()
-        if not resolved_workflow.exists():
-            console.print(f"[bold red]Error:[/bold red] Workflow file not found: {workflow}")
-            raise typer.Exit(code=1)
-
-    checkpoint_list = CheckpointManager.list_checkpoints(resolved_workflow)
-
-    if not checkpoint_list:
-        if resolved_workflow:
-            output_console.print(
-                f"[dim]No checkpoints found for workflow: {resolved_workflow.name}[/dim]"
-            )
-        else:
-            output_console.print("[dim]No checkpoints found.[/dim]")
-        return
-
-    table = Table(title="Workflow Checkpoints", show_lines=True)
-    table.add_column("Workflow", style="cyan")
-    table.add_column("Timestamp", style="green")
-    table.add_column("Failed Agent", style="yellow")
-    table.add_column("Error Type", style="red")
-    table.add_column("File", style="dim")
-
-    for cp in checkpoint_list:
-        workflow_name = Path(cp.workflow_path).stem
-        timestamp = cp.created_at
-        failed_agent = cp.failure.get("agent", "unknown")
-        error_type = cp.failure.get("error_type", "unknown")
-        file_path = str(cp.file_path)
-
-        table.add_row(workflow_name, timestamp, failed_agent, error_type, file_path)
-
-    output_console.print(table)
-    output_console.print(f"\n[dim]Total: {len(checkpoint_list)} checkpoint(s)[/dim]")
+    _list_checkpoints_impl(workflow)
 
 
 @app.command()
