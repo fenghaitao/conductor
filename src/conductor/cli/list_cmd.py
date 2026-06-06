@@ -340,11 +340,15 @@ def _scan_event_logs(recent: int, running_run_ids: set[str]) -> list[dict[str, A
     if not run_dir.is_dir():
         return []
 
-    log_files = sorted(
-        run_dir.glob("conductor-*.events.jsonl"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    try:
+        log_files = sorted(
+            run_dir.glob("conductor-*.events.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except (OSError, PermissionError):
+        logger.debug("Could not list event logs in %s", run_dir, exc_info=True)
+        return []
 
     entries: list[dict[str, Any]] = []
     for lf in log_files:
@@ -410,7 +414,10 @@ def _parse_event_log(log_file: Path, running_run_ids: set[str]) -> dict[str, Any
     workflow_name = "unknown"
     if first.get("type") == "workflow_started":
         data = first.get("data", {})
-        workflow_name = data.get("workflow_name", log_file.stem)
+        # The workflow_started event uses "name" for the workflow name
+        # (from self.config.workflow.name). Also check "workflow_name" as a
+        # compatibility fallback for any older event shapes.
+        workflow_name = data.get("name") or data.get("workflow_name") or log_file.stem
 
     started_at = _ts_to_iso(first.get("timestamp"))
     ended_at = None

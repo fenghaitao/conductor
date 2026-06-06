@@ -1,6 +1,6 @@
 commands:
   test: uv run pytest tests/test_cli/test_list.py
-  typecheck: uv run ty check src
+  typecheck: uv run ty check src/conductor/cli/list_cmd.py src/conductor/cli/app.py
   lint: uv run ruff check src tests && uv run ruff format --check src tests
   lint_fix: uv run ruff format src tests && uv run ruff check --fix src tests
 

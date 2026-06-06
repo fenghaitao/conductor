@@ -1,0 +1,93 @@
+salient_summary: Feature 2.2 (`conductor list runs --recent N`) already fully 
+  implemented — all tests pass and VAL-LRUNS-004 is satisfied.
+what_was_implemented: >
+  The `list_runs` command (lines 231-324) and `_scan_event_logs` / `_parse_event_log`
+  helpers (lines 327-463) were already implemented in `src/conductor/cli/list_cmd.py`.
+  `--recent N` scans `$TMPDIR/conductor/conductor-*.events.jsonl` files: parses the
+  first valid JSON line for `started_at`, the last valid JSON line for `ended_at`
+  and
+  status (completed/failed), cross-references active PID files by `run_id` to mark
+  still-running workflows as 'running', sorts by `started_at` descending, limits to
+  at most N entries, and displays a Rich table with columns: Workflow, Run ID, Started,
+  Ended, Status, Duration. Truncated or invalid JSON lines are silently skipped per
+  milestone 2.4 hardening. JSON output via `--json` emits a combined array of running
+  and history entries. All 54 list-specific tests pass plus 475 total CLI tests.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 54 passed — covers --recent limits (test_recent_limits_to_n), 
+      sort order (test_recent_sorted_by_started_desc), all statuses 
+      (completed/failed/running), PID cross-reference 
+      (test_crossref_pid_marks_running), duration calculation, JSON output, edge
+      cases (truncated lines, invalid JSON, zero valid lines, unreadable files, 
+      missing directory)
+  - command: uv run pytest tests/test_cli/ -v
+    exit_code: 0
+    observation: 475 passed, 3 skipped, 0 failures — no regressions
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All type checks passed
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: No lint violations
+  interactive_checks:
+  - action: uv run conductor list runs --recent 5
+    observed: Table with 5 rows showing Workflow, Run ID, Started, Ended, 
+      Status, Duration. Sorted by Started descending (most recent first). Shows 
+      both completed (green) and running (yellow) statuses. Duration shows 0.0s 
+      for completed, — for running. Exit code 0. Satisfies VAL-LRUNS-004.
+  - action: uv run conductor list runs --recent 5 --json
+    observed: 'Valid JSON array with required fields: workflow, run_id, started_at,
+      ended_at (or null for running), status, duration_seconds (or null).'
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: TestListRunsRecent::test_recent_limits_to_n
+    description: --recent N truncates to at most N entries
+  - name: TestListRunsRecent::test_recent_sorted_by_started_desc
+    description: Multiple event logs sorted by started_at descending
+  - name: TestListRunsRecent::test_status_completed
+    description: JSONL ending with workflow_completed → status=completed
+  - name: TestListRunsRecent::test_status_failed
+    description: JSONL ending with workflow_failed → status=failed
+  - name: TestListRunsRecent::test_status_running_no_terminal_event
+    description: JSONL without terminal event → status=running
+  - name: TestListRunsRecent::test_crossref_pid_marks_running
+    description: JSONL with no terminal event but matching PID → status=running
+  - name: TestListRunsRecent::test_recent_no_event_logs
+    description: No event logs → dim 'No recent runs found.' message
+  - name: TestListRunsRecent::test_recent_missing_dir
+    description: Missing TMPDIR → empty results, no crash
+  - name: TestListRunsRecent::test_recent_has_duration
+    description: Completed run shows calculated duration_seconds
+  - name: TestListRunsRecent::test_recent_table_columns
+    description: Rich table has Workflow, Run ID, Started, Ended, Status, 
+      Duration
+  - name: TestScanEventLogsEdgeCases::test_truncated_last_json_line
+    description: Truncated last JSON line → skipped silently
+  - name: TestScanEventLogsEdgeCases::test_invalid_json_lines_skipped
+    description: Invalid JSON lines → skipped, valid lines parsed
+  - name: TestScanEventLogsEdgeCases::test_zero_valid_json_lines
+    description: File with no valid JSON → skipped with debug log
+  - name: TestScanEventLogsEdgeCases::test_unreadable_file_skipped
+    description: Unreadable file → skipped, no crash
+  - name: TestScanEventLogsEdgeCases::test_workflow_name_from_event_data
+    description: Workflow name extracted from workflow_started event data
+  - name: TestListRunsRecentJson::test_recent_json_valid_array
+    description: --json flag → valid JSON array
+  - name: TestListRunsRecentJson::test_recent_json_has_required_fields
+    description: JSON entries have workflow, run_id, started_at, ended_at, 
+      status, duration_seconds
+  - name: TestListRunsRecentJson::test_recent_json_no_rich_markup
+    description: JSON output has no Rich ANSI escape codes
+  - name: TestListRunsRecentJson::test_recent_json_empty_no_logs
+    description: No event logs → empty JSON array
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '2.2'

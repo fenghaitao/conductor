@@ -124,7 +124,7 @@ def _make_stdin_user_input_handler(keyboard_listener: Any) -> Any:
                 else:
                     was_freeform = True
             else:
-                was_freeform = bool(answer) and not (answer in choices)
+                was_freeform = bool(answer) and answer not in choices
 
             return {"answer": answer, "wasFreeform": was_freeform}
 

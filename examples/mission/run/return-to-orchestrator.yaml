@@ -44,8 +44,10 @@ agents:
   - name: load_issues
     type: script
     description: Collect all handoffs with return_to_orchestrator=true
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -183,8 +185,10 @@ agents:
     description: |
       Apply automated actions: update AGENTS.md, reset features to pending,
       mark dismissed items. Parse triage YAML and execute changes.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys

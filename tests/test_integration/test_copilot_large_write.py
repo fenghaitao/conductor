@@ -129,7 +129,9 @@ def _build_large_write_workflow(target_path: Path) -> WorkflowConfig:
     )
 
 
-@pytest.mark.skip(reason="requires claude-opus-4.7-1m-internal model not available in this subscription")
+@pytest.mark.skip(
+    reason="requires claude-opus-4.7-1m-internal model not available in this subscription"
+)
 @pytest.mark.real_api
 @pytest.mark.asyncio
 async def test_large_create_tool_call_does_not_truncate(tmp_path: Path) -> None:

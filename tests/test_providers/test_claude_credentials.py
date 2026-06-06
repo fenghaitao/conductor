@@ -22,11 +22,12 @@ class TestResolveAuthToken:
         assert result == "explicit-token"
 
     def test_env_var_when_file_absent(self, tmp_path: Path) -> None:
-        with patch.dict(
-            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
-        ), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            tmp_path / "nonexistent.json",
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                tmp_path / "nonexistent.json",
+            ),
         ):
             result = resolve_auth_token()
             assert result == "env-token"
@@ -35,19 +36,23 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(_creds("file-token"))
 
-        with patch.dict(
-            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
-        ), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             result = resolve_auth_token()
             assert result == "env-token"
 
     def test_file_missing_and_env_unset_raises(self, tmp_path: Path) -> None:
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            tmp_path / "nonexistent.json",
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                tmp_path / "nonexistent.json",
+            ),
         ):
             with pytest.raises(ProviderError) as exc_info:
                 resolve_auth_token()
@@ -58,9 +63,12 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text("not valid json {{{")
 
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             with pytest.raises(ProviderError) as exc_info:
                 resolve_auth_token()
@@ -70,11 +78,12 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(_creds("file-token"))
 
-        with patch.dict(
-            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
-        ), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             result = resolve_auth_token(auth_token="explicit")
             assert result == "explicit"
@@ -84,9 +93,12 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(_creds("file-token"))
 
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             result = resolve_auth_token()
             assert result == "file-token"
@@ -96,9 +108,12 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(json.dumps({"other_key": "not_oauth"}))
 
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             with pytest.raises(ProviderError) as exc_info:
                 resolve_auth_token()
@@ -106,11 +121,12 @@ class TestResolveAuthToken:
 
     def test_empty_string_auth_token_falls_through(self, tmp_path: Path) -> None:
         """Empty string auth_token should be treated as unset, falling through to env/file."""
-        with patch.dict(
-            os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True
-        ), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            tmp_path / "nonexistent.json",
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "env-token"}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                tmp_path / "nonexistent.json",
+            ),
         ):
             result = resolve_auth_token(auth_token="")
             assert result == "env-token"
@@ -120,9 +136,12 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(json.dumps({"claudeAiOauth": {"accessToken": ""}}))
 
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             with pytest.raises(ProviderError) as exc_info:
                 resolve_auth_token()
@@ -133,13 +152,16 @@ class TestResolveAuthToken:
         creds_file = tmp_path / ".credentials.json"
         creds_file.write_text(_creds("file-token"))
 
-        with patch.dict(
-            os.environ,
-            {"ANTHROPIC_API_KEY": "should-be-ignored"},
-            clear=True,
-        ), patch(
-            "conductor.providers.claude_credentials.CREDENTIALS_PATH",
-            creds_file,
+        with (
+            patch.dict(
+                os.environ,
+                {"ANTHROPIC_API_KEY": "should-be-ignored"},
+                clear=True,
+            ),
+            patch(
+                "conductor.providers.claude_credentials.CREDENTIALS_PATH",
+                creds_file,
+            ),
         ):
             result = resolve_auth_token()
             assert result == "file-token"

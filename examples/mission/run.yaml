@@ -51,8 +51,10 @@ agents:
     description: |
       Find the next milestone that has pending features.
       Returns the milestone name, its pending features, and overall state.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -107,16 +109,32 @@ agents:
 
         current_milestone = None
         for ms in seen_milestones:
-            if ms in milestone_pending:
-                current_milestone = ms
-                break
+            ms_features = [f for f in features if f.get("milestone") == ms]
+            pending_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "pending"]
+            completed_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "completed"]
 
-        if current_milestone:
-            state = "ready"
-        elif returned:
-            state = "returned"
-        else:
-            state = "all_done"
+            if pending_in_ms:
+                # Has pending work — implement them
+                current_milestone = ms
+                milestone_pending[ms] = pending_in_ms
+                state = "ready"
+                break
+            elif completed_in_ms and len(completed_in_ms) == len(ms_features):
+                # All features completed but unreviewed — route to review
+                seal_path = mission_dir / "validation" / ms / "sealed.yaml"
+                if not seal_path.exists():
+                    current_milestone = ms
+                    milestone_pending[ms] = []  # empty — review handles completed
+                    state = "ready"
+                    break
+
+        if not current_milestone:
+            if returned:
+                state = "returned"
+            else:
+                state = "all_done"
 
         def to_plain(d):
             if isinstance(d, dict):
@@ -133,6 +151,7 @@ agents:
             "completed_features": sum(1 for f in features
                 if state_features.get(f.get("id",""),{}).get("status") == "completed"),
             "returned_features": [f.get("id") for f in returned],
+            "pending_count": len(milestone_pending.get(current_milestone, [])),
         }))
       - "{{ workflow.input.mission_dir }}"
     output:
@@ -142,11 +161,14 @@ agents:
       total_features:     { type: number }
       completed_features: { type: number }
       returned_features:  { type: array }
+      pending_count:      { type: number }
     routes:
       - to: return_to_orchestrator
         when: "state == 'returned'"
       - to: collect_skill_feedback
         when: "state == 'all_done'"
+      - to: review_milestone
+        when: "pending_count == 0"
       - to: implement_milestone
 
   # ── Implement milestone ──────────────────────────────────────────────────

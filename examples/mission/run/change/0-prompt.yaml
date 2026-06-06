@@ -51,4 +51,4 @@ agents:
         route: $end
 
 output:
-  action: "{{ prompt_for_changes.output.value }}"
+  action: "{{ prompt_for_changes.output.selected }}"

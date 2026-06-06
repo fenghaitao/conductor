@@ -61,8 +61,10 @@ agents:
     description: |
       Load all mission artifacts and the feature's SKILL.md in one shot.
       Also loads sibling features in the same milestone for context.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -209,8 +211,10 @@ agents:
     description: |
       Run missionDir/init.sh if it exists and hasn't been run this session.
       The .init_done marker prevents re-running on resume.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, subprocess, sys
@@ -405,8 +409,10 @@ agents:
   - name: save_handoff
     type: script
     description: Write handoffs/<feature_id>.yaml
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -459,8 +465,10 @@ agents:
     description: |
       Update this feature's status in feature-state.yaml to "completed".
       Deterministic script — never LLM.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys

@@ -78,8 +78,10 @@ agents:
   - name: load_artifacts
     type: script
     description: Read all current mission artifacts for context.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -223,8 +225,10 @@ agents:
   - name: save_changes
     type: script
     description: Write updated artifact files and log the change.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import datetime, json, pathlib, sys

@@ -32,8 +32,10 @@ workflow:
 agents:
   - name: seal_milestone
     type: script
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import datetime, json, pathlib, sys

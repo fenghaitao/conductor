@@ -1,0 +1,55 @@
+salient_summary: Feature 2.3 was already implemented — `conductor list runs 
+  --json` emits valid JSON with required keys, empty array when idle, exit 0 in 
+  all cases. Verified 54/54 tests pass.
+what_was_implemented: >
+  The `conductor list runs --json` flag was already fully implemented in
+  `src/conductor/cli/list_cmd.py` as part of milestones 2.1 and 2.2.  The
+  `_output_runs_json()` helper (line 466) builds a JSON array from running
+  PID entries and optional history entries, outputting to stdout via
+  `print(json.dumps(result))`.  Each running entry includes the required
+  keys: `pid`, `port`, `workflow`, `dashboard_url`, `started_at` (plus
+  `run_id` and `status` for completeness).  When no workflows are running
+  the output is `[]` (empty JSON array).  The `list_runs` command (line
+  231) branches on `json_output: bool` at line 273, calling
+  `_output_runs_json(running_entries, history_entries)`.  No ANSI/Rich
+  markup leaks into the JSON output.  Exit code is 0 in all cases (empty
+  or populated).
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: '54 tests passed — includes TestListRunsJson (3 tests: empty array,
+      required keys, no Rich markup), TestListRunsRecentJson (4 tests: valid array,
+      required fields, no markup, empty), and all edge-case tests for event log scanning'
+  - command: uv run ty check src/conductor/cli/list_cmd.py
+    exit_code: 0
+    observation: All checks passed — no type errors in list_cmd.py
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  - command: uv run conductor list runs --json | python3 -m json.tool
+    exit_code: 0
+    observation: '[] (empty JSON array) — valid output when no background workflows
+      are running'
+  interactive_checks:
+  - action: uv run pytest tests/test_cli/test_list.py -v -k TestListRunsJson
+    observed: '3 tests passed: test_empty_runs_json (empty array, exit 0), test_single_run_json_has_required_keys
+      (pid/port/workflow/dashboard_url/started_at/run_id/status), test_json_no_rich_markup
+      (no ANSI codes in output)'
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_empty_runs_json
+    description: No PID files → empty JSON array [] to stdout, exit 0
+  - name: test_single_run_json_has_required_keys
+    description: One PID file → JSON entry with pid, port, workflow, 
+      dashboard_url, started_at, run_id, status keys; correct values
+  - name: test_json_no_rich_markup
+    description: JSON output contains no ANSI escape codes
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '2.3'

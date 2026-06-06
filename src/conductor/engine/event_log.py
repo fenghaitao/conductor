@@ -23,13 +23,12 @@ import logging
 import os
 import re
 import secrets
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-from conductor.events import WorkflowEvent
 from conductor.engine.checkpoint import _conductor_run_dir
+from conductor.events import WorkflowEvent
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +141,7 @@ class EventLogSubscriber:
             self._run_id = secrets.token_hex(4)
         ts = time.strftime("%Y%m%d-%H%M%S")
         self._path = (
-            _conductor_run_dir()
-            / f"conductor-{workflow_name}-{ts}-{self._run_id}.events.jsonl"
+            _conductor_run_dir() / f"conductor-{workflow_name}-{ts}-{self._run_id}.events.jsonl"
         )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = open(self._path, "w", encoding="utf-8")  # noqa: SIM115

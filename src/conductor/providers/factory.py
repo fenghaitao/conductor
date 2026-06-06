@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 
 async def create_provider(
     provider_type: Literal[
-        "copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk",
+        "copilot",
+        "openai-agents",
+        "claude",
+        "pydantic-deep",
+        "claude-agent-sdk",
         "claude-subscription",
     ] = "copilot",
     validate: bool = True,

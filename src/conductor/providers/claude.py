@@ -420,8 +420,7 @@ class ClaudeProvider(AgentProvider):
         # endpoint; credential/model errors then surface on the first execute.
         if self._base_url is not None:
             logger.info(
-                "Custom Anthropic base_url set (%s); skipping models.list() "
-                "connectivity probe.",
+                "Custom Anthropic base_url set (%s); skipping models.list() connectivity probe.",
                 self._base_url,
             )
             return True

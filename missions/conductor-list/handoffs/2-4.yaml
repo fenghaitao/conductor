@@ -1,0 +1,52 @@
+salient_summary: Harden `--recent N` event log scanning against malformed data —
+  wrapped `glob()` + `stat()` in `_scan_event_logs` with try/except for 
+  `OSError`/`PermissionError`, and added comprehensive mixed-scenario test 
+  validating VAL-LRUNS-006 (multiple corrupt records in one invocation exits 0, 
+  no traceback, shows only valid entries).
+what_was_implemented: >
+  Added try/except around `run_dir.glob()` and `sorted(..., key=lambda p: p.stat().st_mtime)`
+  in
+  `_scan_event_logs()` to catch `OSError` and `PermissionError` when listing or stat'ing
+  event log
+  files (e.g., file deleted between glob and stat, directory permissions change).
+  On failure, logs
+  at debug level and returns empty list. Added comprehensive mixed-scenario test
+  `test_mixed_valid_and_corrupt_files` that creates a directory with valid, truncated,
+  invalid-JSON-only,
+  and empty event log files and asserts: exit code 0, no "Traceback" in output, no
+  "Error" in output,
+  valid entries appear, corrupt file IDs are absent from output. All existing hardening
+  from earlier
+  milestones (per-file try/except, line-by-line JSON skip, zero-valid-lines return
+  None) remains intact.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v --tb=short
+    exit_code: 0
+    observation: 55 passed (including new test_mixed_valid_and_corrupt_files), 0
+      failed
+  - command: uv run ty check src/conductor/cli/list_cmd.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  - command: uv run pytest tests/test_cli/ -v --tb=short
+    exit_code: 0
+    observation: 476 passed, 3 skipped — no regressions in the full CLI test 
+      suite
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_mixed_valid_and_corrupt_files
+    description: Multiple corrupt records (truncated JSON, invalid-JSON-only 
+      log, empty log) mixed with valid logs must not crash — exits 0, no 
+      Traceback/Error, valid entries visible, corrupt file IDs absent 
+      (VAL-LRUNS-006)
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '2.4'

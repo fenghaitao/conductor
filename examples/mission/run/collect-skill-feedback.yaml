@@ -31,8 +31,10 @@ agents:
     description: |
       Scan handoffs for skill deviation feedback and apply suggested
       improvements to each skills/<type>/SKILL.md.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys

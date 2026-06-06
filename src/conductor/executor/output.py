@@ -96,9 +96,9 @@ def _unwrap_string(value: dict[str, Any]) -> str | None:
         return list(str_vals.values())[0]
     # Complex nested dict (parsed YAML/JSON): re-serialize as YAML
     try:
-        from ruamel.yaml import YAML
-
         from io import StringIO
+
+        from ruamel.yaml import YAML
 
         yaml = YAML()
         buf = StringIO()

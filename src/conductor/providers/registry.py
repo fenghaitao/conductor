@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 
 
 ProviderType = Literal[
-    "copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk",
+    "copilot",
+    "openai-agents",
+    "claude",
+    "pydantic-deep",
+    "claude-agent-sdk",
     "claude-subscription",
 ]
 

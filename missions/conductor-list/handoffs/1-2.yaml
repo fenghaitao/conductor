@@ -1,75 +1,71 @@
-salient_summary: Milestone 1.2 (list summary dashboard callback) is already 
-  fully implemented and passing all 27 tests. The `conductor list` no-subcommand
-  callback collects counts for running workflows, recent runs, local workflows, 
-  and templates, then prints a Rich Panel with each count and a dim subcommand 
-  hint (e.g., '3 running — use conductor list runs'). All counts are integers 
-  including zero. Exit code is 0. No work remains.
+salient_summary: Verified milestone 1.2 — the `conductor list` summary dashboard
+  callback is already fully implemented. It collects counts for running 
+  workflows (via read_pid_files), recent runs (via JSONL glob), local workflows 
+  (via YAML heuristic), and templates (via template dir scan), then renders a 
+  Rich Panel with integer counts and subcommand hints.
 what_was_implemented: >
-  The `list_summary` callback in `src/conductor/cli/list_cmd.py` (lines 151-223) collects
-  counts for: running workflows via `read_pid_files()`, recent runs via `_conductor_run_dir()`
-  JSONL glob, local workflows via a 2KB heuristic YAML scan for `agents:`/`type: workflow`/`runtime:`,
-  and templates via `_discover_templates(_get_template_directories())`. It then builds
-  a Rich
-  Panel with the title 'Conductor Discovery', displaying each count alongside a dim
-  parenthetical
-  hint for the corresponding full subcommand (e.g., '(conductor list runs)'). All
-  counts are
-  integers including zero. Output goes to stdout (`output_console`), with stderr left
-  empty.
-  The callback is defensive: all data-gathering operations are wrapped in try/except
-  with
-  debug logging, so a corrupted PID file or missing directory never crashes the command.
+  The `list_summary` callback in `src/conductor/cli/list_cmd.py` (lines 152-223) was
+  already
+  implemented during milestone 1.1. It gathers four counts: running workflows via
+  `read_pid_files()`, recent runs via glob of `conductor-*.events.jsonl` in
+  `_conductor_run_dir()`, local workflow YAML files via heuristic frontmatter scan
+  (first 2 KB
+  for `agents:`, `type: workflow`, or `runtime:`), and templates via `_discover_templates()`.
+  Each count is rendered inside a Rich Panel with a dim subcommand hint:
+  `(conductor list runs)`, `(conductor list runs --recent)`, `(conductor list workflows)`,
+  `(conductor list templates)`. All counts are integers including zero. No Rich table
+  headers
+  or column lines appear in the summary panel. Exit code is 0. All defensive I/O is
+  wrapped
+  in try/except with debug logging on failure.
 what_was_left_undone: ''
 return_to_orchestrator: false
 verification:
   commands_run:
   - command: uv run pytest tests/test_cli/test_list.py -v
     exit_code: 0
-    observation: 27 tests passed in 0.86s — including 10 summary-specific tests 
-      covering exit code, panel format, all four count lines 
-      (running/recent/workflows/templates), integer counts, zero running case, 
-      non-zero running case, PID error resilience, and empty stderr
-  - command: uv run conductor list
+    observation: All 27 tests passed, including all 11 summary-specific tests
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
     exit_code: 0
-    observation: 'Rich Panel displayed with counts: Running workflows: 0, Recent runs:
-      207, Local workflows: 0, Templates: 3. Each count has dim subcommand hint.'
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
   interactive_checks:
   - action: uv run conductor list
-    observed: Summary panel with 4 count lines, each with a dim hint in 
-      parentheses. All counts are integers. Exit code 0.
-  - action: uv run conductor list 2>/dev/null
-    observed: Panel renders successfully to stdout only.
-  - action: uv run conductor checkpoints
-    observed: Deprecation notice printed to stderr, then checkpoint table 
-      follows. Exit code 0.
+    observed: "Rich Panel with 'Running workflows: 0 (conductor list runs)', 'Recent
+      runs: 228 (conductor list runs --recent)', 'Local workflows: 0 (conductor list
+      workflows)', 'Templates: 3 (conductor list templates)'. Exit code 0."
+  - action: uv run conductor list --help
+    observed: Shows runs, workflows, checkpoints, registries, templates 
+      subcommands with options.
 tests_added:
 - file: tests/test_cli/test_list.py
   cases:
   - name: test_list_summary_exit_code_zero
-    description: Summary command exits 0
+    description: Exit code is 0 when no subcommand given
   - name: test_list_summary_uses_panel_not_table
-    description: Summary uses Rich Panel borders, no table column markers
+    description: Output uses Rich Panel, not Table (no column headers)
   - name: test_list_summary_has_running_count
-    description: Output contains 'running' and 'conductor list runs' hint
+    description: Output contains 'Running workflows' with count
   - name: test_list_summary_has_recent_count
-    description: Output contains 'Recent runs' and 'conductor list runs 
-      --recent' hint
+    description: Output contains 'Recent runs' with count
   - name: test_list_summary_has_workflow_count
-    description: Output contains 'Local workflows' and 'conductor list 
-      workflows' hint
+    description: Output contains 'Local workflows' with count
   - name: test_list_summary_has_template_count
-    description: Output contains 'Templates' and 'conductor list templates' hint
+    description: Output contains 'Templates' with count
   - name: test_list_summary_counts_are_integers
-    description: Each count line matches regex \d+ (integer) after the label
+    description: All counts are integers (regex validation)
   - name: test_list_summary_with_zero_running
-    description: Count of 0 renders correctly when read_pid_files returns empty 
-      list
+    description: Shows 0 when no PID files exist
   - name: test_list_summary_with_running_workflows
-    description: Count reflects 2 running workflows when 2 PID entries returned
+    description: Shows correct count when PID files exist
   - name: test_list_summary_resilient_to_pid_error
-    description: OSError in read_pid_files shows 0 running, exits 0
+    description: Does not crash when read_pid_files raises
   - name: test_list_summary_stderr_is_empty
-    description: Summary writes only to stdout, stderr is empty string
+    description: No output written to stderr
 discovered_issues: []
 skill_name: cli-worker
 skill_feedback: []

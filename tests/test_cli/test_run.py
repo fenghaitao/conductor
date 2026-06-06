@@ -991,9 +991,7 @@ class TestBuildSkillDirectories:
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            workflow=SimpleNamespace(
-                runtime=SimpleNamespace(skill_directories=dirs)
-            )
+            workflow=SimpleNamespace(runtime=SimpleNamespace(skill_directories=dirs))
         )
 
     def test_none_when_empty(self, tmp_path: Path) -> None:

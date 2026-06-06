@@ -209,10 +209,7 @@ def _apply_provider_override(
     """
     from conductor.config.schema import ProviderSettings as _PS
 
-    if (
-        config_provider.has_custom_routing()
-        and provider_override in _STRUCTURED_ROUTING_PROVIDERS
-    ):
+    if config_provider.has_custom_routing() and provider_override in _STRUCTURED_ROUTING_PROVIDERS:
         data = config_provider.model_dump(mode="python")
         data["name"] = provider_override
         return _PS(**data)
@@ -1514,7 +1511,9 @@ async def run_workflow_async(
             )
 
         # Use ProviderRegistry for multi-provider support
-        async with ProviderRegistry(config, mcp_servers=mcp_servers, skill_directories=skill_directories) as registry:
+        async with ProviderRegistry(
+            config, mcp_servers=mcp_servers, skill_directories=skill_directories
+        ) as registry:
             # Create and run workflow engine
             verbose_log("Starting workflow execution...")
 
@@ -2051,7 +2050,9 @@ async def resume_workflow_async(
         skill_directories = _build_skill_directories(config, resolved_workflow_path)
 
         # Create engine and restore state
-        async with ProviderRegistry(config, mcp_servers=mcp_servers, skill_directories=skill_directories) as registry:
+        async with ProviderRegistry(
+            config, mcp_servers=mcp_servers, skill_directories=skill_directories
+        ) as registry:
             verbose_log("Starting resumed workflow execution...")
 
             # Pass stored session IDs to registry for Copilot session resume.
@@ -2059,7 +2060,7 @@ async def resume_workflow_async(
             # those endpoints are stateless and don't support session continuation.
             if cp.copilot_session_ids:
                 provider = config.workflow.runtime.provider
-                if not (hasattr(provider, 'has_custom_routing') and provider.has_custom_routing()):
+                if not (hasattr(provider, "has_custom_routing") and provider.has_custom_routing()):
                     registry.set_resume_session_ids(cp.copilot_session_ids)
 
             # Set up interrupt listener if interactive mode is enabled

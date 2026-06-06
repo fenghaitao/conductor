@@ -130,8 +130,10 @@ agents:
     description: |
       Collect pending VAL-* assertion IDs for features in this milestone.
       Groups assertions by area for parallel testing (2-5 per group).
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, re, sys
@@ -143,10 +145,16 @@ agents:
 
         # Get assertion IDs claimed by completed features in this milestone
         features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        # Read runtime status from feature-state.yaml
+        state_path = mission_dir / "feature-state.yaml"
+        feat_state = yaml.load(state_path.read_text()) if state_path.exists() else {}
+        feat_state = feat_state.get("features", {}) if feat_state else {}
         milestone_assertion_ids = set()
         for f in features_data.get("features", []):
+            fid = f.get("id", "")
+            status = feat_state.get(fid, {}).get("status", "pending")
             if (f.get("milestone") == milestone and
-                f.get("status") == "completed" and
+                status == "completed" and
                 not f.get("skill_name", "").startswith("review-") and
                 not f.get("skill_name", "").startswith("user-testing-")):
                 for vid in f.get("fulfills", []):
@@ -244,8 +252,10 @@ agents:
     description: |
       Parse all group results and update validation-state.yaml.
       Write per-milestone testing report.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -324,8 +334,10 @@ agents:
     description: |
       For each failed assertion, add a fix feature to features.yaml
       so the run loop will implement the fix before re-testing.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -342,8 +354,12 @@ agents:
         yaml = YAML()
         yaml.preserve_quotes = True
         features_path = mission_dir / "features.yaml"
+        state_path = mission_dir / "feature-state.yaml"
         data = yaml.load(features_path.read_text()) or {}
         features = data.get("features", [])
+        # Load runtime state
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {}
+        state_features = state_data.get("features", {}) if state_data else {}
 
         # Find the highest feature ID for this milestone
         milestone_ids = [
@@ -383,7 +399,7 @@ agents:
             # id would violate the coverage invariant.
             existing = next((f for f in features if is_fix_for(f, vid)), None)
             if existing is not None:
-                existing["status"] = "pending"
+                state_features[existing["id"]] = {"status": "pending", "attempts": 0}
                 fix_ids.append(existing["id"])
                 reset += 1
                 continue
@@ -401,15 +417,17 @@ agents:
                 "skill_name": skill,
                 "expected_behavior": f"Assertion {vid} passes user testing",
                 "fulfills": [vid],
-                "status": "pending",
-                "worker_session_id": "",
             })
+            state_features[fix_id] = {"status": "pending", "attempts": 0}
             fix_ids.append(fix_id)
             injected += 1
 
         data["features"] = features
         with open(features_path, "w") as f:
             yaml.dump(data, f)
+        state_data["features"] = state_features
+        with open(state_path, "w") as f:
+            yaml.dump(state_data, f)
 
         print(json.dumps({"injected": injected, "reset": reset, "fix_feature_ids": fix_ids}))
       - "{{ workflow.input.mission_dir }}"

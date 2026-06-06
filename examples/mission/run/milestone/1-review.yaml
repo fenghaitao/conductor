@@ -114,11 +114,13 @@ agents:
     description: |
       Run test, typecheck, and lint commands from services.yaml.
       Captures exit codes and output. Does NOT pipe through head/tail.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
-        import json, pathlib, subprocess, sys
+        import json, pathlib, re, subprocess, sys
         from ruamel.yaml import YAML
 
         mission_dir = pathlib.Path(sys.argv[1])
@@ -135,20 +137,33 @@ agents:
             cmd = commands.get(key)
             if not cmd:
                 continue
-            result = subprocess.run(
-                cmd, shell=True, cwd=cwd,
-                capture_output=True, text=True, timeout=300
-            )
-            passed = result.returncode == 0
-            if not passed:
+            try:
+                result = subprocess.run(
+                    cmd, shell=True, cwd=cwd,
+                    capture_output=True, text=True, timeout=300
+                )
+                passed = result.returncode == 0
+                if not passed:
+                    all_passed = False
+                # Strip ANSI escapes and limit output size
+                output = (result.stdout + result.stderr)[-2000:]
+                output = re.sub(r"\\x1b\[[0-9;]*[a-zA-Z]", "", output)
+                results.append({
+                    "command": cmd,
+                    "key": key,
+                    "exit_code": result.returncode,
+                    "output": output,
+                    "passed": passed,
+                })
+            except Exception as ex:
                 all_passed = False
-            results.append({
-                "command": cmd,
-                "key": key,
-                "exit_code": result.returncode,
-                "output": (result.stdout + result.stderr)[-3000:],
-                "passed": passed,
-            })
+                results.append({
+                    "command": cmd,
+                    "key": key,
+                    "exit_code": -1,
+                    "output": str(ex)[:500],
+                    "passed": False,
+                })
 
         print(json.dumps({"results": results, "all_passed": all_passed}))
       - "{{ workflow.input.mission_dir }}"
@@ -168,8 +183,10 @@ agents:
       Called when programmatic validators fail. Resets all completed milestone
       features back to pending so the run loop can retry them.
       Writes a synthesis artifact for audit purposes.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import datetime, json, pathlib, sys
@@ -233,8 +250,10 @@ agents:
   - name: load_milestone_data
     type: script
     description: Collect all completed features in this milestone and their handoffs.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys
@@ -344,8 +363,10 @@ agents:
     description: |
       Parse synthesis. Reset failed features to pending in features.yaml.
       Write synthesis to validation/<milestone>/review/synthesis.yaml.
-    command: python3
+    command: uv
     args:
+      - run
+      - python3
       - "-c"
       - |
         import json, pathlib, sys

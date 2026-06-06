@@ -408,3 +408,742 @@ class TestListSummary:
         result = _invoke(["list"])
         assert result.exit_code == 0
         assert result.stderr == ""
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list runs` — running workflows table
+# ---------------------------------------------------------------------------
+
+
+class TestListRunsRunning:
+    """Verify `list runs` displays running workflows from PID files."""
+
+    def test_no_running_workflows(self) -> None:
+        """When no PID files exist, print dim empty message, exit 0."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs"])
+        assert result.exit_code == 0
+        assert "No running workflows found" in result.output
+
+    def test_single_running_workflow(self) -> None:
+        """One PID entry produces a table with one row and correct values."""
+        pid_entries = [
+            {
+                "pid": 12345,
+                "port": 8080,
+                "workflow": "my-workflow.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "abc12345",
+                "file": "/tmp/test.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "8080" in output
+        assert "12345" in output
+        assert "my-workflow" in output
+        assert "http://127.0.0.1:8080" in output
+        assert "2026-01-01" in output
+
+    def test_multiple_running_workflows(self) -> None:
+        """Multiple PID entries produce a table with multiple rows."""
+        pid_entries = [
+            {
+                "pid": 100,
+                "port": 8000,
+                "workflow": "alpha.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "aaa11111",
+                "file": "/tmp/a.pid",
+            },
+            {
+                "pid": 200,
+                "port": 8001,
+                "workflow": "beta.yaml",
+                "started_at": "2026-01-01T01:00:00+00:00",
+                "run_id": "bbb22222",
+                "file": "/tmp/b.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "alpha" in output
+        assert "beta" in output
+        assert "8000" in output
+        assert "8001" in output
+
+    def test_table_has_expected_columns(self) -> None:
+        """The running table includes Port, PID, Workflow, Dashboard URL, Started."""
+        pid_entries = [
+            {
+                "pid": 9999,
+                "port": 9090,
+                "workflow": "test.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "x",
+                "file": "/tmp/t.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "Port" in output
+        assert "PID" in output
+        assert "Workflow" in output
+        assert "Dashboard URL" in output
+        assert "Started" in output
+
+    def test_pid_read_error_graceful(self) -> None:
+        """PID read errors produce empty state, not crash."""
+        with patch("conductor.cli.pid.read_pid_files", side_effect=OSError("boom")):
+            result = _invoke(["list", "runs"])
+        assert result.exit_code == 0
+        assert "No running workflows found" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list runs --json` — JSON output for running workflows
+# ---------------------------------------------------------------------------
+
+
+class TestListRunsJson:
+    """Verify `list runs --json` emits valid JSON for running workflows."""
+
+    def test_empty_runs_json(self) -> None:
+        """No PID files → empty JSON array, exit 0."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data == []
+
+    def test_single_run_json_has_required_keys(self) -> None:
+        """Each JSON entry has pid, port, workflow, dashboard_url, started_at, run_id, status."""
+        pid_entries = [
+            {
+                "pid": 42,
+                "port": 4242,
+                "workflow": "w.yaml",
+                "started_at": "2026-03-01T12:00:00+00:00",
+                "run_id": "deadbeef",
+                "file": "/tmp/x.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["pid"] == 42
+        assert entry["port"] == 4242
+        assert entry["workflow"] == "w"
+        assert entry["dashboard_url"] == "http://127.0.0.1:4242"
+        assert entry["started_at"] == "2026-03-01T12:00:00+00:00"
+        assert entry["run_id"] == "deadbeef"
+        assert entry["status"] == "running"
+
+    def test_json_no_rich_markup(self) -> None:
+        """JSON output contains no Rich ANSI escape codes."""
+        pid_entries = [
+            {
+                "pid": 1,
+                "port": 2,
+                "workflow": "x.yaml",
+                "started_at": "t",
+                "run_id": "r",
+                "file": "f",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        # Raw output should be valid JSON without ANSI codes
+        json.loads(result.output)
+        assert "\x1b" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list runs --recent N` — recent run history
+# ---------------------------------------------------------------------------
+
+
+def _make_event_log(
+    dir: Path,
+    stem: str,
+    workflow_name: str,
+    started_ts: float,
+    ended_ts: float | None = None,
+    end_event: str = "workflow_completed",
+) -> Path:
+    """Create a realistic event log file for testing.
+
+    Args:
+        dir: Directory to create the file in.
+        stem: Filename stem (e.g. "conductor-test-2025...-runid.events").
+        workflow_name: Workflow name for the ``workflow_started`` event.
+        started_ts: Unix timestamp for the start event.
+        ended_ts: Unix timestamp for the end event. If None, no terminal event.
+        end_event: Event type for the terminal event ("workflow_completed" or "workflow_failed").
+
+    Returns:
+        Path to the created file.
+    """
+    fp = dir / f"{stem}.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "workflow_started",
+                "timestamp": started_ts,
+                "data": {"name": workflow_name},
+            }
+        )
+    ]
+    if ended_ts is not None:
+        lines.append(
+            json.dumps(
+                {
+                    "type": end_event,
+                    "timestamp": ended_ts,
+                    "data": {},
+                }
+            )
+        )
+    fp.write_text("\n".join(lines))
+    return fp
+
+
+class TestListRunsRecent:
+    """Verify `list runs --recent N` scans event logs and displays history."""
+
+    def test_recent_limits_to_n(self, tmp_path: Path) -> None:
+        """--recent 2 returns at most 2 entries even with many event logs."""
+        run_dir = tmp_path / "conductor_runs"
+        run_dir.mkdir()
+        for i in range(5):
+            _make_event_log(
+                run_dir,
+                f"conductor-test-2025010{i}-01000{i}-id{i:08x}.events",
+                f"workflow-{i}",
+                1700000000 + i * 10,
+                1700000000 + i * 10 + 5,
+            )
+
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "2"])
+        assert result.exit_code == 0
+        # Should have at most 2 entries in the table (plus header/footer)
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        # Count completed entries
+        assert clean.count("completed") == 2
+        assert "workflow-3" in clean or "workflow-4" in clean  # most recent
+
+    def test_recent_sorted_by_started_desc(self, tmp_path: Path) -> None:
+        """Entries are sorted by started_at descending (most recent first)."""
+        run_dir = tmp_path / "conductor_runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-old-20240101-000000-aaaaaaaa.events",
+            "old-workflow",
+            1700000000.0,
+            1700000005.0,
+        )
+        _make_event_log(
+            run_dir,
+            "conductor-new-20260101-000000-bbbbbbbb.events",
+            "new-workflow",
+            1767225600.0,
+            1767225610.0,
+        )
+
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        # "new-workflow" should appear before "old-workflow" (sorted descending)
+        new_pos = clean.index("new-workflow")
+        old_pos = clean.index("old-workflow")
+        assert new_pos < old_pos, "Most recent workflow should appear first"
+
+    def test_status_completed(self, tmp_path: Path) -> None:
+        """Event log ending with workflow_completed → status=completed."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-done-20250101-000000-cccccccc.events",
+            "done-wf",
+            1700000000.0,
+            1700000010.0,
+            end_event="workflow_completed",
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "completed" in clean
+        assert "failed" not in clean
+
+    def test_status_failed(self, tmp_path: Path) -> None:
+        """Event log ending with workflow_failed → status=failed."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-fail-20250101-000000-dddddddd.events",
+            "fail-wf",
+            1700000000.0,
+            1700000010.0,
+            end_event="workflow_failed",
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "failed" in clean
+        assert "completed" not in clean
+
+    def test_status_running_no_terminal_event(self, tmp_path: Path) -> None:
+        """Event log with no terminal event → status=running."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-alive-20250101-000000-eeeeeeee.events",
+            "alive-wf",
+            1700000000.0,
+        )  # No terminal event — ended_ts defaults to None
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "running" in clean
+
+    def test_crossref_pid_marks_running(self, tmp_path: Path) -> None:
+        """Event log with no terminal event but matching PID → status=running."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-test-20250101-000000-ffffffff.events",
+            "pid-wf",
+            1700000000.0,
+        )  # No terminal event — ended_ts defaults to None
+        pid_entries = [
+            {
+                "pid": 1,
+                "port": 1,
+                "workflow": "pid-wf.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "ffffffff",
+                "file": "/tmp/p.pid",
+            },
+        ]
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=pid_entries),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "running" in clean
+
+    def test_recent_no_event_logs(self, tmp_path: Path) -> None:
+        """Empty run directory → dim message, exit 0."""
+        run_dir = tmp_path / "empty_runs"
+        run_dir.mkdir()
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        assert "No running workflows found" in result.output
+        assert "No recent runs found" in result.output
+
+    def test_recent_missing_dir(self) -> None:
+        """Missing run directory → empty results, no crash."""
+        with (
+            patch(
+                "conductor.cli.list_cmd._conductor_run_dir",
+                return_value=Path("/nonexistent/path/12345"),
+            ),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        assert "No running workflows found" in result.output
+        assert "No recent runs found" in result.output
+
+    def test_recent_has_duration(self, tmp_path: Path) -> None:
+        """Completed runs show duration in seconds."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-dur-20250101-000000-aaaaaaaa.events",
+            "dur-wf",
+            1700000000.0,
+            1700000037.5,  # 37.5 seconds later
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1"])
+        assert result.exit_code == 0
+        # Duration should be present (around 37.5s)
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        # Look for a numeric duration in seconds
+        assert re.search(r"3[0-9]\.\d+s", clean), f"Duration not found in: {clean}"
+
+    def test_recent_table_columns(self, tmp_path: Path) -> None:
+        """The recent table has Workflow, Run ID, Started, Ended, Status, Duration columns."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-col-20250101-000000-aaaaaaaa.events",
+            "col-wf",
+            1700000000.0,
+            1700000010.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "Workflow" in clean
+        assert "Run ID" in clean
+        assert "Started" in clean
+        assert "Ended" in clean
+        assert "Status" in clean
+        assert "Duration" in clean
+
+
+# ---------------------------------------------------------------------------
+# Test: `_scan_event_logs` edge cases and robustness
+# ---------------------------------------------------------------------------
+
+
+class TestScanEventLogsEdgeCases:
+    """Verify defensive parsing of event logs."""
+
+    def test_truncated_last_json_line(self, tmp_path: Path) -> None:
+        """Truncated last JSON line is skipped, other lines parsed correctly."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        fp = run_dir / "conductor-trunc-20250101-000000-aaaaaaaa.events.jsonl"
+        # Write valid first line and truncated second line
+        start_line = json.dumps(
+            {
+                "type": "workflow_started",
+                "timestamp": 1700000000.0,
+                "data": {"name": "trunc-wf"},
+            }
+        )
+        fp.write_text(start_line + "\n" + '{"type": "workflow_comple')  # truncated
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        # Should still appear (as running since no terminal event)
+        assert "trunc-wf" in clean
+
+    def test_invalid_json_lines_skipped(self, tmp_path: Path) -> None:
+        """Lines with invalid JSON are silently skipped, valid lines used."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        fp = run_dir / "conductor-bad-20250101-000000-aaaaaaaa.events.jsonl"
+        start = json.dumps(
+            {
+                "type": "workflow_started",
+                "timestamp": 1700000000.0,
+                "data": {"name": "bad-wf"},
+            }
+        )
+        end = json.dumps({"type": "workflow_completed", "timestamp": 1700000010.0, "data": {}})
+        fp.write_text("this is not json\n" + start + "\n" + "also not json\n" + end + "\n")
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        # Should have valid result with completed status
+        assert "bad-wf" in clean
+        assert "completed" in clean
+
+    def test_zero_valid_json_lines(self, tmp_path: Path) -> None:
+        """File with no valid JSON lines → skipped entirely, no crash."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        fp = run_dir / "conductor-empty-20250101-000000-aaaaaaaa.events.jsonl"
+        fp.write_text("not valid json\n{broken\n")
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        # Should have empty recent runs message
+        empty_msg = (
+            "No recent runs found" in result.output or "No running workflows found" in result.output
+        )
+        assert empty_msg
+
+    def test_unreadable_file_skipped(self, tmp_path: Path) -> None:
+        """Unreadable event log file → skipped, no crash."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        fp = run_dir / "conductor-unread-20250101-000000-aaaaaaaa.events.jsonl"
+        fp.write_text("{}")
+        fp.chmod(0o000)  # Make unreadable
+        try:
+            with (
+                patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+                patch("conductor.cli.pid.read_pid_files", return_value=[]),
+            ):
+                result = _invoke(["list", "runs", "--recent", "5"])
+            assert result.exit_code == 0
+            # Should handle gracefully
+            no_error = (
+                "No recent runs found" in result.output
+                or "No running workflows found" in result.output
+            )
+            assert no_error
+        finally:
+            fp.chmod(0o644)  # Restore permissions
+
+    def test_workflow_name_from_event_data(self, tmp_path: Path) -> None:
+        """Workflow name is extracted from workflow_started event data.name."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-name-20250101-000000-aaaaaaaa.events",
+            "extract-wf",  # Short name avoids Rich table truncation
+            1700000000.0,
+            1700000010.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5"])
+        assert result.exit_code == 0
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "extract-wf" in clean
+        # Should NOT show the raw filename in the output
+        assert "conductor-name-" not in clean
+
+    def test_mixed_valid_and_corrupt_files(self, tmp_path: Path) -> None:
+        """Multiple corrupt records in one invocation must not crash (VAL-LRUNS-006).
+
+        Mixes: valid log, truncated log, invalid-JSON-only log, empty log, and one
+        unreadable file.  The command must exit 0, print only the valid entries,
+        and produce no stack trace or error message.
+        """
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+
+        # Valid: completed workflow
+        _make_event_log(
+            run_dir,
+            "conductor-good-20250101-000000-aaaaaaaa.events",
+            "good-wf",
+            1700000000.0,
+            1700000010.0,
+        )
+
+        # Truncated: no terminal event (shows as "running")
+        fp_trunc = run_dir / "conductor-trunc-20250101-000001-bbbbbbbb.events.jsonl"
+        fp_trunc.write_text(
+            json.dumps(
+                {
+                    "type": "workflow_started",
+                    "timestamp": 1700000005.0,
+                    "data": {"name": "trunc-wf"},
+                }
+            )
+            + '\n{"type": "workflow_comple'
+        )
+
+        # Invalid JSON only: zero valid lines → skipped silently
+        fp_junk = run_dir / "conductor-junk-20250101-000002-cccccccc.events.jsonl"
+        fp_junk.write_text("this is not json\n{broken\nstill not json\n")
+
+        # Empty file → skipped silently
+        fp_empty = run_dir / "conductor-empty-20250101-000003-dddddddd.events.jsonl"
+        fp_empty.write_text("")
+
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "10"])
+
+        # Must exit 0
+        assert result.exit_code == 0
+
+        # No traceback in output
+        assert "Traceback" not in result.output
+        assert "Error" not in result.output
+
+        # Valid entries still appear
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "good-wf" in clean
+        assert "trunc-wf" in clean
+        # Corrupt files are invisible (no crash)
+        assert "cccccccc" not in clean
+        assert "dddddddd" not in clean
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list runs --recent --json` — JSON history output
+# ---------------------------------------------------------------------------
+
+
+class TestListRunsRecentJson:
+    """Verify `list runs --recent --json` emits valid JSON for history."""
+
+    def test_recent_json_valid_array(self, tmp_path: Path) -> None:
+        """--recent --json emits a valid JSON array."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-json-20250101-000000-aaaaaaaa.events",
+            "json-wf",
+            1700000000.0,
+            1700000010.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) >= 1
+
+    def test_recent_json_has_required_fields(self, tmp_path: Path) -> None:
+        """History entries have workflow, run_id, started_at, ended_at, status,
+        duration_seconds, log_file."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-fields-20250101-000000-aaaaaaaa.events",
+            "fields-wf",
+            1700000000.0,
+            1700000010.0,
+            end_event="workflow_completed",
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        # Find the history entry (non-running from PID)
+        history = [e for e in data if e.get("status") == "completed"]
+        assert len(history) >= 1
+        entry = history[0]
+        assert "workflow" in entry
+        assert "run_id" in entry
+        assert "started_at" in entry
+        assert "ended_at" in entry
+        assert "status" in entry
+        assert "duration_seconds" in entry
+        assert "log_file" in entry
+        assert entry["workflow"] == "fields-wf"
+        assert entry["status"] == "completed"
+        assert entry["ended_at"] is not None
+        assert isinstance(entry["duration_seconds"], (int, float))
+
+    def test_recent_json_no_rich_markup(self, tmp_path: Path) -> None:
+        """JSON output has no ANSI escape codes."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-clean-20250101-000000-aaaaaaaa.events",
+            "clean-wf",
+            1700000000.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1", "--json"])
+        assert result.exit_code == 0
+        assert "\x1b" not in result.output
+        json.loads(result.output)  # Must be valid JSON
+
+    def test_recent_json_empty_no_logs(self, tmp_path: Path) -> None:
+        """No event logs → empty JSON array (except possibly PID entries)."""
+        run_dir = tmp_path / "empty_runs"
+        run_dir.mkdir()
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data == []
