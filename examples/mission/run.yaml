@@ -35,8 +35,13 @@ workflow:
   entry_point: get_milestone
 
   runtime:
-    provider: copilot
-    default_model: claude-sonnet-4.6
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    temperature: 0.7
+    default_model: deepseek-v4-pro
 
   input:
     mission_dir:
@@ -54,7 +59,7 @@ for_each:
     description: |
       Implement each pending feature in this milestone, one at a time.
       Sequential (max_concurrent: 1) — features may touch the same files.
-      Each feature is a run-feature.yaml sub-workflow with its own checkpoint.
+      Each feature is a 0-feature.yaml sub-workflow with its own checkpoint.
     source: get_milestone.output.pending_features
     as: feature
     max_concurrent: 1
@@ -63,7 +68,7 @@ for_each:
     agent:
       name: run_one_feature
       type: workflow
-      workflow: ./run/feature.yaml
+      workflow: ./run/0-feature.yaml
       input_mapping:
         mission_dir:         "{{ workflow.input.mission_dir }}"
         feature_id:          "{{ feature.id }}"
@@ -244,7 +249,7 @@ agents:
       Review all worker handoff issues (return_to_orchestrator: true) and
       any knowledge surfaced during the mission. Applies guidance updates
       and optionally escalates unresolved issues to the user.
-    workflow: ./run/orchestrator-review.yaml
+    workflow: ./run/4-orchestrator-review.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -259,7 +264,7 @@ agents:
       pending with updated guidance, accepts them, or escalates to the user;
       every returned feature leaves "returned" status so this never loops.
       Routes back to get_milestone so resolved features re-enter the run.
-    workflow: ./run/orchestrator-review.yaml
+    workflow: ./run/4-orchestrator-review.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -272,7 +277,7 @@ agents:
       Run programmatic validators (test, typecheck, lint) and spawn per-feature
       code review subagents for the completed milestone. Fails → features reset
       to pending and feature_runner re-runs them.
-    workflow: ./run/scrutiny.yaml
+    workflow: ./run/1-scrutiny.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -290,7 +295,7 @@ agents:
       Updates validation-state.yaml with pass/fail results.
       Fails → fix features injected, loops back to feature_runner via get_milestone.
       Passes → seal_milestone, then prompt for mid-mission changes.
-    workflow: ./run/user-testing.yaml
+    workflow: ./run/2-user-testing.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -398,7 +403,7 @@ agents:
     description: |
       Propagate user-requested scope or guidance changes to mission.md, AGENTS.md,
       validation-contract.md, features.yaml, and validation-state.yaml.
-    workflow: ./run/scope-change.yaml
+    workflow: ./run/3-scope-change.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:

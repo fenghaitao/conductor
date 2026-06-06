@@ -1,7 +1,7 @@
 # Mission Planning — Understand Phase
 #
 # Iterative Q&A + codebase investigation. Produces a planning_summary
-# consumed by plan-propose.yaml.
+# consumed by 1-propose.yaml.
 #
 # Steps:
 #   1. inspect_codebase  — script: directory listing, README, package files
@@ -17,8 +17,13 @@ workflow:
   entry_point: inspect_codebase
 
   runtime:
-    provider: copilot
-    default_model: claude-sonnet-4.6
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    temperature: 0.7
+    default_model: deepseek-v4-pro
 
   input:
     mission_name:
@@ -26,7 +31,8 @@ workflow:
       required: true
     working_directory:
       type: string
-      required: true
+      required: false
+      description: Absolute path to the repository (defaults to current directory)
     idea:
       type: string
       required: false
@@ -50,7 +56,7 @@ agents:
       - |
         import json, pathlib, subprocess, sys
 
-        wd = pathlib.Path(sys.argv[1])
+        wd = pathlib.Path(sys.argv[1]) if sys.argv[1] else pathlib.Path.cwd()
 
         def read(p):
             try: return p.read_text(errors="replace")[:3000]
@@ -204,3 +210,4 @@ agents:
 
 output:
   planning_summary: "{{ investigate.output.planning_summary }}"
+  working_directory: "{{ inspect_codebase.output.working_directory }}"

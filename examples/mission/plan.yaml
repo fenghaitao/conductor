@@ -1,13 +1,18 @@
 # Mission Planning Pipeline
 #
 # Drives the full mission planning lifecycle:
-#   understand → propose → [human gate] → readiness_check → architecture → contract → features → artifacts
+#   explore → propose → [human gate] → check-readiness → design → write-contract → decompose-features → write-artifacts
 #
 # Usage:
 #   conductor run examples/mission/plan.yaml \
 #     --input mission_name="my-app" \
-#     --input working_directory="/path/to/repo" \
 #     --input idea="Build a REST API with authentication and a React frontend"
+#
+#   # Optionally override the working directory (defaults to current directory):
+#   conductor run examples/mission/plan.yaml \
+#     --input mission_name="my-app" \
+#     --input working_directory="/path/to/repo" \
+#     --input idea="..."
 #
 # After completion, the missionDir is ready and run.yaml can be started:
 #   conductor run examples/mission/run.yaml \
@@ -18,14 +23,19 @@
 workflow:
   name: mission-plan
   description: |
-    Full mission planning: understand requirements, propose, get user acceptance,
-    write architecture, validation contract, features, and all worker artifacts.
+    Full mission planning: explore requirements, propose, get user acceptance,
+    write design, validation contract, decompose features, and write worker artifacts.
   version: "1.0.0"
-  entry_point: understand_phase
+  entry_point: explore_phase
 
   runtime:
-    provider: copilot
-    default_model: claude-sonnet-4.6
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    temperature: 0.7
+    default_model: deepseek-v4-pro
 
   input:
     mission_name:
@@ -36,29 +46,30 @@ workflow:
         Used as the missionDir folder name under missions/.
     working_directory:
       type: string
-      required: true
+      required: false
       description: |
         Absolute path to the repository/codebase the mission will modify.
         Workers will operate from this directory.
+        Defaults to the current directory where conductor is run.
     idea:
       type: string
       required: false
       description: |
         One or more sentences describing what to build.
-        The understand phase will ask clarifying questions based on this.
+        The explore phase will ask clarifying questions based on this.
 
   limits:
     max_iterations: 250
 
 agents:
-  # ── Stage 1: Understand & Plan ───────────────────────────────────────────────
-  - name: understand_phase
+  # ── Stage 1: Explore ───────────────────────────────────────────────────────
+  - name: explore_phase
     type: workflow
     description: |
-      Iterative Q&A + investigation to deeply understand requirements,
+      Iterative Q&A + investigation to deeply explore requirements,
       architecture approach, infrastructure needs, and validation strategy.
       Produces a structured planning summary for the propose phase.
-    workflow: ./plan/understand.yaml
+    workflow: ./plan/0-explore.yaml
     input_mapping:
       mission_name: "{{ workflow.input.mission_name }}"
       working_directory: "{{ workflow.input.working_directory }}"
@@ -72,81 +83,81 @@ agents:
     description: |
       Generate the mission proposal and present it to the user for acceptance.
       On acceptance, writes mission.md and creates missionDir.
-      Routes back to understand_phase if the user requests edits.
-    workflow: ./plan/propose.yaml
+      Routes back to explore_phase if the user requests edits.
+    workflow: ./plan/1-propose.yaml
     input_mapping:
       mission_name: "{{ workflow.input.mission_name }}"
-      working_directory: "{{ workflow.input.working_directory }}"
-      planning_summary: "{{ understand_phase.output.planning_summary }}"
+      working_directory: "{{ explore_phase.output.working_directory }}"
+      planning_summary: "{{ explore_phase.output.planning_summary }}"
     routes:
-      - to: readiness_check_phase
+      - to: check_readiness_phase
         when: "accepted == True"
-      - to: understand_phase
+      - to: explore_phase
         when: "accepted == False"
 
-  # ── Stage 3: Readiness Check ─────────────────────────────────────────────────
-  - name: readiness_check_phase
+  # ── Stage 3: Check Readiness ────────────────────────────────────────────────
+  - name: check_readiness_phase
     type: workflow
     description: |
       Actively verify all dependencies (packages, APIs, credentials, tools)
       and the validation toolchain (test runner, dev server, browser) before
-      committing to an architecture. Measures system resources and writes
+      committing to a design. Measures system resources and writes
       readiness-report.yaml with an ADVISORY recommended_max_concurrent for
       the user to review (user-testing-phase uses a static max_concurrent —
       conductor cannot set it from a runtime value).
       On blockers → human gate for user to resolve, then retry.
       Skips if readiness-report.yaml already exists with has_blockers=false.
-    workflow: ./plan/readiness-check.yaml
+    workflow: ./plan/2-check-readiness.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
-      - to: architecture_phase
+      - to: design_phase
 
-  # ── Stage 4: Architecture ────────────────────────────────────────────────────
-  - name: architecture_phase
+  # ── Stage 4: Design ─────────────────────────────────────────────────────────
+  - name: design_phase
     type: workflow
     description: |
-      Write architecture.md — the authoritative system design document.
+      Write architecture.md — the authoritative system design.
       Skips if already written.
-    workflow: ./plan/architecture.yaml
+    workflow: ./plan/3-design.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
-      - to: contract_phase
+      - to: write_contract_phase
 
-  # ── Stage 5: Validation Contract ─────────────────────────────────────────────
-  - name: contract_phase
+  # ── Stage 5: Write Contract ─────────────────────────────────────────────────
+  - name: write_contract_phase
     type: workflow
     description: |
       Generate validation-contract.md (per-area + cross-area assertions)
       and validation-state.yaml. Skips if already written.
-    workflow: ./plan/contract.yaml
+    workflow: ./plan/4-write-contract.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
-      - to: features_phase
+      - to: decompose_features_phase
 
-  # ── Stage 6: Features ────────────────────────────────────────────────────────
-  - name: features_phase
+  # ── Stage 6: Decompose Features ─────────────────────────────────────────────
+  - name: decompose_features_phase
     type: workflow
     description: |
       Decompose the contract into features.yaml.
       Validates the coverage invariant: every VAL-* ID claimed by exactly one feature.
       Skips if features.yaml already exists and passes coverage check.
-    workflow: ./plan/features.yaml
+    workflow: ./plan/5-decompose-features.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:
-      - to: artifacts_phase
+      - to: write_artifacts_phase
 
-  # ── Stage 7: Worker Artifacts ────────────────────────────────────────────────
-  - name: artifacts_phase
+  # ── Stage 7: Write Artifacts ────────────────────────────────────────────────
+  - name: write_artifacts_phase
     type: workflow
     description: |
       Write all remaining worker artifacts: AGENTS.md, services.yaml,
       skills/<type>/SKILL.md (one per unique skill_name in features.yaml),
       and init.sh. Skips artifacts that already exist.
-    workflow: ./plan/write-artifacts.yaml
+    workflow: ./plan/6-write-artifacts.yaml
     input_mapping:
       mission_dir: "{{ propose_phase.output.mission_dir }}"
     routes:

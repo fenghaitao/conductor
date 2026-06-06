@@ -20,8 +20,13 @@ workflow:
   entry_point: load_context
 
   runtime:
-    provider: copilot
-    default_model: claude-sonnet-4.6
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    temperature: 0.7
+    default_model: deepseek-v4-pro
 
   input:
     mission_dir:
@@ -49,7 +54,7 @@ for_each:
     agent:
       name: write_one_skill
       type: workflow
-      workflow: ./write-skill.yaml
+      workflow: ./6-write-artifacts-skill.yaml
       input_mapping:
         mission_dir: "{{ workflow.input.mission_dir }}"
         skill_name: "{{ skill_name }}"
