@@ -1,6 +1,6 @@
 # Verify Milestone
 #
-# Auto-injected quality gate after scrutiny passes for each milestone.
+# Auto-injected quality gate after review passes for each milestone.
 # Tests pending VAL-* assertions through REAL user surfaces.
 # Updates validation-state.yaml with pass/fail results.
 # Failed assertions → fix features injected into features.yaml.
@@ -147,7 +147,7 @@ agents:
         for f in features_data.get("features", []):
             if (f.get("milestone") == milestone and
                 f.get("status") == "completed" and
-                not f.get("skill_name", "").startswith("scrutiny-") and
+                not f.get("skill_name", "").startswith("review-") and
                 not f.get("skill_name", "").startswith("user-testing-")):
                 for vid in f.get("fulfills", []):
                     milestone_assertion_ids.add(vid)

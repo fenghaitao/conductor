@@ -215,6 +215,11 @@ agents:
         features = features_data.get("features", [])
         by_id = {f.get("id"): f for f in features}
 
+        # Load runtime state
+        state_path = mission_dir / "feature-state.yaml"
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+        state_features = state_data.get("features", {})
+
         # Apply each triage action, remembering the decision per feature so
         # the sweep below can resolve EVERY returned feature.
         action_by_id = {}
@@ -239,28 +244,29 @@ agents:
                 applied += 1  # acknowledged; status resolved in the sweep
 
         # Forward-progress sweep: move every still-"returned" feature to a
-        # non-returned status so get_milestone advances and never re-routes
-        # here for the same feature (which would loop forever).
+        # non-returned status in feature-state.yaml
         forced_escalation = False
         escalated_ids = []
         for f in features:
-            if f.get("status") != "returned":
-                continue
             fid = f.get("id")
+            entry = state_features.get(fid, {})
+            if entry.get("status") != "returned":
+                continue
             decision = action_by_id.get(fid, "escalate")
-            attempts = int(f.get("return_count", 0) or 0)
+            attempts = int(entry.get("return_count", 0) or 0)
             if attempts >= MAX_RETURNS:
-                f["status"] = "escalated"          # too many returns — park it
+                entry["status"] = "escalated"
                 escalated_ids.append(fid)
                 forced_escalation = True
             elif decision in ("reset_feature", "update_guidance"):
-                f["status"] = "pending"            # re-attempt with new context
+                entry["status"] = "pending"
             elif decision == "dismiss":
-                f["status"] = "completed"          # accepted as-is
-            else:                                  # escalate / no decision
-                f["status"] = "escalated"
+                entry["status"] = "completed"
+            else:
+                entry["status"] = "escalated"
                 escalated_ids.append(fid)
                 forced_escalation = True
+            state_features[fid] = entry
 
         needs_escalation = bool(needs_escalation) or forced_escalation
         if forced_escalation and not escalation_summary:
@@ -270,8 +276,10 @@ agents:
                 f"{', '.join(str(i) for i in escalated_ids)}. Please advise."
             )
 
-        with open(features_path, "w") as fp:
-            yaml.dump(features_data, fp)
+        state_data["features"] = dict(sorted(state_features.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
 
         # Apply knowledge updates
         knowledge_updates = triage.get("knowledge_updates", [])

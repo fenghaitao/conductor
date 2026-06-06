@@ -60,33 +60,57 @@ agents:
 
         mission_dir = pathlib.Path(sys.argv[1])
         yaml = YAML()
-        data = yaml.load((mission_dir / "features.yaml").read_text())
-        features = data.get("features", [])
+        yaml.preserve_quotes = True
 
-        # Find first milestone with any pending features
+        features_path   = mission_dir / "features.yaml"
+        state_path      = mission_dir / "feature-state.yaml"
+
+        # Load immutable plan
+        plan = yaml.load(features_path.read_text())
+        features = plan.get("features", [])
+
+        # Load or initialize feature-state.yaml
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        else:
+            state_data = {"features": {}}
+        state_features = state_data.get("features", {})
+
+        # Ensure every plan feature has a state entry
+        changed = False
+        for f in features:
+            fid = f.get("id", "")
+            if fid and fid not in state_features:
+                state_features[fid] = {"status": "pending", "attempts": 0}
+                changed = True
+        if changed:
+            # Sort by ID for readability
+            state_data["features"] = dict(sorted(state_features.items(),
+                key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+            with open(state_path, "w") as fp:
+                yaml.dump(state_data, fp)
+
+        # Group by milestone using state statuses
         seen_milestones = []
         milestone_pending = {}
         for f in features:
             ms = f.get("milestone", "default")
+            fid = f.get("id", "")
+            status = state_features.get(fid, {}).get("status", "pending")
             if ms not in seen_milestones:
                 seen_milestones.append(ms)
-            if f.get("status") == "pending":
+            if status == "pending":
                 milestone_pending.setdefault(ms, []).append(f)
 
-        # Features a worker handed back for a wrap-up decision.
-        returned = [f for f in features if f.get("status") == "returned"]
+        returned = [f for f in features
+                    if state_features.get(f.get("id",""),{}).get("status") == "returned"]
 
-        # Pick first milestone (in order) with pending features
         current_milestone = None
         for ms in seen_milestones:
             if ms in milestone_pending:
                 current_milestone = ms
                 break
 
-        # Priority: pending work first; then resolve returned features via
-        # triage review; only then is the mission truly done. Without
-        # the "returned" branch a worker that returned a feature would let
-        # the mission reach all_done with that feature silently unaddressed.
         if current_milestone:
             state = "ready"
         elif returned:
@@ -94,12 +118,20 @@ agents:
         else:
             state = "all_done"
 
+        def to_plain(d):
+            if isinstance(d, dict):
+                return {k: to_plain(v) for k, v in d.items()}
+            if isinstance(d, list):
+                return [to_plain(v) for v in d]
+            return d
+
         print(json.dumps({
             "state": state,
             "milestone": current_milestone or "",
-            "pending_features": milestone_pending.get(current_milestone, []),
+            "pending_features": [to_plain(f) for f in milestone_pending.get(current_milestone, [])],
             "total_features": len(features),
-            "completed_features": sum(1 for f in features if f.get("status") == "completed"),
+            "completed_features": sum(1 for f in features
+                if state_features.get(f.get("id",""),{}).get("status") == "completed"),
             "returned_features": [f.get("id") for f in returned],
         }))
       - "{{ workflow.input.mission_dir }}"
@@ -127,7 +159,7 @@ agents:
     input_mapping:
       mission_dir:        "{{ workflow.input.mission_dir }}"
       milestone:          "{{ get_milestone.output.milestone }}"
-      pending_features:   "{{ get_milestone.output.pending_features }}"
+      pending_features:   "{{ get_milestone.output.pending_features | tojson }}"
     routes:
       - to: review_milestone
 
@@ -144,9 +176,9 @@ agents:
       milestone:   "{{ get_milestone.output.milestone }}"
     routes:
       - to: verify_milestone
-        when: "scrutiny_passed == True"
+        when: "review_passed == True"
       - to: get_milestone
-        when: "scrutiny_passed == False"
+        when: "review_passed == False"
 
   # ── Verify milestone ─────────────────────────────────────────────────────
   - name: verify_milestone

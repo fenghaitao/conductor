@@ -55,9 +55,13 @@ agents:
         features_data = yaml.load(features_path.read_text()) if features_path.exists() else {}
         if not isinstance(features_data, dict):
             features_data = {}
+        feat_state_path = mission_dir / "feature-state.yaml"
+        feat_state = yaml.load(feat_state_path.read_text()) if feat_state_path.exists() else {}
+        feat_statuses = feat_state.get("features", {})
         milestone_features = [
             f for f in features_data.get("features", [])
-            if f.get("milestone") == milestone and f.get("status") == "completed"
+            if f.get("milestone") == milestone
+            and feat_statuses.get(f.get("id",""),{}).get("status") == "completed"
         ]
         milestone_val_ids = set()
         for f in milestone_features:

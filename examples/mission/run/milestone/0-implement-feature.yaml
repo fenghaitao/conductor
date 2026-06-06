@@ -90,16 +90,19 @@ agents:
 
         # Milestone sibling features (for context on what's been done)
         yaml = YAML()
-        features_data = yaml.load((mission_dir / "features.yaml").read_text())
-        if not isinstance(features_data, dict):
-            features_data = {}
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        state_data = {}
+        state_path = mission_dir / "feature-state.yaml"
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        state_features = state_data.get("features", {})
         milestone_features = [
             f for f in features_data.get("features", [])
             if f.get("milestone") == milestone
         ]
-        # Format as readable list
+        # Format as readable list with runtime status from feature-state.yaml
         sibling_summary = "\n".join(
-            f"  [{f.get('status','?')}] {f.get('id')} — {f.get('description', '')}"
+            f"  [{state_features.get(f.get('id',''),{}).get('status','?')}] {f.get('id')} — {f.get('description', '')}"
             for f in milestone_features
         )
 
@@ -454,7 +457,7 @@ agents:
   - name: mark_complete
     type: script
     description: |
-      Update this feature's status in features.yaml to "completed".
+      Update this feature's status in feature-state.yaml to "completed".
       Deterministic script — never LLM.
     command: python3
     args:
@@ -466,39 +469,38 @@ agents:
         mission_dir = pathlib.Path(sys.argv[1])
         feature_id = sys.argv[2]
         return_to_orch = sys.argv[3].lower() == "true"
+        handoff_path = sys.argv[4]
 
         yaml = YAML()
         yaml.preserve_quotes = True
-        path = mission_dir / "features.yaml"
-        data = yaml.load(path.read_text())
-        if not isinstance(data, dict):
-            print(json.dumps({"feature_id": feature_id, "status": "error", "error": "features.yaml is not a dict"}))
-            sys.exit(0)
+        state_path = mission_dir / "feature-state.yaml"
 
-        new_status = "completed"
-        for f in data.get("features", []):
-            if f.get("id") == feature_id:
-                if return_to_orch:
-                    # Distinct from "failed": the worker explicitly handed
-                    # this back for an orchestrator decision. get_milestone
-                    # surfaces "returned" features to orchestrator review
-                    # instead of silently dropping them. return_count bounds
-                    # how many times we re-attempt before forcing escalation.
-                    new_status = "returned"
-                    f["status"] = "returned"
-                    f["return_count"] = int(f.get("return_count", 0) or 0) + 1
-                else:
-                    new_status = "completed"
-                    f["status"] = "completed"
-                break
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        else:
+            state_data = {"features": {}}
+        state_features = state_data.get("features", {})
 
-        with open(path, "w") as fp:
-            yaml.dump(data, fp)
+        entry = state_features.get(feature_id, {"status": "pending", "attempts": 0})
+        if return_to_orch:
+            entry["status"] = "returned"
+            entry["return_count"] = int(entry.get("return_count", 0) or 0) + 1
+        else:
+            entry["status"] = "completed"
+        entry["handoff_path"] = handoff_path
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        state_features[feature_id] = entry
 
-        print(json.dumps({"feature_id": feature_id, "status": new_status}))
+        state_data["features"] = dict(sorted(state_features.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
+
+        print(json.dumps({"feature_id": feature_id, "status": entry["status"]}))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.feature_id }}"
       - "{{ save_handoff.output.return_to_orchestrator }}"
+      - "{{ save_handoff.output.path }}"
     output:
       feature_id: { type: string }
       status:     { type: string }

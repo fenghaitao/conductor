@@ -181,19 +181,28 @@ agents:
         yaml = YAML()
         yaml.preserve_quotes = True
 
-        # Reset all completed features in this milestone to pending
-        features_path = mission_dir / "features.yaml"
-        data = yaml.load(features_path.read_text()) or {}
+        # Reset all completed features in this milestone to pending in feature-state.yaml
+        state_path = mission_dir / "feature-state.yaml"
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+        state_features = state_data.get("features", {})
         reset = []
-        for f in data.get("features", []):
-            if f.get("milestone") == milestone and f.get("status") == "completed":
-                f["status"] = "pending"
-                reset.append(str(f.get("id", "")))
-        with open(features_path, "w") as fp:
-            yaml.dump(data, fp)
+        # Load features.yaml to find which features belong to this milestone
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        for f in features_data.get("features", []):
+            fid = f.get("id", "")
+            if f.get("milestone") == milestone:
+                entry = state_features.get(fid, {})
+                if entry.get("status") == "completed":
+                    entry["status"] = "pending"
+                    state_features[fid] = entry
+                    reset.append(str(fid))
+        state_data["features"] = dict(sorted(state_features.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
 
         # Write synthesis artifact for audit trail
-        out_dir = mission_dir / "validation" / milestone / "scrutiny"
+        out_dir = mission_dir / "validation" / milestone / "review"
         out_dir.mkdir(parents=True, exist_ok=True)
         synthesis = {
             "verdict": "fail",
@@ -207,14 +216,14 @@ agents:
             yaml.dump(synthesis, f)
 
         print(json.dumps({
-            "scrutiny_passed": False,
+            "review_passed": False,
             "failed_count": len(reset),
             "reset_features": reset,
         }))
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
     output:
-      scrutiny_passed: { type: boolean }
+      review_passed: { type: boolean }
       failed_count:    { type: number }
       reset_features:  { type: array }
     routes:
@@ -238,7 +247,7 @@ agents:
         completed = [
             f for f in data.get("features", [])
             if f.get("milestone") == milestone and f.get("status") == "completed"
-            and not f.get("skill_name", "").startswith("scrutiny-")
+            and not f.get("skill_name", "").startswith("review-")
             and not f.get("skill_name", "").startswith("user-testing-")
         ]
 
@@ -275,7 +284,7 @@ agents:
     description: |
       Aggregate all feature reviews + validator results into a pass/fail decision.
     prompt: |
-      Synthesize the scrutiny results for milestone "{{ workflow.input.milestone }}".
+      Synthesize the review results for milestone "{{ workflow.input.milestone }}".
 
       VALIDATOR RESULTS:
       {{ run_validators.output.results | tojson }}
@@ -286,7 +295,7 @@ agents:
       MISSION.MD (for context):
       {{ load_milestone_data.output.mission_md }}
 
-      Decide overall pass/fail for this milestone scrutiny.
+      Decide overall pass/fail for this milestone review.
 
       Also perform SHARED STATE TRIAGE:
       Collect all shared_state_observations from the feature reviews above and triage
@@ -334,7 +343,7 @@ agents:
     type: script
     description: |
       Parse synthesis. Reset failed features to pending in features.yaml.
-      Write synthesis to validation/<milestone>/scrutiny/synthesis.yaml.
+      Write synthesis to validation/<milestone>/review/synthesis.yaml.
     command: python3
     args:
       - "-c"
@@ -355,21 +364,25 @@ agents:
             synthesis = {"verdict": "pass", "failed_features": [], "summary": "parse error"}
 
         # Write synthesis artifact
-        out_dir = mission_dir / "validation" / milestone / "scrutiny"
+        out_dir = mission_dir / "validation" / milestone / "review"
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(out_dir / "synthesis.yaml", "w") as f:
             yaml.dump(synthesis, f)
 
-        # Reset failed features to pending
+        # Reset failed features to pending in feature-state.yaml
         failed = synthesis.get("failed_features", [])
         if failed:
-            features_path = mission_dir / "features.yaml"
-            data = yaml.load(features_path.read_text()) or {}
-            for f in data.get("features", []):
-                if f.get("id") in failed:
-                    f["status"] = "pending"
-            with open(features_path, "w") as fp:
-                yaml.dump(data, fp)
+            state_path = mission_dir / "feature-state.yaml"
+            state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+            state_features = state_data.get("features", {})
+            for fid in failed:
+                entry = state_features.get(fid, {})
+                entry["status"] = "pending"
+                state_features[fid] = entry
+            state_data["features"] = dict(sorted(state_features.items(),
+                key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+            with open(state_path, "w") as fp:
+                yaml.dump(state_data, fp)
 
         verdict = synthesis.get("verdict", "pass")
 
@@ -414,7 +427,7 @@ agents:
                     agents_path.write_text(agents_text + new_section + "\n")
 
         print(json.dumps({
-            "scrutiny_passed": verdict == "pass",
+            "review_passed": verdict == "pass",
             "failed_count": len(failed),
             "synthesis_path": str(out_dir / "synthesis.yaml"),
             "shared_updates_applied": len(shared_updates),
@@ -424,7 +437,7 @@ agents:
       - "{{ workflow.input.milestone }}"
       - "{{ synthesize.output.synthesis_yaml }}"
     output:
-      scrutiny_passed:         { type: boolean }
+      review_passed:         { type: boolean }
       failed_count:            { type: number }
       synthesis_path:          { type: string }
       shared_updates_applied:  { type: number }
@@ -433,5 +446,5 @@ agents:
       - to: $end
 
 output:
-  scrutiny_passed: "{{ handle_failures.output.scrutiny_passed if handle_failures is defined else false }}"
+  review_passed: "{{ handle_failures.output.review_passed if handle_failures is defined else false }}"
   failed_count:    "{{ handle_failures.output.failed_count if handle_failures is defined else 0 }}"
