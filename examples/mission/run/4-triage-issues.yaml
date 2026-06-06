@@ -1,4 +1,4 @@
-# Orchestrator Review Phase
+# Triage Issues
 #
 # Triggered when a worker sets return_to_orchestrator: true in its handoff,
 # or when multiple features in a milestone repeatedly fail scrutiny/testing.
@@ -15,7 +15,7 @@
 #   4. user_escalation  — human gate (only when triage decides escalation is needed)
 
 workflow:
-  name: mission-orchestrator-review
+  name: mission-triage-issues
   description: Review worker handoff issues and decide how to proceed
   version: "1.0.0"
   entry_point: load_issues
@@ -212,7 +212,7 @@ agents:
         applied = 0
         agents_md_path = mission_dir / "AGENTS.md"
         features_path = mission_dir / "features.yaml"
-        features_data = yaml.load(features_path.read_text())
+        features_data = yaml.load(features_path.read_text()) or {}
         features = features_data.get("features", [])
         by_id = {f.get("id"): f for f in features}
 

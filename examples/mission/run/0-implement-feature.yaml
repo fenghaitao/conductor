@@ -1,4 +1,4 @@
-# Run Feature (single feature)
+# Implement Feature (single feature)
 #
 # Sub-workflow invoked by run.yaml's for_each group.
 # Implements ONE feature and writes the handoff artifact.
@@ -11,7 +11,7 @@
 #   5. mark_complete   — script: update features.yaml feature status → completed
 
 workflow:
-  name: mission-run-feature
+  name: mission-implement-feature
   description: Implement a single feature and write handoff
   version: "1.0.0"
   entry_point: load_context
@@ -91,6 +91,8 @@ agents:
         # Milestone sibling features (for context on what's been done)
         yaml = YAML()
         features_data = yaml.load((mission_dir / "features.yaml").read_text())
+        if not isinstance(features_data, dict):
+            features_data = {}
         milestone_features = [
             f for f in features_data.get("features", [])
             if f.get("milestone") == milestone
@@ -469,6 +471,9 @@ agents:
         yaml.preserve_quotes = True
         path = mission_dir / "features.yaml"
         data = yaml.load(path.read_text())
+        if not isinstance(data, dict):
+            print(json.dumps({"feature_id": feature_id, "status": "error", "error": "features.yaml is not a dict"}))
+            sys.exit(0)
 
         new_status = "completed"
         for f in data.get("features", []):

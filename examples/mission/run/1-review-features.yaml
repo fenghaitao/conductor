@@ -1,7 +1,6 @@
-# Scrutiny Phase
+# Review Features
 #
 # Auto-injected quality gate at the end of each milestone.
-# Mirrors the Droid "scrutiny-validator" behavior:
 #   1. Run programmatic validators (test, typecheck, lint)
 #   2. Review each completed feature's handoff + code via LLM
 #   3. Synthesize findings — fail → features reset to pending for re-run
@@ -14,7 +13,7 @@
 #   5. handle_failures       — script: reset failed features to pending
 
 workflow:
-  name: mission-scrutiny-phase
+  name: mission-review-features
   description: Run validators and review completed features for a milestone
   version: "1.0.0"
   entry_point: run_validators
@@ -124,7 +123,7 @@ agents:
 
         mission_dir = pathlib.Path(sys.argv[1])
         yaml = YAML()
-        services = yaml.load((mission_dir / "services.yaml").read_text())
+        services = yaml.load((mission_dir / "services.yaml").read_text()) or {}
         working_dir_file = mission_dir / "working_directory.txt"
         cwd = working_dir_file.read_text().strip() if working_dir_file.exists() else str(mission_dir)
 
@@ -184,7 +183,7 @@ agents:
 
         # Reset all completed features in this milestone to pending
         features_path = mission_dir / "features.yaml"
-        data = yaml.load(features_path.read_text())
+        data = yaml.load(features_path.read_text()) or {}
         reset = []
         for f in data.get("features", []):
             if f.get("milestone") == milestone and f.get("status") == "completed":
@@ -235,8 +234,7 @@ agents:
         mission_dir = pathlib.Path(sys.argv[1])
         milestone = sys.argv[2]
         yaml = YAML()
-        data = yaml.load((mission_dir / "features.yaml").read_text())
-
+        data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
         completed = [
             f for f in data.get("features", [])
             if f.get("milestone") == milestone and f.get("status") == "completed"
@@ -366,7 +364,7 @@ agents:
         failed = synthesis.get("failed_features", [])
         if failed:
             features_path = mission_dir / "features.yaml"
-            data = yaml.load(features_path.read_text())
+            data = yaml.load(features_path.read_text()) or {}
             for f in data.get("features", []):
                 if f.get("id") in failed:
                     f["status"] = "pending"

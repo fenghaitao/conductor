@@ -1,4 +1,4 @@
-# Scope Change Phase
+# Handle Changes
 #
 # Handles mid-mission scope and guidance changes from the user.
 # Called from run.yaml when a user wants to modify the mission mid-run.
@@ -20,7 +20,7 @@
 #   5. confirm_changes     — human gate: review summary, confirm or re-describe
 
 workflow:
-  name: mission-scope-change
+  name: mission-handle-changes
   description: Apply mid-mission scope or guidance changes and propagate to all artifacts
   version: "1.0.0"
   entry_point: collect_change

@@ -16,7 +16,7 @@
 # Idempotent: if readiness-report.yaml exists and has_blockers == false, skip.
 
 workflow:
-  name: mission-readiness-check
+  name: mission-check-readiness
   description: Actively verify dependency and validation readiness before architecture
   version: "1.0.0"
   entry_point: check_existing

@@ -14,7 +14,7 @@
 #   5. skill_writers         — for_each: one write-skill.yaml per unique skill_name
 
 workflow:
-  name: mission-plan-write-artifacts
+  name: mission-write-artifacts
   description: Write AGENTS.md, services.yaml, init.sh, and per-skill SKILL.md files
   version: "1.0.0"
   entry_point: load_context

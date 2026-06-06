@@ -9,7 +9,7 @@
 #   3. save_architecture — script writes to missionDir/architecture.md
 
 workflow:
-  name: mission-plan-architecture
+  name: mission-design
   description: Write architecture.md based on mission.md and codebase investigation
   version: "1.0.0"
   entry_point: check_existing

@@ -12,7 +12,7 @@
 #   6. coverage_fix        — LLM fixes coverage gaps (if step 5 fails)
 
 workflow:
-  name: mission-plan-features
+  name: mission-decompose-features
   description: Decompose validation contract into features.yaml with coverage validation
   version: "1.0.0"
   entry_point: check_existing

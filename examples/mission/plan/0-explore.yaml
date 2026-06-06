@@ -13,7 +13,7 @@
 #   4. summarize_plan     — LLM produces a structured planning_summary
 
 workflow:
-  name: mission-plan-understand
+  name: mission-explore
   description: Understand requirements and codebase before proposing
   version: "1.0.0"
   entry_point: check_existing

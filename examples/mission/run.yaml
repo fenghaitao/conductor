@@ -1,8 +1,8 @@
 # Mission Run Pipeline
 #
 # Executes all pending features from features.yaml, milestone by milestone.
-# After each milestone: auto-runs scrutiny (lint/tests/code-review) then
-# user-testing (end-to-end behavioral assertions).
+# After each milestone: auto-runs review-features (lint/tests/code-review) then
+# verify-assertions (end-to-end behavioral assertions).
 #
 # Can be run standalone after plan.yaml completes, or resumed
 # after interruption via `conductor resume`.
@@ -19,7 +19,7 @@
 #     → run_scrutiny → [scrutiny_passed?] → run_user_testing
 #     → [testing_passed?] → seal_milestone → prompt_for_changes
 #     → [changes?] → apply_scope_changes → get_milestone (loop)
-#     → all done → collect_skill_feedback → orchestrator_review → [human gate if issues] → $end
+#     → all done → collect_skill_feedback → triage_issues → [human gate if issues] → $end
 #
 # Gap fixes applied:
 #   Gap 1+3: prompt_for_changes gate + apply_scope_changes sub-workflow
@@ -58,7 +58,7 @@ for_each:
     description: |
       Implement each pending feature in this milestone, one at a time.
       Sequential (max_concurrent: 1) — features may touch the same files.
-      Each feature is a 0-feature.yaml sub-workflow with its own checkpoint.
+      Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
     source: get_milestone.output.pending_features
     as: feature
     max_concurrent: 1
@@ -67,7 +67,7 @@ for_each:
     agent:
       name: run_one_feature
       type: workflow
-      workflow: ./run/0-feature.yaml
+      workflow: ./run/0-implement-feature.yaml
       input_mapping:
         mission_dir:         "{{ workflow.input.mission_dir }}"
         feature_id:          "{{ feature.id }}"
@@ -120,7 +120,7 @@ agents:
                 break
 
         # Priority: pending work first; then resolve returned features via
-        # orchestrator review; only then is the mission truly done. Without
+        # triage review; only then is the mission truly done. Without
         # the "returned" branch a worker that returned a feature would let
         # the mission reach all_done with that feature silently unaddressed.
         if current_milestone:
@@ -248,7 +248,7 @@ agents:
       Review all worker handoff issues (return_to_orchestrator: true) and
       any knowledge surfaced during the mission. Applies guidance updates
       and optionally escalates unresolved issues to the user.
-    workflow: ./run/4-orchestrator-review.yaml
+    workflow: ./run/4-triage-issues.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -263,7 +263,7 @@ agents:
       pending with updated guidance, accepts them, or escalates to the user;
       every returned feature leaves "returned" status so this never loops.
       Routes back to get_milestone so resolved features re-enter the run.
-    workflow: ./run/4-orchestrator-review.yaml
+    workflow: ./run/4-triage-issues.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
@@ -276,7 +276,7 @@ agents:
       Run programmatic validators (test, typecheck, lint) and spawn per-feature
       code review subagents for the completed milestone. Fails → features reset
       to pending and feature_runner re-runs them.
-    workflow: ./run/1-scrutiny.yaml
+    workflow: ./run/1-review-features.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -294,7 +294,7 @@ agents:
       Updates validation-state.yaml with pass/fail results.
       Fails → fix features injected, loops back to feature_runner via get_milestone.
       Passes → seal_milestone, then prompt for mid-mission changes.
-    workflow: ./run/2-user-testing.yaml
+    workflow: ./run/2-verify-assertions.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -334,6 +334,8 @@ agents:
         # Get feature IDs in this milestone
         features_path = mission_dir / "features.yaml"
         features_data = yaml.load(features_path.read_text()) if features_path.exists() else {}
+        if not isinstance(features_data, dict):
+            features_data = {}
         milestone_features = [
             f for f in features_data.get("features", [])
             if f.get("milestone") == milestone and f.get("status") == "completed"
@@ -379,7 +381,7 @@ agents:
     prompt: |
       ## Milestone {{ seal_milestone.output.milestone }} Complete and Sealed
 
-      The milestone has passed scrutiny and user-testing.
+      The milestone has passed review-features and verify-assertions.
       Sealed at: {{ seal_milestone.output.seal_path }}
 
       Before the next milestone begins, you can:
@@ -402,7 +404,7 @@ agents:
     description: |
       Propagate user-requested scope or guidance changes to mission.md, AGENTS.md,
       validation-contract.md, features.yaml, and validation-state.yaml.
-    workflow: ./run/3-scope-change.yaml
+    workflow: ./run/3-handle-changes.yaml
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:

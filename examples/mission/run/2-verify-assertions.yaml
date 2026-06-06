@@ -1,4 +1,4 @@
-# User Testing Phase
+# Verify Assertions
 #
 # Auto-injected quality gate after scrutiny passes for each milestone.
 # Tests pending VAL-* assertions through REAL user surfaces.
@@ -16,7 +16,7 @@
 #   4. inject_fix_features — script: for failed assertions, add fix features to features.yaml
 
 workflow:
-  name: mission-user-testing-phase
+  name: mission-verify-assertions
   description: Test VAL-* assertions through real user surfaces for a milestone
   version: "1.0.0"
   entry_point: collect_assertions
@@ -142,7 +142,7 @@ agents:
         yaml = YAML()
 
         # Get assertion IDs claimed by completed features in this milestone
-        features_data = yaml.load((mission_dir / "features.yaml").read_text())
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
         milestone_assertion_ids = set()
         for f in features_data.get("features", []):
             if (f.get("milestone") == milestone and
@@ -342,7 +342,7 @@ agents:
         yaml = YAML()
         yaml.preserve_quotes = True
         features_path = mission_dir / "features.yaml"
-        data = yaml.load(features_path.read_text())
+        data = yaml.load(features_path.read_text()) or {}
         features = data.get("features", [])
 
         # Find the highest feature ID for this milestone

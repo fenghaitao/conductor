@@ -10,7 +10,7 @@
 #   4. save_mission    — script: mkdir missionDir, write mission.md + working_directory.txt
 
 workflow:
-  name: mission-plan-propose
+  name: mission-propose
   description: Generate proposal, get user acceptance, write mission.md
   version: "1.0.0"
   entry_point: check_existing
