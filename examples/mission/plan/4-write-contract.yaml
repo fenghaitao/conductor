@@ -25,7 +25,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -172,7 +171,7 @@ agents:
 
   # ── Step 5 ──────────────────────────────────────────────────────────────────
   - name: write_cross_area
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Write cross-area flow assertions (VAL-CROSS-XXX) for user journeys
       that span multiple areas.
@@ -247,7 +246,7 @@ agents:
 
   # ── Step 7 ──────────────────────────────────────────────────────────────────
   - name: review_contract
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Review the assembled draft for gaps, implementation-detail leakage,
       and missing coverage. Output the improved final contract.

@@ -25,7 +25,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -56,7 +55,7 @@ for_each:
 
     agent:
       name: review_one_feature
-      model: claude-sonnet-4.6
+      model: deepseek-v4-pro
       description: Review one feature's implementation quality
       prompt: |
         Review feature {{ feature.id }}: "{{ feature.description }}"
@@ -274,7 +273,7 @@ agents:
 
   # ── Step 4 ──────────────────────────────────────────────────────────────────
   - name: synthesize
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Aggregate all feature reviews + validator results into a pass/fail decision.
     prompt: |

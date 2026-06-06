@@ -26,7 +26,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -108,7 +107,7 @@ agents:
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: triage
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Assess each issue and decide the appropriate action:
       - update_guidance: fix AGENTS.md or feature description and continue

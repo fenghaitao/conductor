@@ -20,7 +20,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -82,7 +81,7 @@ agents:
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: write_assertions
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Generate behavioral assertions for this area of the validation contract.
     prompt: |

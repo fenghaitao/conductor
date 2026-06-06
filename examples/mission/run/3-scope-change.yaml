@@ -31,7 +31,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -131,7 +130,7 @@ agents:
 
   # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: analyze_and_apply
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     reasoning:
       effort: high
     description: |

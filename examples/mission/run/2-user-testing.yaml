@@ -27,7 +27,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -59,7 +58,7 @@ for_each:
 
     agent:
       name: test_one_group
-      model: claude-sonnet-4.6
+      model: deepseek-v4-pro
       description: Test assertions for one contract area
       tools: null
       prompt: |

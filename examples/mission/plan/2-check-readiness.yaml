@@ -27,7 +27,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -96,7 +95,7 @@ agents:
 
   # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: verify_readiness
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       ACTIVELY run commands to verify dependency + validation readiness.
       This step MUST run real commands — not just inspect config files.

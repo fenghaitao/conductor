@@ -25,7 +25,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -120,7 +119,7 @@ agents:
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: write_agents_md
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Write AGENTS.md — guidance and mission boundaries for all workers.
       Skips if already exists.
@@ -193,7 +192,7 @@ agents:
 
   # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: write_services_yaml
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Write services.yaml — single source of truth for commands and services.
       Skips if already exists.
@@ -277,7 +276,7 @@ agents:
 
   # ── Step 4 ──────────────────────────────────────────────────────────────────
   - name: write_init_sh
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Write init.sh — idempotent one-time environment setup script.
       Skips if not needed or already exists.

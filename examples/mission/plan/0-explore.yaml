@@ -7,6 +7,7 @@
 #   1. inspect_codebase  — script: directory listing, README, package files
 #   2. clarify           — LLM asks user clarifying questions about requirements,
 #                          infrastructure, tech choices, validation approach
+#  2b. clarify_answers   — human gate: user answers the clarifying questions
 #   3. investigate       — LLM deep-dives into codebase, researches tech if needed
 #   4. summarize_plan    — LLM produces a structured planning_summary
 
@@ -22,7 +23,6 @@ workflow:
       base_url: https://api.deepseek.com/anthropic
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
-    temperature: 0.7
     default_model: deepseek-v4-pro
 
   input:
@@ -117,7 +117,7 @@ agents:
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: clarify
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Ask the user clarifying questions to fully understand requirements,
       tech choices, infrastructure constraints, and validation approach.
@@ -166,12 +166,34 @@ agents:
 
       CRITICAL: If the user explicitly names a package, library, SDK, or tool,
       treat it as a binding requirement — never substitute an alternative later.
+    output:
+      questions:
+        type: string
+        description: All clarifying questions the user needs to answer
     routes:
-      - to: investigate
+      - to: clarify_answers
+
+  # ── Step 2b ─────────────────────────────────────────────────────────────────
+  - name: clarify_answers
+    type: human_gate
+    description: Collect the user's answers to the clarifying questions
+    prompt: |
+      ## Clarifying Questions
+
+      {{ clarify.output.questions }}
+
+      Please provide detailed answers to all the questions above.
+      Your answers become the foundation of the validation contract
+      and feature decomposition.
+    options:
+      - label: "Submit answers"
+        value: submitted
+        route: investigate
+        prompt_for: response
 
   # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: investigate
-    model: claude-sonnet-4.6
+    model: deepseek-v4-pro
     description: |
       Deep-dive into the codebase and research technologies as needed.
       Uses available tools to read files, trace code, check ports.
@@ -179,6 +201,9 @@ agents:
     tools: null
     prompt: |
       You now have the user's answers from the clarification above.
+
+      USER ANSWERS:
+      {{ clarify_answers.output.response }}
 
       Investigate the codebase and any technologies as needed to answer:
       - Where does complexity concentrate?
