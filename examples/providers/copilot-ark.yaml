@@ -1,6 +1,6 @@
 # Volcengine Ark provider profile (DeepSeek served via Ark).
 #
-# Pass to any workflow with:  -p examples/providers/ark.yaml
+# Pass to any workflow with:  -p examples/providers/copilot-ark.yaml
 #
 # Ark authenticates with `Authorization: Bearer <key>` and rejects `x-api-key`
 # with HTTP 401. The api_key (read from $VOLCES_ARK_API_KEY) is configured the

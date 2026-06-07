@@ -9,13 +9,13 @@
 # Run against DeepSeek (direct):
 #   export DEEPSEEK_API_KEY=sk-...
 #   conductor run examples/simple-qa-ds.yaml \
-#     -p examples/providers/deepseek.yaml \
+#     -p examples/providers/copilot-deepseek.yaml \
 #     --input question="What is Python?"
 #
 # Run the SAME workflow against Volcengine Ark:
 #   export VOLCES_ARK_API_KEY=...
 #   conductor run examples/simple-qa-ds.yaml \
-#     -p examples/providers/ark.yaml \
+#     -p examples/providers/copilot-ark.yaml \
 #     --input question="What is Python?"
 #
 # `-p` also still accepts a bare provider name (e.g. `-p copilot`).

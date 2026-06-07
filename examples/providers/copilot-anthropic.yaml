@@ -1,6 +1,6 @@
 # Anthropic (direct) provider profile — copilot provider.
 #
-# Pass to any workflow with:  -p examples/providers/anthropic.yaml
+# Pass to any workflow with:  -p examples/providers/copilot-anthropic.yaml
 #
 # Sends requests to the official Anthropic Messages API using the copilot
 # provider's anthropic wire. The api_key is read from $ANTHROPIC_API_KEY so the

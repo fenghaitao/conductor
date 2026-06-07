@@ -1,6 +1,6 @@
 # DeepSeek (direct) provider profile.
 #
-# Pass to any workflow with:  -p examples/providers/deepseek.yaml
+# Pass to any workflow with:  -p examples/providers/copilot-deepseek.yaml
 #
 # The api_key is read from $DEEPSEEK_API_KEY so the secret never lands in this
 # file (or in checkpoints / event logs). default_model only fills agents that
