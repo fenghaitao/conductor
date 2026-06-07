@@ -58,9 +58,11 @@ agents:
 
         # Returned features (status == "returned", set by 0-feature's
         # mark_complete when a worker sets return_to_orchestrator) are the
-        # authoritative work list. Driving off features.yaml — not just the
-        # handoff flag — guarantees the mid-loop review always has something
-        # to resolve, so get_milestone's "returned" branch can't spin.
+        # authoritative work list. status and return_count live in
+        # feature-state.yaml — not features.yaml (the immutable plan) — so we
+        # drive off feature-state.yaml. This guarantees the mid-loop review
+        # always has something to resolve, so get_milestone's "returned"
+        # branch can't spin.
         def load_handoff(fid):
             hp = mission_dir / "handoffs" / f"{str(fid).replace('.', '-')}.yaml"
             if hp.exists():
@@ -71,20 +73,21 @@ agents:
             return {}
 
         issues = []
-        features_path = mission_dir / "features.yaml"
-        if features_path.exists():
-            fdata = yaml.load(features_path.read_text()) or {}
-            for f in fdata.get("features", []):
-                if f.get("status") != "returned":
-                    continue
-                ho = load_handoff(f.get("id"))
-                issues.append({
-                    "feature_id": f.get("id"),
-                    "return_count": int(f.get("return_count", 0) or 0),
-                    "salient_summary": ho.get("salient_summary", ""),
-                    "what_was_left_undone": ho.get("what_was_left_undone", ""),
-                    "discovered_issues": ho.get("discovered_issues", []),
-                })
+        state_path = mission_dir / "feature-state.yaml"
+        state_features = {}
+        if state_path.exists():
+            state_features = (yaml.load(state_path.read_text()) or {}).get("features", {})
+        for fid, entry in state_features.items():
+            if (entry or {}).get("status") != "returned":
+                continue
+            ho = load_handoff(fid)
+            issues.append({
+                "feature_id": fid,
+                "return_count": int((entry or {}).get("return_count", 0) or 0),
+                "salient_summary": ho.get("salient_summary", ""),
+                "what_was_left_undone": ho.get("what_was_left_undone", ""),
+                "discovered_issues": ho.get("discovered_issues", []),
+            })
 
         def read(p): return p.read_text() if p.exists() else ""
         print(json.dumps({
