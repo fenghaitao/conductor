@@ -1,0 +1,13 @@
+# DeepSeek (direct) provider profile.
+#
+# Use with:  conductor run examples/mission/run.yaml -p examples/mission/providers/deepseek.yaml
+#
+# The api_key is read from $DEEPSEEK_API_KEY so the secret never lands in
+# this file (or in checkpoints / event logs). default_model is optional and
+# only fills agents that omit an explicit `model:`.
+provider:
+  name: copilot
+  type: anthropic
+  base_url: https://api.deepseek.com/anthropic
+  api_key: ${DEEPSEEK_API_KEY}
+default_model: deepseek-v4-pro

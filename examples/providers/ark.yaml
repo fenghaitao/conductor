@@ -1,0 +1,16 @@
+# Volcengine Ark provider profile (DeepSeek served via Ark).
+#
+# Pass to any workflow with:  -p examples/providers/ark.yaml
+#
+# Ark authenticates with `Authorization: Bearer <key>`, so the credential goes
+# in `bearer_token` (read from $VOLCES_ARK_API_KEY) — NOT `api_key`, which the
+# anthropic wire sends as `x-api-key` and Ark rejects with HTTP 401. The
+# anthropic-compatible endpoint lives under /api/coding (the client appends
+# /v1/messages). If your Ark endpoint is OpenAI-compatible instead, switch to
+# `type: openai` + `wire_api: completions` and adjust base_url / default_model.
+provider:
+  name: copilot
+  type: anthropic
+  base_url: https://ark.cn-beijing.volces.com/api/coding
+  bearer_token: ${VOLCES_ARK_API_KEY:-your-api-key-here}
+default_model: deepseek-v4-pro

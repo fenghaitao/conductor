@@ -275,7 +275,9 @@ def run(
         typer.Option(
             "--provider",
             "-p",
-            help="Override the provider specified in the workflow (e.g., 'copilot').",
+            help="Override the workflow provider. Accepts a provider name "
+            "(e.g. 'copilot') or a path to a YAML provider profile carrying "
+            "base_url/api_key/type (and optional default_model).",
         ),
     ] = None,
     raw_inputs: Annotated[
@@ -734,7 +736,9 @@ def resume(
         typer.Option(
             "--provider",
             "-p",
-            help="Override the provider specified in the workflow (e.g., 'copilot').",
+            help="Override the workflow provider. Accepts a provider name "
+            "(e.g. 'copilot') or a path to a YAML provider profile carrying "
+            "base_url/api_key/type (and optional default_model).",
         ),
     ] = None,
     raw_metadata: Annotated[
