@@ -1,0 +1,106 @@
+type: string
+description: YAML handoff block from the worker
+value: "salient_summary: \"Implemented `conductor list workflows` basic non-recursive
+  discovery with comprehensive tests. Fixed pre-existing `_heuristic_filter` bug where
+  `agents:` dict was treated as list (Conductor uses dicts for agent definitions).
+  Added 37 new tests across 6 test classes.\"\nwhat_was_implemented: >\n  The `conductor
+  list workflows` command was already implemented in `list_cmd.py` but had a pre-existing\n\
+  \  bug in `_heuristic_filter`: it only handled `agents:` as a list (using `isinstance(agents,
+  list)`),\n  but Conductor YAML uses `agents:` as a dict of named agent definitions.
+  This caused agent_count to\n  always be 0 and pipeline topology to never be detected
+  for dict-based agent definitions (the common case).\n  Fixed by checking `isinstance(agents,
+  (dict, list))` and using `agent_count > 0` for pipeline detection.\n  \n  Added
+  6 new test classes to `tests/test_cli/test_list.py`:\n  - `TestListWorkflowsBasic`
+  (14 tests): empty dir messages, non-workflow exclusion, heuristic keys\n    (agents/runtime/type:workflow),
+  agent count derivation, topology detection (pipeline/parallel/for_each),\n    table
+  column verification, mixed workflow/non-workflow filtering\n  - `TestListWorkflowsAll`
+  (2 tests): `--all` flag bypasses heuristic, shows non-workflow YAML with zero agents\n\
+  \  - `TestListWorkflowsJson` (6 tests): valid JSON array, required fields, empty
+  array, no ANSI escapes,\n    correct topology flags, `--all` with `--json`\n  -
+  `TestListWorkflowsRecursive` (4 tests): recursive subdirectory scanning, non-recursive
+  only top-level,\n    `--max-depth` enforcement, depth limiting\n  - `TestListWorkflowsPath`
+  (5 tests): default cwd, explicit path, nonexistent path error, combines with\n \
+  \   `--recursive` and `--json`\n  - `TestListWorkflowsEdgeCases` (7 tests): unreadable
+  files skipped, invalid YAML syntax handled,\n    workflow.name from metadata, 2KB
+  read limit, .yml extension support, no traceback on empty\nwhat_was_left_undone:
+  \"\"\nreturn_to_orchestrator: false\nverification:\n  commands_run:\n    - command:
+  \"uv run pytest tests/test_cli/test_list.py -v\"\n      exit_code: 0\n      observation:
+  \"92 tests passed (55 existing + 37 new), covering all workflow listing scenarios\"\
+  \n    - command: \"uv run ty check src/conductor/cli/list_cmd.py src/conductor/cli/app.py\"\
+  \n      exit_code: 0\n      observation: \"Typecheck passed, no errors\"\n    -
+  command: \"uv run ruff check src/conductor/cli/list_cmd.py src/conductor/cli/app.py
+  tests/test_cli/test_list.py\"\n      exit_code: 0\n      observation: \"No lint
+  violations\"\n    - command: \"uv run pytest tests/test_cli/ -v --ignore=tests/test_cli/test_list.py\"\
+  \n      exit_code: 0\n      observation: \"428 existing CLI tests pass with no regressions\"\
+  \n  interactive_checks:\n    - action: \"uv run conductor list workflows --path
+  examples/\"\n      observed: \"Rich table with Name, Path, Agents, Topology columns.
+  24 workflow files listed with correct agent counts and topology tags (pipeline,
+  parallel, for_each). Exit 0.\"\n    - action: \"uv run conductor list workflows
+  (in empty /tmp dir)\"\n      observed: \"Printed 'No workflow files found.' in dim
+  text. Exit 0. No traceback.\"\n    - action: \"uv run conductor list workflows --path
+  examples/ --json | python -m json.tool | head -20\"\n      observed: \"Valid JSON
+  array. Each object has name, path, agent_count, has_parallel, has_for_each, has_pipeline.\"\
+  \ntests_added:\n  - file: \"tests/test_cli/test_list.py\"\n    cases:\n      - name:
+  \"test_empty_dir_prints_graceful_message\"\n        description: \"VAL-LISTWF-002:
+  Empty dir prints 'No workflow files found', exits 0\"\n      - name: \"test_no_yaml_files_shows_empty_message\"\
+  \n        description: \"Directory with no .yaml/.yml files shows empty message\"\
+  \n      - name: \"test_yaml_without_workflow_keys_excluded\"\n        description:
+  \"Non-workflow YAML (docker-compose, config) excluded by heuristic\"\n      - name:
+  \"test_single_valid_workflow_appears\"\n        description: \"VAL-LISTWF-001: File
+  with agents: key appears with correct agent count and topology\"\n      - name:
+  \"test_multiple_valid_workflows_all_appear\"\n        description: \"Multiple workflow-matching
+  files all appear in table\"\n      - name: \"test_runtime_key_also_matches_heuristic\"\
+  \n        description: \"Files with runtime: key pass the heuristic filter\"\n \
+  \     - name: \"test_type_workflow_key_matches_heuristic\"\n        description:
+  \"Files with type: workflow pass the heuristic filter\"\n      - name: \"test_mixed_workflow_and_non_workflow\"\
+  \n        description: \"Only workflow files appear; non-workflow YAML excluded\"\
+  \n      - name: \"test_agent_count_derived_from_yaml\"\n        description: \"\
+  Agent count column reflects len(agents) from parsed YAML (dict form)\"\n      -
+  name: \"test_topology_pipeline_detected\"\n        description: \"Pipeline topology
+  detected when agents exist without parallel/for_each\"\n      - name: \"test_topology_parallel_detected\"\
+  \n        description: \"Parallel topology detected when parallel list is non-empty\"\
+  \n      - name: \"test_topology_for_each_detected\"\n        description: \"For-each
+  topology detected when for_each list is non-empty\"\n      - name: \"test_table_has_expected_columns\"\
+  \n        description: \"Table includes Name, Path, Agents, Topology column headers\"\
+  \n      - name: \"test_empty_dir_exits_zero\"\n        description: \"VAL-LISTWF-002:
+  Empty dir exits 0, no traceback\"\n      - name: \"test_all_includes_non_workflow_yaml\"\
+  \n        description: \"--all shows every .yaml/.yml file regardless of content\"\
+  \n      - name: \"test_all_shows_non_workflow_with_zero_agents\"\n        description:
+  \"Non-workflow files under --all show agent_count 0 and empty topology\"\n     \
+  \ - name: \"test_json_output_is_valid_array\"\n        description: \"--json emits
+  a valid JSON array\"\n      - name: \"test_json_has_required_fields\"\n        description:
+  \"Each object has name, path, agent_count, has_parallel, has_for_each, has_pipeline\"\
+  \n      - name: \"test_json_empty_no_workflows\"\n        description: \"No matching
+  workflows → empty JSON array []\"\n      - name: \"test_json_no_rich_markup\"\n\
+  \        description: \"JSON output has no ANSI escape codes\"\n      - name: \"\
+  test_json_topology_flags_correct\"\n        description: \"Topology flags correct
+  for pipeline, parallel, and for_each workflow types\"\n      - name: \"test_json_all_flag_includes_everything\"\
+  \n        description: \"--all --json includes non-workflow YAML files with zero
+  metadata\"\n      - name: \"test_recursive_finds_files_in_subdirs\"\n        description:
+  \"--recursive finds YAML files in subdirectories\"\n      - name: \"test_non_recursive_only_top_level\"\
+  \n        description: \"Without --recursive, only files in root directory appear\"\
+  \n      - name: \"test_max_depth_enforced\"\n        description: \"Files beyond
+  --max-depth are excluded\"\n      - name: \"test_max_depth_zero_is_root_only\"\n\
+  \        description: \"--max-depth 1 with --recursive scans root and depth-1 dirs\"\
+  \n      - name: \"test_path_default_is_cwd\"\n        description: \"Without --path,
+  command searches cwd and exits 0\"\n      - name: \"test_path_to_existing_dir_works\"\
+  \n        description: \"--path pointing to existing directory searches from there\"\
+  \n      - name: \"test_path_nonexistent_dir_errors\"\n        description: \"--path
+  to nonexistent directory prints error, exits 1\"\n      - name: \"test_path_combines_with_recursive\"\
+  \n        description: \"--path combines with --recursive for deep search\"\n  \
+  \    - name: \"test_path_combines_with_json\"\n        description: \"--path combines
+  with --json for machine-readable output\"\n      - name: \"test_unreadable_yaml_file_skipped\"\
+  \n        description: \"Unreadable YAML files skipped, not crashed on\"\n     \
+  \ - name: \"test_invalid_yaml_syntax_does_not_crash\"\n        description: \"YAML
+  files with invalid syntax included with basic metadata\"\n      - name: \"test_workflow_name_from_yaml_metadata\"\
+  \n        description: \"workflow.name from YAML used instead of filename stem\"\
+  \n      - name: \"test_large_yaml_file_only_reads_first_2kb\"\n        description:
+  \"Large files only inspected in first 2 KB for heuristic\"\n      - name: \"test_yaml_files_with_yml_extension\"\
+  \n        description: \".yml extension files also discovered\"\n      - name: \"\
+  test_exit_code_zero_no_traceback_on_empty\"\n        description: \"VAL-LISTWF-002:
+  Empty dir exits 0, no Python traceback anywhere\"\ndiscovered_issues:\n  - severity:
+  \"non_blocking\"\n    description: \"Pre-existing: `_heuristic_filter` in `list_cmd.py`
+  only handled `agents:` as list (isinstance(agents, list)), but Conductor YAML uses
+  dicts for named agent definitions. Fixed as part of this change by accepting both
+  dict and list forms.\"\nskill_name: \"cli-worker\"\nskill_feedback: []\n"
+feature_id: '3.1'

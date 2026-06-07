@@ -518,8 +518,8 @@ def list_workflows(
         int,
         typer.Option(
             "--max-depth",
-            help="Maximum recursion depth (only with --recursive).",
-            min=1,
+            help="Maximum recursion depth (only with --recursive). 0 = root only.",
+            min=0,
         ),
     ] = 3,
     show_all: Annotated[
@@ -651,7 +651,7 @@ def _heuristic_filter(paths: list[Path], show_all: bool) -> list[dict[str, Any]]
                 if isinstance(wf, dict):
                     meta["name"] = wf.get("name", p.stem)
                 agents = parsed.get("agents", [])
-                if isinstance(agents, list):
+                if isinstance(agents, (dict, list)):
                     meta["agent_count"] = len(agents)
                 parallel = parsed.get("parallel", [])
                 for_each = parsed.get("for_each", [])
@@ -660,8 +660,7 @@ def _heuristic_filter(paths: list[Path], show_all: bool) -> list[dict[str, Any]]
                 if isinstance(for_each, list) and for_each:
                     meta["has_for_each"] = True
                 if (
-                    isinstance(agents, list)
-                    and agents
+                    meta["agent_count"] > 0
                     and not meta["has_parallel"]
                     and not meta["has_for_each"]
                 ):

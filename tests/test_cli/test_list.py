@@ -1147,3 +1147,435 @@ class TestListRunsRecentJson:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data == []
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows` — basic listing
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsBasic:
+    """Verify `list workflows` discovers workflow YAML files in a directory."""
+
+    def test_empty_dir_prints_graceful_message(self, tmp_path: Path) -> None:
+        """VAL-LISTWF-002: Empty dir prints empty-state message, exits 0."""
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No workflow files found" in result.output
+
+    def test_no_yaml_files_shows_empty_message(self, tmp_path: Path) -> None:
+        """Directory with no .yaml/.yml files shows empty message."""
+        (tmp_path / "README.md").write_text("# Hello\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No workflow files found" in result.output
+
+    def test_yaml_without_workflow_keys_excluded(self, tmp_path: Path) -> None:
+        """Non-workflow YAML files are excluded by heuristic filter."""
+        (tmp_path / "config.yaml").write_text("settings:\n  debug: true\n  port: 8080\n")
+        (tmp_path / "docker-compose.yml").write_text(
+            "version: '3'\nservices:\n  web:\n    image: nginx\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "No workflow files found" in result.output
+
+    def test_single_valid_workflow_appears(self, tmp_path: Path) -> None:
+        """VAL-LISTWF-001: A file with `agents:` key appears in the table."""
+        (tmp_path / "my-workflow.yaml").write_text(
+            "agents:\n  researcher:\n    prompt: Find info\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "my-workflow" in output
+        assert "Agents" in output
+        assert "Topology" in output
+        # Path column is present (Rich truncates long paths with "…")
+        assert "Path" in output
+        # Agent count and topology are shown
+        assert "1" in output
+        assert "pipeline" in output
+
+    def test_multiple_valid_workflows_all_appear(self, tmp_path: Path) -> None:
+        """All workflow-matching files appear in the table."""
+        (tmp_path / "alpha.yaml").write_text("agents:\n  a:\n    prompt: A\n")
+        (tmp_path / "beta.yaml").write_text("agents:\n  b:\n    prompt: B\n")
+        (tmp_path / "gamma.yaml").write_text("type: workflow\nworkflow:\n  name: gamma\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "alpha" in output
+        assert "beta" in output
+        assert "gamma" in output
+
+    def test_runtime_key_also_matches_heuristic(self, tmp_path: Path) -> None:
+        """Files with `runtime:` key pass the heuristic filter."""
+        (tmp_path / "my-wf.yaml").write_text("runtime:\n  provider: copilot\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "my-wf" in result.output
+
+    def test_type_workflow_key_matches_heuristic(self, tmp_path: Path) -> None:
+        """Files with `type: workflow` pass the heuristic filter."""
+        (tmp_path / "typed.yaml").write_text("type: workflow\nworkflow:\n  name: typed\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "typed" in result.output
+
+    def test_mixed_workflow_and_non_workflow(self, tmp_path: Path) -> None:
+        """Only workflow files appear; non-workflow YAML is excluded."""
+        (tmp_path / "real.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        (tmp_path / "config.yaml").write_text("debug: true\nlogging:\n  level: info\n")
+        (tmp_path / "notes.md").write_text("# Notes\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "real" in output
+        assert "config" not in output
+
+    def test_agent_count_derived_from_yaml(self, tmp_path: Path) -> None:
+        """Agent count column reflects len(agents) from parsed YAML."""
+        (tmp_path / "multi-agent.yaml").write_text(
+            "agents:\n  a:\n    prompt: A\n  b:\n    prompt: B\n  c:\n    prompt: C\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        # Table should show agent count 3
+        assert "3" in result.output
+
+    def test_topology_pipeline_detected(self, tmp_path: Path) -> None:
+        """Pipeline topology is detected when agents exist without parallel/for_each."""
+        (tmp_path / "pipeline.yaml").write_text(
+            "agents:\n  step1:\n    prompt: Do step 1\n  step2:\n    prompt: Do step 2\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "pipeline" in result.output
+
+    def test_topology_parallel_detected(self, tmp_path: Path) -> None:
+        """Parallel topology is detected when parallel list is non-empty."""
+        (tmp_path / "parallel.yaml").write_text(
+            "parallel:\n  - agents:\n      a:\n        prompt: A\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "parallel" in result.output
+
+    def test_topology_for_each_detected(self, tmp_path: Path) -> None:
+        """For-each topology is detected when for_each list is non-empty."""
+        (tmp_path / "foreach.yaml").write_text(
+            "for_each:\n  - source: items\n    agents:\n      a:\n        prompt: A\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "for_each" in result.output
+
+    def test_table_has_expected_columns(self, tmp_path: Path) -> None:
+        """The workflows table includes Name, Path, Agents, Topology columns."""
+        (tmp_path / "test.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "Name" in output
+        assert "Path" in output
+        assert "Agents" in output
+        assert "Topology" in output
+
+    def test_empty_dir_exits_zero(self, tmp_path: Path) -> None:
+        """VAL-LISTWF-002: Empty dir exits 0, no traceback."""
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        # No traceback
+        assert "Traceback" not in result.output
+        assert "Error" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows --all`
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsAll:
+    """Verify `--all` flag bypasses heuristic filtering."""
+
+    def test_all_includes_non_workflow_yaml(self, tmp_path: Path) -> None:
+        """--all shows every .yaml/.yml file regardless of content."""
+        (tmp_path / "workflow.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        (tmp_path / "config.yaml").write_text("debug: true\nport: 3000\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--all"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "workflow" in output
+        assert "config" in output
+
+    def test_all_shows_non_workflow_with_zero_agents(self, tmp_path: Path) -> None:
+        """Non-workflow files under --all show agent_count 0 and no topology."""
+        (tmp_path / "config.yaml").write_text("debug: true\nport: 3000\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--all"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "config" in output
+        assert "0" in output  # agent_count = 0
+        assert "—" in output  # empty topology
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows --json`
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsJson:
+    """Verify `--json` emits valid JSON array of workflow metadata."""
+
+    def test_json_output_is_valid_array(self, tmp_path: Path) -> None:
+        """--json emits a valid JSON array."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 1
+
+    def test_json_has_required_fields(self, tmp_path: Path) -> None:
+        """Each object has name, path, agent_count, has_parallel, has_for_each,
+        has_pipeline."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        entry = data[0]
+        assert "name" in entry
+        assert "path" in entry
+        assert "agent_count" in entry
+        assert "has_parallel" in entry
+        assert "has_for_each" in entry
+        assert "has_pipeline" in entry
+
+    def test_json_empty_no_workflows(self, tmp_path: Path) -> None:
+        """No matching workflows → empty JSON array `[]`."""
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data == []
+
+    def test_json_no_rich_markup(self, tmp_path: Path) -> None:
+        """JSON output has no ANSI escape codes."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        assert "\x1b" not in result.output
+        json.loads(result.output)  # Must be valid JSON
+
+    def test_json_topology_flags_correct(self, tmp_path: Path) -> None:
+        """Topology flags are correct for each workflow type."""
+        (tmp_path / "pipeline.yaml").write_text(
+            "agents:\n  step1:\n    prompt: S1\n  step2:\n    prompt: S2\n"
+        )
+        (tmp_path / "parallel.yaml").write_text(
+            "parallel:\n  - agents:\n      a:\n        prompt: A\n"
+        )
+        (tmp_path / "foreach.yaml").write_text(
+            "for_each:\n  - source: items\n    agents:\n      a:\n        prompt: A\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        by_name = {e["name"]: e for e in data}
+        assert by_name["pipeline"]["has_pipeline"] is True
+        assert by_name["pipeline"]["has_parallel"] is False
+        assert by_name["pipeline"]["has_for_each"] is False
+        assert by_name["parallel"]["has_parallel"] is True
+        assert by_name["foreach"]["has_for_each"] is True
+
+    def test_json_all_flag_includes_everything(self, tmp_path: Path) -> None:
+        """--all --json includes non-workflow YAML files with zero metadata."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        (tmp_path / "config.yaml").write_text("debug: true\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--all", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 2
+        names = {e["name"] for e in data}
+        assert "wf" in names
+        assert "config" in names
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows --recursive` and `--max-depth`
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsRecursive:
+    """Verify recursive directory walking with depth limits."""
+
+    def test_recursive_finds_files_in_subdirs(self, tmp_path: Path) -> None:
+        """--recursive finds YAML files in subdirectories."""
+        (tmp_path / "root.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "nested.yaml").write_text("agents:\n  y:\n    prompt: Y\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--recursive"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "root" in output
+        assert "nested" in output
+
+    def test_non_recursive_only_top_level(self, tmp_path: Path) -> None:
+        """Without --recursive, only files in the root directory appear."""
+        (tmp_path / "root.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "hidden.yaml").write_text("agents:\n  y:\n    prompt: Y\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "root" in output
+        assert "hidden" not in output
+
+    def test_max_depth_enforced(self, tmp_path: Path) -> None:
+        """Files beyond --max-depth are excluded."""
+        (tmp_path / "d0.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        d1 = tmp_path / "d1"
+        d1.mkdir()
+        (d1 / "d1.yaml").write_text("agents:\n  a:\n    prompt: A\n")
+        d2 = d1 / "d2"
+        d2.mkdir()
+        (d2 / "d2.yaml").write_text("agents:\n  b:\n    prompt: B\n")
+        d3 = d2 / "d3"
+        d3.mkdir()
+        (d3 / "d3.yaml").write_text("agents:\n  c:\n    prompt: C\n")
+
+        # max-depth 1: only root (d0) and d1 files
+        result = _invoke(
+            ["list", "workflows", "--path", str(tmp_path), "--recursive", "--max-depth", "1"]
+        )
+        assert result.exit_code == 0
+        output = result.output
+        assert "d0" in output
+        assert "d1" in output
+        assert "d2" not in output
+        assert "d3" not in output
+
+    def test_max_depth_zero_is_root_only(self, tmp_path: Path) -> None:
+        """--max-depth 0 with --recursive scans only the search root directory.
+
+        Files in subdirectories (depth >= 1) are excluded.
+        """
+        (tmp_path / "root.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "nested.yaml").write_text("agents:\n  y:\n    prompt: Y\n")
+        result = _invoke(
+            ["list", "workflows", "--path", str(tmp_path), "--recursive", "--max-depth", "0"]
+        )
+        assert result.exit_code == 0
+        output = result.output
+        assert "root" in output
+        assert "nested" not in output  # depth 1, excluded by max-depth 0
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows --path` flag
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsPath:
+    """Verify `--path` flag starts search from an alternate directory."""
+
+    def test_path_default_is_cwd(self) -> None:
+        """Without --path, the command searches cwd and exits 0."""
+        result = _invoke(["list", "workflows"])
+        assert result.exit_code == 0
+
+    def test_path_to_existing_dir_works(self, tmp_path: Path) -> None:
+        """--path pointing to an existing directory searches from there."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "wf" in result.output
+
+    def test_path_nonexistent_dir_errors(self, tmp_path: Path) -> None:
+        """--path to a nonexistent directory prints error, exits 1."""
+        bad_path = tmp_path / "nonexistent"
+        result = _invoke(["list", "workflows", "--path", str(bad_path)])
+        assert result.exit_code != 0
+        assert "Error" in result.output or "does not exist" in result.output.lower()
+
+    def test_path_combines_with_recursive(self, tmp_path: Path) -> None:
+        """--path combines with --recursive for deep search."""
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "nested.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--recursive"])
+        assert result.exit_code == 0
+        assert "nested" in result.output
+
+    def test_path_combines_with_json(self, tmp_path: Path) -> None:
+        """--path combines with --json for machine-readable output."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["name"] == "wf"
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list workflows` — edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowsEdgeCases:
+    """Verify robustness for edge cases in workflow discovery."""
+
+    def test_unreadable_yaml_file_skipped(self, tmp_path: Path) -> None:
+        """Unreadable YAML files are skipped, not crashed on."""
+        (tmp_path / "good.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        (tmp_path / "bad.yaml").write_text("agents:\n  x:\n    prompt: \x00\x00\x00\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        output = result.output
+        assert "good" in output
+
+    def test_invalid_yaml_syntax_does_not_crash(self, tmp_path: Path) -> None:
+        """YAML files with invalid syntax are included with basic metadata."""
+        (tmp_path / "broken.yaml").write_text("agents: [unclosed\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "broken" in result.output
+
+    def test_workflow_name_from_yaml_metadata(self, tmp_path: Path) -> None:
+        """When YAML has `workflow.name`, it is used instead of filename stem."""
+        (tmp_path / "file-stem.yaml").write_text(
+            "workflow:\n  name: display-name\nagents:\n  x:\n    prompt: X\n"
+        )
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "display-name" in result.output
+
+    def test_large_yaml_file_only_reads_first_2kb(self, tmp_path: Path) -> None:
+        """Large YAML files are only inspected in the first 2 KB for heuristic."""
+        # Create a file where the workflow keys are beyond 2 KB
+        prefix = "# " + "x" * 2048 + "\n"
+        content = prefix + "agents:\n  x:\n    prompt: X\n"
+        (tmp_path / "large.yaml").write_text(content)
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        # The heuristic only reads first 2 KB, so it won't find "agents:"
+        # This file should be excluded by the heuristic
+        assert "large" not in result.output
+
+    def test_yaml_files_with_yml_extension(self, tmp_path: Path) -> None:
+        """.yml extension files are also discovered."""
+        (tmp_path / "workflow.yml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "workflow" in result.output
+
+    def test_exit_code_zero_no_traceback_on_empty(self, tmp_path: Path) -> None:
+        """VAL-LISTWF-002: Empty dir exits 0, no Python traceback anywhere."""
+        result = _invoke(["list", "workflows", "--path", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "Traceback (most recent call last)" not in result.output
+        assert "Traceback (most recent call last)" not in result.stderr

@@ -26,8 +26,10 @@ features:
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/2-4.yaml
   "3.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/3-1.yaml
   "3.2":
     status: pending
     attempts: 0
