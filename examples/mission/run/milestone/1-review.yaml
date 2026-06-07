@@ -263,9 +263,12 @@ agents:
         milestone = sys.argv[2]
         yaml = YAML()
         data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        state_data = yaml.load((mission_dir / "feature-state.yaml").read_text()) or {}
+        feat_state = state_data.get("features", {})
         completed = [
             f for f in data.get("features", [])
-            if f.get("milestone") == milestone and f.get("status") == "completed"
+            if f.get("milestone") == milestone
+            and feat_state.get(f.get("id", ""), {}).get("status") == "completed"
             and not f.get("skill_name", "").startswith("review-")
             and not f.get("skill_name", "").startswith("user-testing-")
         ]
