@@ -46,20 +46,30 @@ features:
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/3-4.yaml
   "3.5":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/3-5.yaml
   "4.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/4-1.yaml
   "4.2":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/4-2.yaml
   "4.3":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/4-3.yaml
   "4.4":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/4-4.yaml
   "5.1":
     status: pending
     attempts: 0

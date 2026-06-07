@@ -373,3 +373,14 @@ Return immediately (set `return_to_orchestrator: true`) if:
 - The `app.py` structure has diverged significantly from the architecture document (e.g., `checkpoints` command moved, `registry_app` registration changed).
 - A required test scenario cannot be meaningfully tested because the underlying Conductor primitives cannot be mocked (e.g., `yaml.safe_load` behavior changed in a way that breaks heuristic filtering).
 - The `--json` output format cannot be made stable across the subcommands due to upstream data model inconsistencies.
+
+
+## Pre-Implementation Checklist
+
+Before writing any code for a CLI feature, always:
+1. Read the relevant existing source file(s) (e.g., `src/conductor/cli/list_cmd.py`)
+2. Read the corresponding test file(s) (e.g., `tests/test_cli/test_list.py`)
+3. Understand the current implementation state and patterns used
+4. Only then proceed to write tests and implementation
+
+This prevents handoffs where "pending: read files" is the only outcome.

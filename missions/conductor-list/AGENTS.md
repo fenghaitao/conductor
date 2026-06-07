@@ -86,6 +86,8 @@ If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a cra
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as a list (isinstance(agents, list)), but Conductor YAML uses dicts for named agent definitions. Fixed in this change by accepting both dict and list forms via isinstance(agents, (dict, list)). Correctly classified as non-blocking since the fix was applied inline.
+- Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as list via `isinstance(agents, list)`, but Conductor YAML uses `agents:` as a dict of named agent definitions. Fixed in feature 3.1 by accepting both dict and list forms and using `agent_count > 0` for pipeline detection.
 - Pre-existing: `_heuristic_filter` only handled `agents:` as a list (`isinstance(agents, list)`), but Conductor YAML uses dicts for named agent definitions. Fixed in this change to accept both `dict` and `list` forms.
 
 *(None documented yet — orchestrator fills this in during the run.)*
@@ -186,3 +188,30 @@ uv run conductor list templates --json
 ### YAML Parsing
 
 - **ruamel.yaml** — The project uses `ruamel.yaml.YAML(typ='safe')` for all YAML parsing (not standard `yaml.safe_load`). New modules must use `ruamel.yaml` consistently: `from ruamel.yaml import YAML; from ruamel.yaml.error import YAMLError`. Do not import `yaml` from the standard library or PyYAML.
+
+
+## Handoff Expectations
+
+- When a feature is discovered to be already implemented, the worker must
+  still produce a thorough handoff documenting: (a) where the implementation
+  lives, (b) which existing tests cover it, (c) manual validation steps
+  performed, and (d) explicit mapping to each listed validation assertion.
+  This lets the orchestrator verify completeness without re-inspecting the
+  codebase.
+
+- Workers must not return a handoff with `return_to_orchestrator: false`
+  when zero implementation progress has been made. If pre-reading existing
+  code is required, the worker should do that as part of its execution loop
+  and only hand off after producing tangible output (code, tests,
+  verification). A handoff with empty `what_was_implemented` and empty
+  `tests_added` is effectively a no-op and wastes orchestrator cycles.
+
+
+### `list_cmd.py` YAML Parsing Notes
+
+- `list_cmd.py` uses `ruamel.yaml` (not `yaml.safe_load` from PyYAML) for YAML
+  parsing in `_heuristic_filter`. This is an existing project dependency.
+- The heuristic filter only reads the first 2 KB of each file — incomplete YAML
+  at the 2 KB boundary is tolerated by catching `YAMLError` and falling back to
+  basic filename-derived metadata. This 2 KB limit is intentional; do not increase
+  it without benchmarking against the performance NFRs.

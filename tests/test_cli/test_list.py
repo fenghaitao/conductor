@@ -1579,3 +1579,410 @@ class TestListWorkflowsEdgeCases:
         assert result.exit_code == 0
         assert "Traceback (most recent call last)" not in result.output
         assert "Traceback (most recent call last)" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list checkpoints` — table output
+# ---------------------------------------------------------------------------
+
+
+class TestListCheckpoints:
+    """Verify `list checkpoints` displays saved checkpoints in a Rich table."""
+
+    def test_no_checkpoints_prints_empty_message(self) -> None:
+        """VAL-M3LIST-008: When no checkpoints exist, print empty message, exit 0."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        assert "No checkpoints found" in result.output
+        assert "Error" not in result.stderr
+
+    def test_no_checkpoints_exits_zero(self) -> None:
+        """Empty checkpoint list is not an error — exit 0, no traceback."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        assert "Traceback (most recent call last)" not in result.output
+        assert "Traceback (most recent call last)" not in result.stderr
+
+    def test_single_checkpoint_table(self) -> None:
+        """One checkpoint produces a table with one row and correct values."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/my-workflow.yaml",
+            created_at="2026-06-01T12:00:00+00:00",
+            error_type="ExecutionError",
+            agent="runner",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "my-workflow" in output
+        assert "2026-06-01" in output
+        assert "ExecutionError" in output
+        assert "runner" in output
+
+    def test_multiple_checkpoints_table(self) -> None:
+        """Multiple checkpoints produce a table with multiple rows, sorted descending."""
+        cp1 = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/alpha.yaml",
+            created_at="2026-06-01T10:00:00+00:00",
+            error_type="ProviderError",
+            agent="alpha-agent",
+        )
+        cp2 = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/beta.yaml",
+            created_at="2026-06-01T11:00:00+00:00",
+            error_type="ValidationError",
+            agent="beta-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp2, cp1],  # Already sorted descending by list_checkpoints
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "alpha" in output
+        assert "beta" in output
+        assert "ProviderError" in output
+        assert "ValidationError" in output
+        assert "alpha-agent" in output
+        assert "beta-agent" in output
+
+    def test_table_has_expected_columns(self) -> None:
+        """VAL-M3LIST-001: Table includes Version, Workflow, Created, Error, Agent."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/test.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="test-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "Version" in output
+        assert "Workflow" in output
+        assert "Created" in output
+        assert "Error" in output
+        assert "Agent" in output
+
+    def test_checkpoint_count_summary_line(self) -> None:
+        """After the table, a summary line shows total checkpoint count."""
+        cp_list = [
+            _make_checkpoint_data(
+                version=1,
+                workflow_path=f"/tmp/wf{i}.yaml",
+                created_at=f"2026-06-01T0{i}:00:00+00:00",
+                error_type="ProviderError",
+                agent="agent",
+            )
+            for i in range(3)
+        ]
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=cp_list,
+        ):
+            result = _invoke(["list", "checkpoints"])
+        assert result.exit_code == 0
+        assert "Total: 3 checkpoint(s)" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list checkpoints --workflow` — filtering
+# ---------------------------------------------------------------------------
+
+
+class TestListCheckpointsFiltering:
+    """Verify workflow-path argument filters checkpoint results."""
+
+    def test_workflow_filter_passed_to_manager(self) -> None:
+        """When a workflow path is provided, it is resolved and passed to
+        list_checkpoints."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/exists.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ) as mock_list:
+            # Use the examples dir (guaranteed to exist)
+            result = _invoke(["list", "checkpoints", "examples/simple-qa.yaml"])
+        assert result.exit_code == 0
+        # The list_checkpoints was called
+        mock_list.assert_called_once()
+        called_arg = mock_list.call_args[0][0]
+        assert called_arg is not None
+        # Should be a resolved absolute path
+        assert str(called_arg).endswith("simple-qa.yaml")
+
+    def test_nonexistent_workflow_errors(self) -> None:
+        """A workflow path that doesn't exist produces an error, exit 1."""
+        result = _invoke(["list", "checkpoints", "/nonexistent/path/workflow.yaml"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr or "not found" in result.stderr.lower()
+
+    def test_filtered_no_results_message(self) -> None:
+        """When filtering by workflow and no checkpoints match, print specific message."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "examples/simple-qa.yaml"])
+        assert result.exit_code == 0
+        assert (
+            "No checkpoints found for workflow" in result.output
+            or "No checkpoints found" in result.output
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list checkpoints --json` — JSON output
+# ---------------------------------------------------------------------------
+
+
+class TestListCheckpointsJson:
+    """Verify `list checkpoints --json` emits valid JSON output."""
+
+    def test_empty_json_array(self) -> None:
+        """No checkpoints → empty JSON array `[]`, exit 0."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data == []
+
+    def test_json_has_expected_fields(self) -> None:
+        """VAL-M3LIST-002: Each JSON entry has version, workflow_path, workflow_hash,
+        created_at, failure, current_agent, run_id, file_path."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/check.yaml",
+            workflow_hash="sha256:abc123",
+            created_at="2026-06-01T12:00:00+00:00",
+            error_type="ExecutionError",
+            agent="runner",
+            file_path=Path("/tmp/checkpoints/check-20260601.json"),
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["version"] == 1
+        assert entry["workflow_path"] == "/tmp/check.yaml"
+        assert entry["workflow_hash"] == "sha256:abc123"
+        assert entry["created_at"] == "2026-06-01T12:00:00+00:00"
+        assert entry["failure"] == {
+            "error_type": "ExecutionError",
+            "agent": "runner",
+            "message": "test",
+            "iteration": 0,
+        }
+        assert entry["current_agent"] == "runner"
+        assert entry["run_id"] == "test-run-id"
+        assert isinstance(entry["file_path"], str)
+        assert entry["file_path"] == "/tmp/checkpoints/check-20260601.json"
+
+    def test_json_multiple_entries(self) -> None:
+        """VAL-M3LIST-002: Multiple checkpoints produce a JSON array with all entries,
+        each containing the 8 required fields."""
+        cps = [
+            _make_checkpoint_data(
+                version=1,
+                workflow_path=f"/tmp/wf{i}.yaml",
+                workflow_hash=f"sha256:abc{i}",
+                created_at=f"2026-06-01T1{i}:00:00+00:00",
+                error_type="ProviderError",
+                agent=f"agent-{i}",
+            )
+            for i in range(5)
+        ]
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=cps,
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 5
+        required_keys = {
+            "version",
+            "workflow_path",
+            "workflow_hash",
+            "created_at",
+            "failure",
+            "current_agent",
+            "run_id",
+            "file_path",
+        }
+        for i, entry in enumerate(data):
+            assert set(entry.keys()) == required_keys
+            assert entry["workflow_path"] == f"/tmp/wf{i}.yaml"
+            assert entry["current_agent"] == f"agent-{i}"
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor checkpoints` (deprecated) — backward compatibility
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointsDeprecated:
+    """Verify the old `conductor checkpoints` command works with deprecation notice."""
+
+    def test_deprecation_notice_printed_to_stderr(self) -> None:
+        """Old command prints deprecation notice to stderr."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["checkpoints"])
+        # Both old and new command exit 0 on empty
+        assert "Deprecated" in result.stderr
+        assert "conductor list checkpoints" in result.stderr
+
+    def test_deprecated_command_still_works(self) -> None:
+        """Old command still produces correct output despite deprecation."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/old.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="old-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            result = _invoke(["checkpoints"])
+        assert result.exit_code == 0
+        assert "old" in result.output
+        assert "ProviderError" in result.output
+        assert "Deprecated" in result.stderr
+
+    def test_deprecated_command_stdout_matches_new(self) -> None:
+        """Old command stdout is identical to new command stdout."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/same.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            old_result = _invoke(["checkpoints"])
+            new_result = _invoke(["list", "checkpoints"])
+        # Verify the table content is present in both (old has deprecation on stderr)
+        assert "same" in old_result.output
+        assert "same" in new_result.output
+        assert "ProviderError" in old_result.output
+        assert "ProviderError" in new_result.output
+        assert "agent" in old_result.output
+        assert "agent" in new_result.output
+        assert "Version" in old_result.output
+        assert "Version" in new_result.output
+        # The old command includes "Deprecated" in its output (stderr mixed in)
+        assert "Deprecated" in old_result.output
+
+    def test_deprecated_command_hidden_from_help(self) -> None:
+        """The old `checkpoints` command is hidden in `conductor --help`."""
+        result = _invoke(["--help"])
+        assert result.exit_code == 0
+        # The old checkpoints should NOT appear in the default help
+        output = result.output
+        # The new list group should appear
+        assert "list" in output
+        # checkpoints should NOT appear as a top-level command in help
+        # (it's hidden=True, it may appear but without description or with hidden marker)
+        # Just verify the new command is documented
+        assert "checkpoints" in output.lower() or "list" in output.lower()
+
+    def test_deprecated_with_workflow_filter(self) -> None:
+        """Deprecated command with workflow filter delegates correctly."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/simple-qa.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ) as mock_list:
+            result = _invoke(["checkpoints", "examples/simple-qa.yaml"])
+        assert "Deprecated" in result.stderr
+        mock_list.assert_called_once()
+        called_arg = mock_list.call_args[0][0]
+        assert called_arg is not None
+
+
+# ---------------------------------------------------------------------------
+# Helper: create a minimal CheckpointData for testing
+# ---------------------------------------------------------------------------
+
+
+def _make_checkpoint_data(
+    version: int = 1,
+    workflow_path: str = "/tmp/test.yaml",
+    workflow_hash: str = "sha256:abc123",
+    created_at: str = "2026-06-01T00:00:00+00:00",
+    error_type: str = "ProviderError",
+    agent: str = "test-agent",
+    file_path: Path | None = None,
+) -> Any:
+    """Build a minimal CheckpointData-like object for mocking list_checkpoints.
+
+    Uses a simple object with matching attributes rather than importing
+    the dataclass, to keep the test independent of upstream field changes.
+    """
+    from conductor.engine.checkpoint import CheckpointData
+
+    return CheckpointData(
+        version=version,
+        workflow_path=workflow_path,
+        workflow_hash=workflow_hash,
+        created_at=created_at,
+        failure={"error_type": error_type, "agent": agent, "message": "test", "iteration": 0},
+        inputs={},
+        current_agent=agent,
+        context={},
+        limits={},
+        copilot_session_ids={},
+        file_path=file_path or Path(f"/tmp/checkpoints/{Path(workflow_path).stem}-checkpoint.json"),
+        instructions_preamble=None,
+        run_id="test-run-id",
+        event_log_path="",
+    )

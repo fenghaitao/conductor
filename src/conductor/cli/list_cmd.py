@@ -731,11 +731,14 @@ def _list_checkpoints_impl(workflow: Path | None, json_output: bool = False) -> 
         for cp in checkpoint_list:
             json_data.append(
                 {
-                    "workflow": Path(cp.workflow_path).stem,
-                    "timestamp": cp.created_at,
-                    "failed_agent": cp.failure.get("agent", "unknown"),
-                    "error_type": cp.failure.get("error_type", "unknown"),
-                    "file": str(cp.file_path),
+                    "version": cp.version,
+                    "workflow_path": cp.workflow_path,
+                    "workflow_hash": cp.workflow_hash,
+                    "created_at": cp.created_at,
+                    "failure": cp.failure,
+                    "current_agent": cp.current_agent,
+                    "run_id": cp.run_id,
+                    "file_path": str(cp.file_path),
                 }
             )
         print(json.dumps(json_data))
@@ -751,20 +754,20 @@ def _list_checkpoints_impl(workflow: Path | None, json_output: bool = False) -> 
         return
 
     table = Table(title="Workflow Checkpoints", show_lines=True)
+    table.add_column("Version", style="dim", justify="center")
     table.add_column("Workflow", style="cyan")
-    table.add_column("Timestamp", style="green")
-    table.add_column("Failed Agent", style="yellow")
-    table.add_column("Error Type", style="red")
-    table.add_column("File", style="dim")
+    table.add_column("Created", style="green")
+    table.add_column("Error", style="red")
+    table.add_column("Agent", style="yellow")
 
     for cp in checkpoint_list:
+        version = str(cp.version)
         workflow_name = Path(cp.workflow_path).stem
-        timestamp = cp.created_at
-        failed_agent = cp.failure.get("agent", "unknown")
-        error_type = cp.failure.get("error_type", "unknown")
-        file_path = str(cp.file_path)
+        created = cp.created_at
+        error = cp.failure.get("error_type", "unknown")
+        agent = cp.failure.get("agent", "unknown")
 
-        table.add_row(workflow_name, timestamp, failed_agent, error_type, file_path)
+        table.add_row(version, workflow_name, created, error, agent)
 
     output_console.print(table)
     output_console.print(f"\n[dim]Total: {len(checkpoint_list)} checkpoint(s)[/dim]")

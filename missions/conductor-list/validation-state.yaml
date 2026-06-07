@@ -6,11 +6,11 @@ VAL-LRUNS-005: passed
 VAL-LRUNS-006: pending
 VAL-LISTWF-001: passed
 VAL-LISTWF-002: passed
-VAL-LISTWF-003: pending
-VAL-LISTWF-004: pending
-VAL-LISTWF-005: pending
-VAL-LISTWF-006: pending
-VAL-LISTWF-007: pending
+VAL-LISTWF-003: passed
+VAL-LISTWF-004: passed
+VAL-LISTWF-005: passed
+VAL-LISTWF-006: passed
+VAL-LISTWF-007: passed
 VAL-M3LIST-001: pending
 VAL-M3LIST-002: pending
 VAL-M3LIST-003: pending
