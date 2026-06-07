@@ -1,0 +1,60 @@
+salient_summary: Implemented `--path` flag on `conductor list workflows` with 
+  manual path validation for exit code 1 on nonexistent directories. Removed 
+  Typer's `exists=True` to control the exit code and added Rich-styled error 
+  messages.
+what_was_implemented: >
+  Modified `list_workflows()` in `src/conductor/cli/list_cmd.py` to support the `--path`
+  flag with manual path validation. Removed Typer's `exists=True`, `dir_okay=True`,
+  `file_okay=False` constraints from the `--path` Option decorator and added inline
+  checks for path existence and directory type in the function body. Nonexistent
+  paths print a `[bold red]Error:[/bold red]` message to stderr and raise `typer.Exit(code=1)`.
+  Non-directory paths produce a similar error. Added the missing `console = Console(stderr=True)`
+  module-level variable needed for error output. The `--path` flag combines correctly
+  with
+  `--recursive`, `--max-depth`, `--all`, and `--json`.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 92 tests passed — all 5 TestListWorkflowsPath tests pass, no 
+      regressions
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed, no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed, no lint violations
+  interactive_checks:
+  - action: uv run conductor list workflows --path /tmp/nonexistent-dir-xyz-123
+    observed: "Error: Directory '/tmp/nonexistent-dir-xyz-123' does not exist. Exit
+      code 1."
+  - action: uv run conductor list workflows --path /tmp
+    observed: No workflow files found. Exit code 0.
+  - action: uv run conductor list workflows --path examples/ --recursive 
+      --max-depth 1
+    observed: Rich table showing 28 workflow files from examples/ directory. 
+      Exit code 0.
+  - action: uv run conductor list workflows --path examples/ --all --json | 
+      python -m json.tool
+    observed: Valid JSON array with all YAML files from examples/. Exit code 0.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_path_default_is_cwd
+    description: Without --path, searches cwd and exits 0
+  - name: test_path_to_existing_dir_works
+    description: --path to existing directory discovers workflow files
+  - name: test_path_nonexistent_dir_errors
+    description: --path to nonexistent dir prints error to stderr, exits nonzero
+  - name: test_path_combines_with_recursive
+    description: --path combines with --recursive for deep search
+  - name: test_path_combines_with_json
+    description: --path combines with --json for machine-readable output
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '3.4'

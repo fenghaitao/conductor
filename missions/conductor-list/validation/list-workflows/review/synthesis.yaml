@@ -1,0 +1,23 @@
+verdict: fail
+passed_features: []
+failed_features:
+- '3.1'
+- '3.2'
+- '3.3'
+- '3.4'
+summary: Programmatic validators failed (tests/typecheck/lint). All milestone 
+  features reset to pending.
+issues:
+- feature_id: '3.1'
+  issue: Validator failure
+  action: reset_to_pending
+- feature_id: '3.2'
+  issue: Validator failure
+  action: reset_to_pending
+- feature_id: '3.3'
+  issue: Validator failure
+  action: reset_to_pending
+- feature_id: '3.4'
+  issue: Validator failure
+  action: reset_to_pending
+pre_existing_issues: []

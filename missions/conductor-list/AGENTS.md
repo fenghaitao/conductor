@@ -86,6 +86,7 @@ If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a cra
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: `_heuristic_filter` only handled `agents:` as a list (`isinstance(agents, list)`), but Conductor YAML uses dicts for named agent definitions. Fixed in this change to accept both `dict` and `list` forms.
 
 *(None documented yet — orchestrator fills this in during the run.)*
 
@@ -181,3 +182,7 @@ uv run conductor list templates --json
 3. **Wrap the deprecated `checkpoints` command** in `app.py` to print deprecation notice and delegate to `list_cmd._list_checkpoints_impl()`.
 4. **Create `tests/test_cli/test_list.py`** with comprehensive tests.
 5. **Run `make lint && make typecheck && make test`** to verify everything passes.
+
+### YAML Parsing
+
+- **ruamel.yaml** — The project uses `ruamel.yaml.YAML(typ='safe')` for all YAML parsing (not standard `yaml.safe_load`). New modules must use `ruamel.yaml` consistently: `from ruamel.yaml import YAML; from ruamel.yaml.error import YAMLError`. Do not import `yaml` from the standard library or PyYAML.
