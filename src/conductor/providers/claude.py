@@ -34,6 +34,7 @@ from conductor.providers._event_format import (
     extract_tool_result_text,
     format_tool_arguments,
 )
+from conductor.providers._routing import endpoint_requires_bearer_auth
 from conductor.providers.base import AgentOutput, AgentProvider, EventCallback, match_model_id
 from conductor.providers.capabilities import ProviderCapabilities
 from conductor.providers.reasoning import (
@@ -236,6 +237,21 @@ class ClaudeProvider(AgentProvider):
         # Normalize empty string to None so the is-not-None guards in
         # _initialize_client and validate_connection agree.
         self._base_url = base_url or None
+
+        # Volcengine Ark rejects the ``x-api-key`` header the SDK sends for
+        # ``api_key`` and only accepts ``Authorization: Bearer``. When an
+        # api_key is configured for an Ark endpoint (and no explicit
+        # subscription auth_token is in play), present it as a Bearer
+        # auth_token so the SDK sends the header Ark expects. Keeps the claude
+        # provider profiles uniform (always ``api_key``) — see claude-ark.yaml.
+        if (
+            self._auth_token is None
+            and self._api_key is not None
+            and endpoint_requires_bearer_auth(self._base_url)
+        ):
+            self._auth_token = self._api_key
+            self._api_key = None
+
         self._default_model = model or "claude-3-5-sonnet-latest"
 
         # Validate and store temperature (enforce schema bounds at instantiation)

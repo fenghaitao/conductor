@@ -1,0 +1,19 @@
+# Volcengine Ark (DeepSeek served via Ark) via the native Claude / Anthropic provider.
+#
+# Pass to any workflow with:  -p examples/providers/claude-ark.yaml
+#
+# Identical shape to claude-deepseek.yaml — just point base_url at Ark and set
+# api_key from $VOLCES_ARK_API_KEY. Ark authenticates with `Authorization:
+# Bearer <key>` (it rejects `x-api-key` with HTTP 401), so the claude provider
+# detects the Ark endpoint and automatically sends the api_key as a Bearer
+# token instead of x-api-key. No special env vars required.
+#
+# If your Ark endpoint is OpenAI-compatible (not anthropic-wire), use the
+# copilot profile (ark.yaml) with type: openai + wire_api: completions instead;
+# the claude provider only speaks the anthropic wire.
+provider:
+  name: claude
+  type: anthropic
+  base_url: https://ark.cn-beijing.volces.com/api/coding
+  api_key: ${VOLCES_ARK_API_KEY:-your-api-key-here}
+default_model: deepseek-v4-pro
