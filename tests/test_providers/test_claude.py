@@ -2732,6 +2732,35 @@ class TestClaudeReasoningEffort:
     @patch("conductor.providers.claude.AsyncAnthropic")
     @patch("conductor.providers.claude.anthropic")
     @pytest.mark.asyncio
+    async def test_custom_base_url_skips_thinking_model_allowlist(
+        self, mock_anthropic_module: Mock, mock_anthropic_class: Mock
+    ) -> None:
+        """A non-Claude model id over a custom base_url must NOT be gated by the
+        static extended-thinking allowlist; the thinking budget is forwarded for
+        the endpoint to accept or reject (e.g. DeepSeek/Ark over the Anthropic
+        wire). Mirrors the Copilot provider's skip-when-unknown policy.
+        """
+        from conductor.config.schema import ReasoningConfig
+
+        provider, mock_client = self._build_provider(mock_anthropic_module, mock_anthropic_class)
+        # Custom Anthropic-wire endpoint (DeepSeek/Ark). Read at execute time by
+        # _resolve_thinking_for_agent; mocked client makes no real request.
+        provider._base_url = "https://ark.cn-beijing.volces.com/api/coding"
+        agent = AgentDef(
+            name="t",
+            prompt="p",
+            model="deepseek-v4-pro",
+            reasoning=ReasoningConfig(effort="high"),
+        )
+        # Should not raise despite the non-Claude model name.
+        await provider.execute(agent=agent, context={}, rendered_prompt="p")
+        thinking = mock_client.messages.create.call_args[1]["thinking"]
+        assert thinking == {"type": "enabled", "budget_tokens": 16384}
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    @pytest.mark.asyncio
     async def test_runtime_default_used_when_agent_unset(
         self, mock_anthropic_module: Mock, mock_anthropic_class: Mock
     ) -> None:

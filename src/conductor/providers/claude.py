@@ -391,12 +391,30 @@ class ClaudeProvider(AgentProvider):
             sets it.
 
         Raises:
-            ValidationError: If reasoning effort is requested for a model
-                that does not support extended thinking.
+            ValidationError: If reasoning effort is requested for a native
+                Anthropic model that does not support extended thinking. The
+                check is skipped for custom ``base_url`` endpoints (see below).
         """
         effort = resolve_reasoning_effort(agent, self._default_reasoning_effort)
         if effort is None:
             return None
+        # Custom Anthropic-wire endpoints (e.g. DeepSeek's /anthropic, Volcengine
+        # Ark) serve non-Claude model ids over the Anthropic wire and may well
+        # support a thinking budget. The static is_claude_thinking_model()
+        # allowlist matches model *names*, so it would hard-fail those before any
+        # request is made. Mirror validate_connection()'s base_url carve-out and
+        # the Copilot provider's skip-when-unknown policy: forward the thinking
+        # budget and let the endpoint accept or reject it, rather than gating on
+        # the model name alone.
+        if self._base_url is not None:
+            logger.info(
+                "Custom Anthropic base_url set (%s); skipping extended-thinking "
+                "model allowlist for %r and forwarding reasoning.effort=%r.",
+                self._base_url,
+                model,
+                effort,
+            )
+            return {"type": "enabled", "budget_tokens": effort_to_budget_tokens(effort)}
         if not is_claude_thinking_model(model):
             raise ValidationError(
                 f"Model {model!r} does not support extended thinking, but "
@@ -681,12 +699,14 @@ class ClaudeProvider(AgentProvider):
 
             # Apply workflow-wide default reasoning effort if configured.
             # Per-agent reasoning is not available here (no AgentDef in scope).
-            # Mirrors _resolve_thinking_for_agent: raise ValidationError when
-            # the resolved model does not support extended thinking, rather
-            # than silently dropping the reasoning request.
+            # Mirrors _resolve_thinking_for_agent: raise ValidationError when a
+            # native model does not support extended thinking, but skip the
+            # allowlist for custom base_url endpoints (DeepSeek/Ark serve
+            # non-Claude model ids over the Anthropic wire) and forward the
+            # thinking budget for the endpoint to accept or reject.
             if self._default_reasoning_effort is not None:
                 resolved_model = kwargs["model"]
-                if not is_claude_thinking_model(resolved_model):
+                if self._base_url is None and not is_claude_thinking_model(resolved_model):
                     raise ValidationError(
                         f"Model {resolved_model!r} does not support extended thinking, "
                         f"but default_reasoning_effort={self._default_reasoning_effort!r} "
