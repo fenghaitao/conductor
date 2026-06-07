@@ -31,6 +31,7 @@ list_app = typer.Typer(
 
 # Rich console for stdout (primary output) and stderr (errors/notices)
 output_console = Console()
+console = Console(stderr=True)
 error_console = Console(stderr=True)
 
 # Well-known template directories (relative to the conductor package root)
@@ -502,9 +503,6 @@ def list_workflows(
         typer.Option(
             "--path",
             help="Root directory to search for workflow YAML files.",
-            exists=True,
-            dir_okay=True,
-            file_okay=False,
         ),
     ] = Path.cwd(),  # noqa: B008
     recursive: Annotated[
@@ -546,6 +544,15 @@ def list_workflows(
     Use ``--recursive`` to walk subdirectories and ``--all`` to skip
     the heuristic filter.
     """
+    if not path.exists():
+        console.print(
+            f"[bold red]Error:[/bold red] Directory '[bold]{path}[/bold]' does not exist."
+        )
+        raise typer.Exit(code=1)
+    if not path.is_dir():
+        console.print(f"[bold red]Error:[/bold red] '[bold]{path}[/bold]' is not a directory.")
+        raise typer.Exit(code=1)
+
     yaml_files = _discover_yaml_files(path, recursive, max_depth)
     metas = _heuristic_filter(yaml_files, show_all)
 

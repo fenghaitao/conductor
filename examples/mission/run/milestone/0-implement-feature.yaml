@@ -255,6 +255,15 @@ agents:
     model: deepseek-v4-pro
     reasoning:
       effort: high
+    # The Copilot SDK already retries ~5x internally (~90s) before surfacing an
+    # error. Cap Conductor's outer retries at 2 (was the provider default of 3)
+    # and space them 30s apart so a rate-limited Ark window has time to recover
+    # instead of being hammered by full-context re-runs. Each avoided retry saves
+    # a whole agentic run (~50-114K input tokens).
+    retry:
+      max_attempts: 2
+      backoff: exponential
+      delay_seconds: 30
     description: |
       Worker agent: implement the feature following the skill procedure.
       Has full tool access to read/write files and run commands.

@@ -53,12 +53,18 @@ for_each:
       Concurrency is set to a conservative fixed limit.
     source: collect_assertions.output.assertion_groups
     as: group
-    max_concurrent: 2
+    # Serialized (was 2) to avoid concurrent large-context bursts against a
+    # rate-limited Ark window. Bump back up if the endpoint has headroom.
+    max_concurrent: 1
     failure_mode: continue_on_error
 
     agent:
       name: test_one_group
       model: deepseek-v4-pro
+      retry:
+        max_attempts: 2
+        backoff: exponential
+        delay_seconds: 30
       description: Test assertions for one contract area
       tools: null
       prompt: |

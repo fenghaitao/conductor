@@ -49,12 +49,18 @@ for_each:
       Parallel since each review is independent.
     source: load_milestone_data.output.completed_features
     as: feature
-    max_concurrent: 3
+    # Serialized (was 3) so we don't burst 3 concurrent large-context requests
+    # into a rate-limited Ark window. Bump back up if the endpoint has headroom.
+    max_concurrent: 1
     failure_mode: continue_on_error
 
     agent:
       name: review_one_feature
       model: deepseek-v4-pro
+      retry:
+        max_attempts: 2
+        backoff: exponential
+        delay_seconds: 30
       description: Review one feature's implementation quality
       prompt: |
         Review feature {{ feature.id }}: "{{ feature.description }}"
@@ -303,6 +309,10 @@ agents:
   # ── Step 4 ──────────────────────────────────────────────────────────────────
   - name: synthesize
     model: deepseek-v4-pro
+    retry:
+      max_attempts: 2
+      backoff: exponential
+      delay_seconds: 30
     description: |
       Aggregate all feature reviews + validator results into a pass/fail decision.
     prompt: |
@@ -470,5 +480,13 @@ agents:
       - to: $end
 
 output:
-  review_passed: "{{ handle_failures.output.review_passed if handle_failures is defined else false }}"
-  failed_count:    "{{ handle_failures.output.failed_count if handle_failures is defined else 0 }}"
+  # Two mutually exclusive failure-reset steps can run: fail_milestone (validators
+  # failed: run_validators -> fail_milestone -> $end) or handle_failures (validators
+  # passed: ... -> handle_failures -> $end). Prefer whichever actually executed so
+  # failed_count reflects the real reset count instead of the else-fallback.
+  review_passed: >-
+    {{ fail_milestone.output.review_passed if fail_milestone is defined
+       else (handle_failures.output.review_passed if handle_failures is defined else false) }}
+  failed_count: >-
+    {{ fail_milestone.output.failed_count if fail_milestone is defined
+       else (handle_failures.output.failed_count if handle_failures is defined else 0) }}

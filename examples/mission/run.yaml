@@ -41,6 +41,14 @@ workflow:
       required: true
       description: Absolute path to the missionDir (output from plan.yaml)
 
+  context:
+    # explicit: each step below declares exactly which prior-step outputs its
+    # input_mapping consumes (see the `input:` lists). Route `when:` conditions
+    # are unaffected — they always evaluate in accumulate mode. This is a
+    # traceability choice; sub-workflows receive only their input_mapping, so it
+    # does not change what any worker model sees.
+    mode: explicit
+
   limits:
     max_iterations: 500   # generous — large missions have many features
 
@@ -178,6 +186,8 @@ agents:
       Implement all pending features in this milestone, one at a time.
       Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
     workflow: ./run/milestone/0-implement.yaml
+    input:
+      - get_milestone.output
     input_mapping:
       mission_dir:        "{{ workflow.input.mission_dir }}"
       milestone:          "{{ get_milestone.output.milestone }}"
@@ -193,6 +203,8 @@ agents:
       code review subagents for the completed milestone. Fails → features reset
       to pending and feature_runner re-runs them.
     workflow: ./run/milestone/1-review.yaml
+    input:
+      - get_milestone.output
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -211,6 +223,8 @@ agents:
       Fails → fix features injected, loops back to feature_runner via get_milestone.
       Passes → seal_milestone, then prompt for mid-mission changes.
     workflow: ./run/milestone/2-verify.yaml
+    input:
+      - get_milestone.output
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -226,6 +240,8 @@ agents:
     description: |
       Write validation/<milestone>/sealed.yaml to mark this milestone as sealed.
     workflow: ./run/milestone/3-seal.yaml
+    input:
+      - get_milestone.output
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
       milestone:   "{{ get_milestone.output.milestone }}"
@@ -239,6 +255,8 @@ agents:
       Ask the user if they want to make scope or guidance changes
       before the next milestone begins.
     workflow: ./run/change/0-prompt.yaml
+    input:
+      - seal_milestone.output
     input_mapping:
       milestone: "{{ seal_milestone.output.milestone }}"
       seal_path: "{{ seal_milestone.output.seal_path }}"
