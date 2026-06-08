@@ -116,18 +116,32 @@ agents:
                     if state_features.get(f.get("id",""),{}).get("status") == "returned"]
 
         current_milestone = None
+        state = None
         for ms in seen_milestones:
             ms_features = [f for f in features if f.get("milestone") == ms]
             pending_in_ms = [f for f in ms_features
                 if state_features.get(f.get("id",""),{}).get("status") == "pending"]
             completed_in_ms = [f for f in ms_features
                 if state_features.get(f.get("id",""),{}).get("status") == "completed"]
+            returned_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "returned"]
 
             if pending_in_ms:
                 # Has pending work — implement them
                 current_milestone = ms
                 milestone_pending[ms] = pending_in_ms
                 state = "ready"
+                break
+            elif returned_in_ms:
+                # A worker in this milestone escalated (return_to_orchestrator).
+                # Triage it NOW — before sealing this milestone or advancing to
+                # the next one — rather than deferring every returned feature to
+                # the very end of the mission (which let a milestone seal with a
+                # still-returned feature and its assertions unverified). The
+                # return_to_orchestrator sub-workflow resolves each one
+                # (reset→pending / dismiss→completed / escalate) and loops back.
+                current_milestone = ms
+                state = "returned"
                 break
             elif completed_in_ms and len(completed_in_ms) == len(ms_features):
                 # All features completed but unreviewed — route to review
@@ -138,11 +152,8 @@ agents:
                     state = "ready"
                     break
 
-        if not current_milestone:
-            if returned:
-                state = "returned"
-            else:
-                state = "all_done"
+        if state is None:
+            state = "returned" if returned else "all_done"
 
         def to_plain(d):
             if isinstance(d, dict):

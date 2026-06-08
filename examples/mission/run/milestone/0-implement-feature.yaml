@@ -381,6 +381,22 @@ agents:
       with severity "non_blocking" and prefix the description with "Pre-existing:". Do NOT
       fix pre-existing issues — report them and continue.
 
+      HANDOFF SIGNAL — `return_to_orchestrator`:
+      This flag is a BLOCKER ESCALATION, not a completion sign-off. It means
+      "I cannot finish within my authority — the orchestrator must change the
+      plan, guidance, or environment first." Setting it hands the feature to
+      mission-level triage and may cause it to be re-run.
+      - Successful completion is ALWAYS `return_to_orchestrator: false` — even
+        when the feature was already implemented by prior work and you only
+        verified it (a no-op verification is still a completion).
+      - Non-blocking findings go in `discovered_issues` / `skill_feedback` with
+        the flag still `false`. Do NOT escalate just to surface a minor issue or
+        to have the orchestrator "take a look."
+      - Set it `true` ONLY for the genuine blockers called out above (binding
+        dependency unavailable, service healthcheck failing, pre-existing suite
+        breakage, primitives diverged from the architecture). When in doubt, if
+        acceptance criteria are met and assertions verify, the answer is `false`.
+
       When done, output your handoff as a YAML block in this exact format:
 
       ```yaml
@@ -428,7 +444,7 @@ agents:
       - python3
       - "-c"
       - |
-        import json, pathlib, sys
+        import json, pathlib, re, sys
         from ruamel.yaml import YAML
 
         mission_dir = pathlib.Path(sys.argv[1])
@@ -458,7 +474,22 @@ agents:
         with open(path, "w") as f:
             yaml.dump(data, f)
 
-        return_to_orch = data.get("return_to_orchestrator", False)
+        # Robustly determine return_to_orchestrator. Workers sometimes emit the
+        # handoff wrapped in a `raw:` string (YAML parse hiccup) or a
+        # `{type:, value:}` schema echo, which buries the flag inside a string
+        # where data.get() can't see it — silently dropping a genuine
+        # escalation. Prefer a clean top-level boolean; otherwise scan the raw
+        # handoff text, which catches every wrapping form. Default False
+        # (normal completion) when the flag is absent entirely.
+        flag = data.get("return_to_orchestrator")
+        if isinstance(flag, bool):
+            return_to_orch = flag
+        else:
+            m = re.search(
+                r"return_to_orchestrator\s*:\s*[\"']?(true|false)",
+                handoff_yaml, re.IGNORECASE,
+            )
+            return_to_orch = bool(m) and m.group(1).lower() == "true"
         print(json.dumps({
             "path": str(path),
             "return_to_orchestrator": return_to_orch,

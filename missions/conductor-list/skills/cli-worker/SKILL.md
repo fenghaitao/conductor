@@ -376,7 +376,27 @@ skill_feedback: []
 
 ## When to Return to Orchestrator
 
-Return immediately (set `return_to_orchestrator: true`) if:
+`return_to_orchestrator: true` is a **blocker escalation signal — NOT a completion sign-off.**
+It means "I cannot finish this feature within my authority; the orchestrator must
+change the plan, guidance, or environment before it can proceed." Setting it
+hands the feature to mission-level triage (rewrite the feature, amend
+`AGENTS.md`, or escalate to the human).
+
+**Successful completion is ALWAYS `return_to_orchestrator: false`** — even when:
+- All tests pass and the feature was already implemented by prior work (no code
+  needed). A no-op verification is still a completion: set `false`.
+- You discovered a minor, non-blocking issue. Record it in `discovered_issues`
+  and/or `skill_feedback` and set `false` — those fields exist precisely so you
+  can surface findings *without* escalating.
+- You are merely proud of the work or want the orchestrator to "take a look."
+  That is not an escalation. Set `false`.
+
+A spurious `true` on a completed feature strands it: the orchestrator must
+re-triage and may re-run the feature needlessly. When in doubt, if the feature's
+acceptance criteria are met and its assertions verify, the answer is `false`.
+
+Set `return_to_orchestrator: true` **only** when a genuine blocker prevents
+completion:
 - `uv run pytest` on the existing test suite fails before any changes (pre-existing breakage).
 - `read_pid_files()`, `CheckpointManager.list_checkpoints()`, `_conductor_run_dir()`, `_list_all_registries()`, or `_list_registry_workflows()` have a different signature than documented — the architecture assumes these exist with specific return shapes.
 - The `app.py` structure has diverged significantly from the architecture document (e.g., `checkpoints` command moved, `registry_app` registration changed).
