@@ -993,6 +993,13 @@ def checkpoints(
             help="Path to a workflow YAML file. Filters checkpoints to this workflow only.",
         ),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Emit machine-readable JSON instead of a table.",
+        ),
+    ] = False,
 ) -> None:
     """List available workflow checkpoints.
 
@@ -1011,7 +1018,7 @@ def checkpoints(
     console.print("[dim]Deprecated: use 'conductor list checkpoints' instead[/dim]")
     from conductor.cli.list_cmd import _list_checkpoints_impl
 
-    _list_checkpoints_impl(workflow)
+    _list_checkpoints_impl(workflow, json_output=json_output)
 
 
 @app.command()

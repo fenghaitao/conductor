@@ -198,6 +198,16 @@ def list_summary(ctx: typer.Context) -> None:
     except Exception:
         logger.debug("Could not discover templates", exc_info=True)
 
+    # Configured registries
+    registry_count = 0
+    try:
+        from conductor.registry.config import load_config as load_registry_config
+
+        reg_config = load_registry_config()
+        registry_count = len(reg_config.registries)
+    except Exception:
+        logger.debug("Could not load registry config", exc_info=True)
+
     # Build summary panel
     lines: list[str] = []
     lines.append(
@@ -211,6 +221,10 @@ def list_summary(ctx: typer.Context) -> None:
     lines.append(
         f"[bold cyan]Local workflows:[/bold cyan] {workflow_count} "
         f"[dim](conductor list workflows)[/dim]"
+    )
+    lines.append(
+        f"[bold cyan]Registries:[/bold cyan] {registry_count} "
+        f"[dim](conductor list registries)[/dim]"
     )
     lines.append(
         f"[bold cyan]Templates:[/bold cyan] {template_count} [dim](conductor list templates)[/dim]"
@@ -267,7 +281,22 @@ def list_runs(
     running_run_ids: set[str] = {rid for e in running_entries if (rid := e.get("run_id"))}
     if recent > 0:
         try:
-            history_entries = _scan_event_logs(recent, running_run_ids)
+            history_entries = _scan_event_logs(
+                recent,
+                running_run_ids,
+                error_on_inaccessible=json_output,
+            )
+        except OSError as exc:
+            # In --json mode, inaccessible run history is a hard error
+            # (exit 1) so scripts don't silently receive empty results
+            # when the data source is broken. Stdout still gets valid
+            # JSON; the error message goes to stderr.
+            if json_output:
+                console.print(f"[bold red]Error:[/bold red] {exc}")
+                _output_runs_json(running_entries, [])
+                raise typer.Exit(code=1) from None
+            # In table mode, degrade gracefully as before.
+            logger.debug("Could not scan event logs: %s", exc)
         except Exception:
             logger.debug("Could not scan event logs", exc_info=True)
 
@@ -325,20 +354,38 @@ def list_runs(
         output_console.print("[dim]No recent runs found.[/dim]")
 
 
-def _scan_event_logs(recent: int, running_run_ids: set[str]) -> list[dict[str, Any]]:
+def _scan_event_logs(
+    recent: int,
+    running_run_ids: set[str],
+    error_on_inaccessible: bool = False,
+) -> list[dict[str, Any]]:
     """Scan JSONL event log files and derive run history entries.
 
     Args:
         recent: Maximum number of entries to return.
         running_run_ids: Set of run IDs that are currently running
             (from PID files). Used to mark active runs correctly.
+        error_on_inaccessible: If True, raise an OSError when the run
+            directory does not exist or cannot be listed. Used in
+            ``--json`` mode to signal that the data source is broken
+            rather than silently returning empty results.
 
     Returns:
         List of run history dicts sorted by ``started_at`` descending,
         limited to ``recent``.
+
+    Raises:
+        OSError: When ``error_on_inaccessible`` is True and the run
+            directory is missing or unreadable.
     """
     run_dir = _conductor_run_dir()
+    if not run_dir.exists():
+        if error_on_inaccessible:
+            raise OSError(f"Run history directory does not exist: {run_dir}")
+        return []
     if not run_dir.is_dir():
+        if error_on_inaccessible:
+            raise OSError(f"Run history path is not a directory: {run_dir}")
         return []
 
     try:
@@ -347,7 +394,9 @@ def _scan_event_logs(recent: int, running_run_ids: set[str]) -> list[dict[str, A
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as exc:
+        if error_on_inaccessible:
+            raise OSError(f"Cannot list event logs in {run_dir}: {exc}") from exc
         logger.debug("Could not list event logs in %s", run_dir, exc_info=True)
         return []
 
@@ -791,14 +840,20 @@ def list_registries(
 
     Delegates to the existing ``conductor registry`` commands.
     """
-    if name is not None:
-        from conductor.cli.registry import _list_registry_workflows
+    from conductor.registry.errors import RegistryError
 
-        _list_registry_workflows(name)
-    else:
-        from conductor.cli.registry import _list_all_registries
+    try:
+        if name is not None:
+            from conductor.cli.registry import _list_registry_workflows
 
-        _list_all_registries()
+            _list_registry_workflows(name)
+        else:
+            from conductor.cli.registry import _list_all_registries
+
+            _list_all_registries()
+    except RegistryError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=1) from None
 
 
 # ---------------------------------------------------------------------------

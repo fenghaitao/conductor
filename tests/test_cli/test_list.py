@@ -57,6 +57,19 @@ class TestListHelp:
         clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "--json" in clean
 
+    def test_list_templates_json_help(self) -> None:
+        """`conductor list templates --json --help` shows help text, not JSON."""
+        import re
+
+        result = _invoke(["list", "templates", "--json", "--help"])
+        assert result.exit_code == 0
+        # Output must be help text (not JSON array)
+        assert "Usage" in result.output or "Options" in result.output
+        assert not result.output.strip().startswith("[")
+        # --json flag must appear in the cleaned help text
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--json" in clean
+
 
 # ---------------------------------------------------------------------------
 # Test: `conductor list templates` — table output
@@ -166,18 +179,60 @@ class TestListTemplatesJson:
         assert any("iterate" in d.lower() for d in descriptions)
 
     def test_json_array_length_matches_table_rows(self) -> None:
-        """JSON array length matches the number of rows in the table output."""
+        """JSON array length exactly matches the number of data rows in the table."""
         result_json = _invoke(["list", "templates", "--json"])
         result_table = _invoke(["list", "templates"])
         json_data = json.loads(result_json.output)
-        # Count table data rows (lines with "│" that contain template names)
-        table_lines = [
-            line
-            for line in result_table.output.split("\n")
-            if "│" in line and any(kw in line for kw in ("Pipeline", "Fan-out", "Loop"))
-        ]
-        # Table may have header/footer — count rows with template keywords
-        assert len(json_data) >= len(table_lines)
+        json_names = [e["name"] for e in json_data]
+
+        # Rich narrows column width when stdout is not a TTY (e.g., pytest
+        # capture), so full template names may be split across lines.  Use
+        # short unique fragments (the part before the colon or the first
+        # few words) that fit in a single truncated cell.
+        def _short_fragment(name: str) -> str:
+            # e.g. "Pipeline template: Sequential stages..." → "Pipeline template"
+            return name.split(":")[0]
+
+        table_output = result_table.output
+        table_names_seen: dict[str, bool] = {}
+        for line in table_output.split("\n"):
+            for name in json_names:
+                fragment = _short_fragment(name)
+                if fragment in line and name not in table_names_seen:
+                    table_names_seen[name] = True
+                    break
+
+        # Same count: JSON length equals unique names found in table
+        assert len(json_names) == len(table_names_seen), (
+            f"JSON has {len(json_names)} templates but table shows "
+            f"{len(table_names_seen)} unique names"
+        )
+
+    def test_json_and_table_names_same_order(self) -> None:
+        """Template names in JSON appear in the same order as in the table."""
+        result_json = _invoke(["list", "templates", "--json"])
+        result_table = _invoke(["list", "templates"])
+        json_data = json.loads(result_json.output)
+        json_names = [e["name"] for e in json_data]
+
+        # Rich narrows columns when stdout is not a TTY.  Match on short
+        # unique fragments derived from the part before the colon.
+        def _short_fragment(name: str) -> str:
+            return name.split(":")[0]
+
+        table_output = result_table.output
+        table_names_ordered: list[str] = []
+        for line in table_output.split("\n"):
+            for name in json_names:
+                fragment = _short_fragment(name)
+                if fragment in line and name not in table_names_ordered:
+                    table_names_ordered.append(name)
+                    break
+
+        # Same order
+        assert json_names == table_names_ordered, (
+            f"JSON order: {json_names}\nTable order: {table_names_ordered}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +380,14 @@ class TestListSummary:
         assert "Local workflows" in output
         assert "conductor list workflows" in output
 
+    def test_list_summary_has_registry_count(self) -> None:
+        """Summary shows registry count with hint."""
+        result = _invoke(["list"])
+        assert result.exit_code == 0
+        output = result.output
+        assert "Registries" in output
+        assert "conductor list registries" in output
+
     def test_list_summary_has_template_count(self) -> None:
         """Summary shows template count with hint."""
         result = _invoke(["list"])
@@ -345,6 +408,7 @@ class TestListSummary:
         assert re.search(r"Running workflows:\s*\d+", clean)
         assert re.search(r"Recent runs:\s*\d+", clean)
         assert re.search(r"Local workflows:\s*\d+", clean)
+        assert re.search(r"Registries:\s*\d+", clean)
         assert re.search(r"Templates:\s*\d+", clean)
 
     def test_list_summary_with_zero_running(self) -> None:
@@ -1947,6 +2011,772 @@ class TestCheckpointsDeprecated:
         mock_list.assert_called_once()
         called_arg = mock_list.call_args[0][0]
         assert called_arg is not None
+
+    def test_deprecated_with_json(self) -> None:
+        """Deprecated command with --json prints deprecation to stderr and JSON to stdout."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/json-deprecated.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="json-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            result = _invoke(["checkpoints", "--json"])
+        assert result.exit_code == 0
+        assert "Deprecated" in result.stderr
+        assert "conductor list checkpoints" in result.stderr
+        # JSON output on stdout (clean, no deprecation)
+        parsed = json.loads(result.stdout)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+        assert parsed[0]["workflow_path"] == "/tmp/json-deprecated.yaml"
+        assert parsed[0]["failure"]["error_type"] == "ProviderError"
+        assert parsed[0]["current_agent"] == "json-agent"
+
+    def test_deprecated_json_matches_new_json(self) -> None:
+        """Deprecated --json output matches new command --json output (schema parity)."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/json-parity.yaml",
+            created_at="2026-06-01T00:00:00+00:00",
+            error_type="ProviderError",
+            agent="parity-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            old_result = _invoke(["checkpoints", "--json"])
+            new_result = _invoke(["list", "checkpoints", "--json"])
+        # Both produce valid JSON on stdout
+        old_parsed = json.loads(old_result.stdout)
+        new_parsed = json.loads(new_result.stdout)
+        # Same number of entries
+        assert len(old_parsed) == len(new_parsed)
+        # Same keys
+        assert set(old_parsed[0].keys()) == set(new_parsed[0].keys())
+        # Same values
+        assert old_parsed[0]["workflow_path"] == new_parsed[0]["workflow_path"]
+        assert old_parsed[0]["failure"] == new_parsed[0]["failure"]
+        assert old_parsed[0]["current_agent"] == new_parsed[0]["current_agent"]
+        assert old_parsed[0]["version"] == new_parsed[0]["version"]
+        # Deprecation on stderr for old command
+        assert "Deprecated" in old_result.stderr
+        # No deprecation on stderr for new command
+        assert "Deprecated" not in new_result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Test: `conductor list registries` — VAL-M3LIST-005, VAL-M3LIST-006, VAL-M3LIST-007
+# ---------------------------------------------------------------------------
+
+
+class TestListRegistries:
+    """Verify `list registries` delegates to existing registry functions."""
+
+    def test_list_registries_no_args_delegates_to_list_all(
+        self,
+    ) -> None:
+        """VAL-M3LIST-005: No args → delegates to _list_all_registries."""
+        with patch("conductor.cli.registry._list_all_registries") as mock_list_all:
+            result = _invoke(["list", "registries"])
+        assert result.exit_code == 0
+        mock_list_all.assert_called_once()
+
+    def test_list_registries_with_name_delegates_to_workflows(
+        self,
+    ) -> None:
+        """VAL-M3LIST-006: With name → delegates to _list_registry_workflows."""
+        with patch("conductor.cli.registry._list_registry_workflows") as mock_list_wf:
+            result = _invoke(["list", "registries", "my-registry"])
+        assert result.exit_code == 0
+        mock_list_wf.assert_called_once_with("my-registry")
+
+    def test_list_registries_unknown_name_error_to_stderr(
+        self,
+    ) -> None:
+        """VAL-M3LIST-007: Unknown registry name → error to stderr, exit 1."""
+        from conductor.registry.errors import RegistryError
+
+        with patch(
+            "conductor.cli.registry._list_registry_workflows",
+            side_effect=RegistryError("Registry 'nope' not found"),
+        ):
+            result = _invoke(["list", "registries", "nope"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        assert "nope" in result.stderr
+        assert "not found" in result.stderr
+
+    def test_list_registries_error_without_recommendation_exits_1(
+        self,
+    ) -> None:
+        """RegistryError without suggestion still prints error to stderr and exits 1."""
+        from conductor.registry.errors import RegistryError
+
+        with patch(
+            "conductor.cli.registry._list_registry_workflows",
+            side_effect=RegistryError("Something went wrong"),
+        ):
+            result = _invoke(["list", "registries", "bad-registry"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        assert "Something went wrong" in result.stderr
+
+    def test_list_registries_list_all_error_to_stderr(
+        self,
+    ) -> None:
+        """_list_all_registries raising RegistryError → error to stderr, exit 1."""
+        from conductor.registry.errors import RegistryError
+
+        with patch(
+            "conductor.cli.registry._list_all_registries",
+            side_effect=RegistryError("Config corrupted"),
+        ):
+            result = _invoke(["list", "registries"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        assert "Config corrupted" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Feature 8.3: VAL-M6DEPR-006, VAL-M6DEPR-007
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryNotDeprecated:
+    """Verify `conductor registry list` is NOT deprecated."""
+
+    def test_registry_list_no_deprecation_notice(self) -> None:
+        """VAL-M6DEPR-006: `registry list` does NOT write any deprecation notice."""
+        with patch(
+            "conductor.cli.registry._list_all_registries",
+        ) as mock_list_all:
+            result = _invoke(["registry", "list"])
+        assert result.exit_code == 0
+        mock_list_all.assert_called_once()
+        # stderr must NOT contain deprecation language
+        assert "Deprecated" not in result.stderr
+        assert "use 'conductor list" not in result.stderr
+
+
+class TestConductorHelpShowsListAndHidesCheckpoints:
+    """Verify `conductor --help` shows `list` group and hides deprecated `checkpoints`."""
+
+    def test_help_shows_list_group(self) -> None:
+        """VAL-M6DEPR-007: `conductor --help` includes `list` as a top-level command group."""
+        result = _invoke(["--help"])
+        assert result.exit_code == 0
+        assert "list" in result.output
+
+    def test_help_hides_deprecated_checkpoints(self) -> None:
+        """VAL-M6DEPR-007: `checkpoints` is NOT a visible top-level command in help."""
+        result = _invoke(["--help"])
+        assert result.exit_code == 0
+        output = result.output
+        # The old `checkpoints` command is hidden=True; it should not appear
+        # as a standalone command in the top-level help listing.
+        # We parse the Commands section and assert `checkpoints` is absent.
+        commands_section = output.split("Commands")[-1]
+        # Each command line starts with the command name followed by spaces/description.
+        # A hidden command should not have its own line in the Commands table.
+        for line in commands_section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("checkpoints "):
+                raise AssertionError(
+                    f"Deprecated 'checkpoints' command visible in top-level help: {line}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# Feature 7.1: JSON output validation (VAL-M5JSON-001 through VAL-M5JSON-004)
+# ---------------------------------------------------------------------------
+#
+# Every ``list`` subcommand with ``--json`` must:
+# 1. Emit a syntactically valid JSON array to stdout.
+# 2. Exit code 0 on successful JSON output.
+# 3. Exit code 1 when the data source is inaccessible / broken.
+# 4. Write error messages to stderr only — stdout stays parseable.
+
+
+class TestM5JsonValidArray:
+    """VAL-M5JSON-001: --json emits a syntactically valid JSON array to stdout."""
+
+    def test_list_runs_json_is_valid_array(self) -> None:
+        """conductor list runs --json → valid JSON array, parseable by json.loads."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+
+    def test_list_runs_recent_json_is_valid_array(self, tmp_path: Path) -> None:
+        """conductor list runs --recent 5 --json → valid JSON array."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-valid-20250101-000000-aaaaaaaa.events",
+            "valid-wf",
+            1700000000.0,
+            1700000010.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+
+    def test_list_workflows_json_is_valid_array(self, tmp_path: Path) -> None:
+        """conductor list workflows --json → valid JSON array."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+
+    def test_list_checkpoints_json_is_valid_array(self) -> None:
+        """conductor list checkpoints --json → valid JSON array."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+
+    def test_list_templates_json_is_valid_array(self) -> None:
+        """conductor list templates --json → valid JSON array."""
+        with patch.object(Path, "is_dir", return_value=False):
+            result = _invoke(["list", "templates", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+
+    def test_json_stderr_contains_no_json(self) -> None:
+        """When --json succeeds, stderr contains no JSON output whatsoever."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        # stderr must not contain JSON (no `{` or `[` at the start of a line)
+        for line in result.stderr.splitlines():
+            stripped = line.strip()
+            if stripped:
+                assert not stripped.startswith("{"), f"JSON object on stderr: {stripped[:80]}"
+                assert not stripped.startswith("["), f"JSON array on stderr: {stripped[:80]}"
+
+
+class TestM5JsonExitZero:
+    """VAL-M5JSON-002: Exit code 0 on successful JSON output."""
+
+    def test_list_runs_json_exit_zero(self) -> None:
+        """Successful --json output → exit 0."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+
+    def test_list_runs_recent_json_exit_zero(self, tmp_path: Path) -> None:
+        """Successful --recent --json output → exit 0."""
+        run_dir = tmp_path / "runs"
+        run_dir.mkdir()
+        _make_event_log(
+            run_dir,
+            "conductor-exit0-20250101-000000-aaaaaaaa.events",
+            "exit0-wf",
+            1700000000.0,
+            1700000010.0,
+        )
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=run_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1", "--json"])
+        assert result.exit_code == 0
+
+    def test_list_workflows_json_exit_zero(self, tmp_path: Path) -> None:
+        """Successful --json output → exit 0."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+
+    def test_list_checkpoints_json_exit_zero(self) -> None:
+        """Successful --json output → exit 0."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+
+    def test_list_templates_json_exit_zero(self) -> None:
+        """Successful --json output → exit 0."""
+        with patch.object(Path, "is_dir", return_value=False):
+            result = _invoke(["list", "templates", "--json"])
+        assert result.exit_code == 0
+
+
+class TestM5JsonExitOne:
+    """VAL-M5JSON-003: Exit code 1 when data source is inaccessible."""
+
+    def test_list_runs_recent_json_inaccessible_dir_exits_1(self, tmp_path: Path) -> None:
+        """--recent --json with nonexistent run dir → exit 1."""
+        nonexistent = tmp_path / "does-not-exist"
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=nonexistent),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 1
+        # Error message on stderr
+        assert "Error" in result.stderr
+        assert "does not exist" in result.stderr.lower()
+
+    def test_list_runs_recent_json_inaccessible_dir_stdout_is_json(self, tmp_path: Path) -> None:
+        """--recent --json with nonexistent run dir → stdout is still valid JSON."""
+        nonexistent = tmp_path / "does-not-exist"
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=nonexistent),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 1
+        # Stdout must be valid JSON (possibly empty array).
+        # Use result.stdout (stdout only) since result.output includes stderr.
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+
+    def test_list_runs_recent_json_not_a_directory_exits_1(self, tmp_path: Path) -> None:
+        """--recent --json when run_dir is a file → exit 1."""
+        not_a_dir = tmp_path / "not-a-dir"
+        not_a_dir.write_text("not a directory")
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=not_a_dir),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "1", "--json"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        assert "not a directory" in result.stderr.lower()
+        # stdout still valid JSON (use result.stdout to exclude stderr)
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+
+    def test_list_checkpoints_json_missing_workflow_exits_1(self) -> None:
+        """list checkpoints --json with missing workflow → exit 1."""
+        result = _invoke(["list", "checkpoints", "/nonexistent/path/workflow.yaml", "--json"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        assert "not found" in result.stderr.lower()
+        # stdout should be empty since the error occurs before JSON output.
+        # (The function raises typer.Exit before reaching the print statement.)
+        assert result.stdout.strip() == "" or result.stdout.strip() == "[]"
+
+    def test_list_runs_json_without_recent_never_errors(self) -> None:
+        """VAL-M5JSON-002 safeguard: --json without --recent never exits 1
+        just because the run dir is missing — it only shows running
+        workflows (from PID files)."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data == []
+
+
+class TestM5JsonErrorOnStderr:
+    """VAL-M5JSON-004: Error messages go to stderr, stdout stays parseable."""
+
+    def test_list_runs_recent_error_on_stderr_only(self, tmp_path: Path) -> None:
+        """Error message appears on stderr, not stdout."""
+        nonexistent = tmp_path / "does-not-exist"
+        with (
+            patch("conductor.cli.list_cmd._conductor_run_dir", return_value=nonexistent),
+            patch("conductor.cli.pid.read_pid_files", return_value=[]),
+        ):
+            result = _invoke(["list", "runs", "--recent", "5", "--json"])
+        assert result.exit_code == 1
+        # Error is on stderr
+        assert "Error" in result.stderr
+        # stdout has no plain-text error mixed in (use result.stdout for stdout-only)
+        output = result.stdout
+        # Must be parseable as JSON
+        data = json.loads(output)
+        assert isinstance(data, list)
+        # No error text in stdout
+        assert "Error" not in output
+
+    def test_list_checkpoints_error_on_stderr_only(self) -> None:
+        """Error for missing workflow → stderr only."""
+        result = _invoke(["list", "checkpoints", "/nonexistent/path/workflow.yaml", "--json"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr
+        # stdout must contain NO error text (use result.stdout for stdout-only)
+        assert "Error" not in result.stdout
+
+    def test_list_workflows_error_on_stderr_only(self, tmp_path: Path) -> None:
+        """Error for nonexistent path → stderr only."""
+        bad_path = tmp_path / "nonexistent"
+        result = _invoke(["list", "workflows", "--path", str(bad_path), "--json"])
+        assert result.exit_code == 1
+        assert "Error" in result.stderr or "does not exist" in result.stderr.lower()
+        # stdout must be empty or valid JSON (no error text)
+        assert "Error" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Feature 7.2: Empty JSON arrays (VAL-M5JSON-005)
+# ---------------------------------------------------------------------------
+#
+# Every ``list`` subcommand with ``--json`` must produce ``[]`` (empty
+# JSON array) on stdout when the result set is empty — never ``null``,
+# ``{}``, or a plain-text message.
+
+
+class TestM5JsonEmptyArray:
+    """VAL-M5JSON-005: Empty result sets produce exactly `[]` on stdout."""
+
+    def test_list_runs_empty_json(self) -> None:
+        """Empty runs -> `[]`, not null or {}."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        stripped = result.stdout.strip()
+        assert stripped == "[]", f"Expected '[]', got: {stripped!r}"
+
+    def test_list_workflows_empty_json(self, tmp_path: Path) -> None:
+        """Empty workflows -> `[]`, not null or {}."""
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        stripped = result.stdout.strip()
+        assert stripped == "[]", f"Expected '[]', got: {stripped!r}"
+
+    def test_list_checkpoints_empty_json(self) -> None:
+        """Empty checkpoints -> `[]`, not null or {}."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        stripped = result.stdout.strip()
+        assert stripped == "[]", f"Expected '[]', got: {stripped!r}"
+
+    def test_list_templates_empty_json(self) -> None:
+        """Empty templates -> `[]`, not null or {}."""
+        with patch.object(Path, "is_dir", return_value=False):
+            result = _invoke(["list", "templates", "--json"])
+        assert result.exit_code == 0
+        stripped = result.stdout.strip()
+        assert stripped == "[]", f"Expected '[]', got: {stripped!r}"
+
+
+# ---------------------------------------------------------------------------
+# Feature 7.3: JSON output stability, pipeability, and unknown flag rejection
+# (VAL-M5JSON-006, VAL-M5JSON-007, VAL-M5JSON-008)
+# ---------------------------------------------------------------------------
+
+
+class TestM5JsonStability:
+    """VAL-M5JSON-006: JSON output schema is stable across invocations."""
+
+    def test_list_workflows_json_keys_stable(self, tmp_path: Path) -> None:
+        """Running list workflows --json twice on unchanged data same keys."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        args = ["list", "workflows", "--path", str(tmp_path), "--json"]
+        r1 = _invoke(args)
+        r2 = _invoke(args)
+        assert r1.exit_code == 0
+        assert r2.exit_code == 0
+        d1 = json.loads(r1.stdout)[0]
+        d2 = json.loads(r2.stdout)[0]
+        assert set(d1.keys()) == set(d2.keys())
+        for key in d1:
+            assert type(d1[key]) is type(d2[key]), (
+                f"Type mismatch for '{key}': {type(d1[key])} vs {type(d2[key])}"
+            )
+
+    def test_list_workflows_json_new_file_appends_same_schema(self, tmp_path: Path) -> None:
+        """Adding a new workflow file appends same-schema entry."""
+        (tmp_path / "alpha.yaml").write_text("agents:\n  a:\n    prompt: A\n")
+        args = ["list", "workflows", "--path", str(tmp_path), "--json"]
+        r1 = _invoke(args)
+        d1 = json.loads(r1.stdout)
+        assert len(d1) == 1
+        expected_keys = set(d1[0].keys())
+        (tmp_path / "beta.yaml").write_text("agents:\n  b:\n    prompt: B\n")
+        r2 = _invoke(args)
+        d2 = json.loads(r2.stdout)
+        assert len(d2) == 2
+        assert set(d2[0].keys()) == expected_keys
+        assert set(d2[1].keys()) == expected_keys
+
+    def test_list_runs_json_keys_stable(self) -> None:
+        """Running list runs --json twice on unchanged data same keys."""
+        pid_entries = [
+            {
+                "pid": 42,
+                "port": 4242,
+                "workflow": "w.yaml",
+                "started_at": "2026-03-01T12:00:00+00:00",
+                "run_id": "deadbeef",
+                "file": "/tmp/x.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            r1 = _invoke(["list", "runs", "--json"])
+            r2 = _invoke(["list", "runs", "--json"])
+        assert r1.exit_code == 0
+        assert r2.exit_code == 0
+        d1 = json.loads(r1.stdout)[0]
+        d2 = json.loads(r2.stdout)[0]
+        assert set(d1.keys()) == set(d2.keys())
+        for key in d1:
+            assert type(d1[key]) is type(d2[key]), (
+                f"Type mismatch for '{key}': {type(d1[key])} vs {type(d2[key])}"
+            )
+
+    def test_list_runs_json_new_pid_appends_same_schema(self) -> None:
+        """Adding a new running workflow appends same-schema entry."""
+        single = [
+            {
+                "pid": 1,
+                "port": 8000,
+                "workflow": "alpha.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "aaa11111",
+                "file": "/tmp/a.pid",
+            },
+        ]
+        double = [
+            single[0],
+            {
+                "pid": 2,
+                "port": 8001,
+                "workflow": "beta.yaml",
+                "started_at": "2026-01-01T01:00:00+00:00",
+                "run_id": "bbb22222",
+                "file": "/tmp/b.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=single):
+            r1 = _invoke(["list", "runs", "--json"])
+        with patch("conductor.cli.pid.read_pid_files", return_value=double):
+            r2 = _invoke(["list", "runs", "--json"])
+        d1 = json.loads(r1.stdout)
+        d2 = json.loads(r2.stdout)
+        assert len(d1) == 1
+        assert len(d2) == 2
+        expected_keys = set(d1[0].keys())
+        assert set(d2[0].keys()) == expected_keys
+        assert set(d2[1].keys()) == expected_keys
+
+    def test_list_templates_json_keys_stable(self) -> None:
+        """Running list templates --json twice same keys."""
+        with patch.object(Path, "is_dir", return_value=False):
+            r1 = _invoke(["list", "templates", "--json"])
+            r2 = _invoke(["list", "templates", "--json"])
+        assert r1.exit_code == 0
+        assert r2.exit_code == 0
+        assert json.loads(r1.stdout) == json.loads(r2.stdout) == []
+
+    def test_list_checkpoints_json_keys_stable(self) -> None:
+        """Running list checkpoints --json twice same keys."""
+        cp = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/test.yaml",
+            created_at="2026-06-01T12:00:00+00:00",
+            error_type="ProviderError",
+            agent="test-agent",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp],
+        ):
+            r1 = _invoke(["list", "checkpoints", "--json"])
+            r2 = _invoke(["list", "checkpoints", "--json"])
+        assert r1.exit_code == 0
+        assert r2.exit_code == 0
+        d1 = json.loads(r1.stdout)[0]
+        d2 = json.loads(r2.stdout)[0]
+        assert set(d1.keys()) == set(d2.keys())
+        for key in d1:
+            assert type(d1[key]) is type(d2[key]), (
+                f"Type mismatch for '{key}': {type(d1[key])} vs {type(d2[key])}"
+            )
+
+    def test_list_checkpoints_json_new_checkpoint_appends_same_schema(self) -> None:
+        """Adding a new checkpoint appends same-schema entry."""
+        cp1 = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/alpha.yaml",
+            created_at="2026-06-01T10:00:00+00:00",
+            error_type="ProviderError",
+            agent="alpha",
+        )
+        cp2 = _make_checkpoint_data(
+            version=1,
+            workflow_path="/tmp/beta.yaml",
+            created_at="2026-06-01T11:00:00+00:00",
+            error_type="ExecutionError",
+            agent="beta",
+        )
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp1],
+        ):
+            r1 = _invoke(["list", "checkpoints", "--json"])
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[cp1, cp2],
+        ):
+            r2 = _invoke(["list", "checkpoints", "--json"])
+        d1 = json.loads(r1.stdout)
+        d2 = json.loads(r2.stdout)
+        assert len(d1) == 1
+        assert len(d2) == 2
+        expected_keys = set(d1[0].keys())
+        assert set(d2[0].keys()) == expected_keys
+        assert set(d2[1].keys()) == expected_keys
+
+
+class TestM5JsonPipeability:
+    """VAL-M5JSON-007: --json output can be piped to downstream tools."""
+
+    def test_list_runs_json_pipes_to_json_load(self) -> None:
+        """json.loads(stdin) works on list runs --json output."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+
+    def test_list_runs_json_pipes_to_jq_like_access(self) -> None:
+        """Assert .[0].port access on JSON output (emulates jq)."""
+        pid_entries = [
+            {
+                "pid": 42,
+                "port": 8080,
+                "workflow": "w.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "abc",
+                "file": "/tmp/x.pid",
+            },
+        ]
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert len(data) >= 1
+        assert data[0]["port"] == 8080
+
+    def test_list_workflows_json_pipes_to_json_load(self, tmp_path: Path) -> None:
+        """json.load(stdin) works for list workflows --json."""
+        (tmp_path / "wf.yaml").write_text("agents:\n  x:\n    prompt: X\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+        assert len(data) == 1
+
+    def test_list_workflows_json_pipes_to_len_check(self, tmp_path: Path) -> None:
+        """json.loads(stdin) and count works for list workflows."""
+        (tmp_path / "a.yaml").write_text("agents:\n  x:\n    prompt: A\n")
+        (tmp_path / "b.yaml").write_text("agents:\n  y:\n    prompt: B\n")
+        (tmp_path / "c.yaml").write_text("agents:\n  z:\n    prompt: C\n")
+        result = _invoke(["list", "workflows", "--path", str(tmp_path), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert len(data) == 3
+
+    def test_list_checkpoints_json_pipes_to_json_load(self) -> None:
+        """json.load(stdin) works on list checkpoints --json output."""
+        with patch(
+            "conductor.engine.checkpoint.CheckpointManager.list_checkpoints",
+            return_value=[],
+        ):
+            result = _invoke(["list", "checkpoints", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+
+    def test_json_output_no_extra_framing(self) -> None:
+        """JSON output starts with [ no extra text before the array."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        stripped = result.stdout.lstrip()
+        assert stripped.startswith("["), (
+            f"JSON output should start with '[', got: {stripped[:80]!r}"
+        )
+
+    def test_json_output_ends_with_newline(self) -> None:
+        """JSON output ends with newline pipe-friendly."""
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            result = _invoke(["list", "runs", "--json"])
+        assert result.exit_code == 0
+        assert result.stdout.endswith("\n") or result.stdout.endswith("\r\n"), (
+            f"JSON output should end with newline, got: {result.stdout[-20:]!r}"
+        )
+
+
+class TestM5JsonUnknownFlag:
+    """VAL-M5JSON-008: --json combined with unrecognized args exits non-zero."""
+
+    def test_list_runs_json_unknown_flag_exits_nonzero(self) -> None:
+        """conductor list runs --json --unknown-flag exit != 0."""
+        result = _invoke(["list", "runs", "--json", "--unknown-flag"])
+        assert result.exit_code != 0, f"Expected non-zero exit, got {result.exit_code}"
+
+    def test_list_runs_json_unknown_flag_error_on_stderr(self) -> None:
+        """Unknown flag usage error on stderr."""
+        result = _invoke(["list", "runs", "--json", "--unknown-flag"])
+        assert result.exit_code != 0
+        assert "Error" in result.stderr or "No such option" in result.stderr
+
+    def test_list_workflows_json_unknown_flag_exits_nonzero(self) -> None:
+        """conductor list workflows --json --unknown-flag exit != 0."""
+        result = _invoke(["list", "workflows", "--json", "--unknown-flag"])
+        assert result.exit_code != 0, f"Expected non-zero exit, got {result.exit_code}"
+
+    def test_list_workflows_json_unknown_flag_error_on_stderr(self) -> None:
+        """Unknown flag usage error on stderr."""
+        result = _invoke(["list", "workflows", "--json", "--unknown-flag"])
+        assert result.exit_code != 0
+        assert "Error" in result.stderr or "No such option" in result.stderr
+
+    def test_list_checkpoints_json_unknown_flag_exits_nonzero(self) -> None:
+        """conductor list checkpoints --json --unknown-flag exit != 0."""
+        result = _invoke(["list", "checkpoints", "--json", "--unknown-flag"])
+        assert result.exit_code != 0, f"Expected non-zero exit, got {result.exit_code}"
+
+    def test_list_checkpoints_json_unknown_flag_error_on_stderr(self) -> None:
+        """Unknown flag usage error on stderr."""
+        result = _invoke(["list", "checkpoints", "--json", "--unknown-flag"])
+        assert result.exit_code != 0
+        assert "Error" in result.stderr or "No such option" in result.stderr
+
+    def test_list_templates_json_unknown_flag_exits_nonzero(self) -> None:
+        """conductor list templates --json --unknown-flag exit != 0."""
+        result = _invoke(["list", "templates", "--json", "--unknown-flag"])
+        assert result.exit_code != 0, f"Expected non-zero exit, got {result.exit_code}"
+
+    def test_list_templates_json_unknown_flag_error_on_stderr(self) -> None:
+        """Unknown flag usage error on stderr."""
+        result = _invoke(["list", "templates", "--json", "--unknown-flag"])
+        assert result.exit_code != 0
+        assert "Error" in result.stderr or "No such option" in result.stderr
+
+    def test_list_runs_recent_json_unknown_flag_exits_nonzero(self) -> None:
+        """conductor list runs --recent 5 --json --unknown-flag exit != 0."""
+        result = _invoke(["list", "runs", "--recent", "5", "--json", "--unknown-flag"])
+        assert result.exit_code != 0, f"Expected non-zero exit, got {result.exit_code}"
 
 
 # ---------------------------------------------------------------------------
