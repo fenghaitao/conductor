@@ -132,7 +132,6 @@ agents:
 
   # ── Step 3 ──────────────────────────────────────────────────────────────────
   - name: analyze_and_apply
-    model: deepseek-v4-pro
     reasoning:
       effort: high
     description: |

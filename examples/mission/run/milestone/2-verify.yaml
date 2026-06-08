@@ -60,7 +60,6 @@ for_each:
 
     agent:
       name: test_one_group
-      model: deepseek-v4-pro
       retry:
         max_attempts: 2
         backoff: exponential

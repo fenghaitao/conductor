@@ -111,7 +111,6 @@ agents:
 
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: triage
-    model: deepseek-v4-pro
     description: |
       Assess each issue and decide the appropriate action:
       - update_guidance: fix AGENTS.md or feature description and continue

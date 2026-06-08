@@ -56,7 +56,6 @@ for_each:
 
     agent:
       name: review_one_feature
-      model: deepseek-v4-pro
       retry:
         max_attempts: 2
         backoff: exponential
@@ -308,7 +307,6 @@ agents:
 
   # ── Step 4 ──────────────────────────────────────────────────────────────────
   - name: synthesize
-    model: deepseek-v4-pro
     retry:
       max_attempts: 2
       backoff: exponential

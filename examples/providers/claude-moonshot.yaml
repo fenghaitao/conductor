@@ -1,0 +1,19 @@
+# Moonshot AI (Kimi) via the native Claude / Anthropic provider.
+#
+# Pass to any workflow with:  -p examples/providers/claude-moonshot.yaml
+#
+# Same Moonshot International anthropic-wire endpoint as copilot-moonshot.yaml,
+# but routed through Conductor's `claude` provider (Anthropic SDK) instead of
+# `copilot`. The api_key is sent as the `x-api-key` header, which Moonshot's
+# /anthropic endpoint accepts. Read from $MOONSHOT_API_KEY so the secret never
+# lands in this file (or in checkpoints / event logs).
+#
+# Note: the `claude` provider only honors `base_url` + `api_key` (and an
+# optional `type`, which must be `anthropic`). `bearer_token`, `wire_api`,
+# `headers`, and `azure` are copilot-only and rejected here.
+provider:
+  name: claude
+  type: anthropic
+  base_url: https://api.moonshot.ai/anthropic
+  api_key: ${MOONSHOT_API_KEY:-your-api-key-here}
+default_model: kimi-k2.6

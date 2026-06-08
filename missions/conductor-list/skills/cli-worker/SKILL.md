@@ -195,8 +195,17 @@ uv run pytest tests/test_cli/test_list.py -v
 # Type check (scoped to the cli directory)
 uv run ty src/conductor/cli/
 
-# Lint (scoped to the changed files)
-uv run ruff check src/conductor/cli/list_cmd.py src/conductor/cli/app.py tests/test_cli/test_list.py
+# Lint AND format. The milestone review gate runs `ruff check src tests &&
+# ruff format --check src tests` across the WHOLE tree — broader than the
+# files you changed. `ruff check` passing is NOT enough: unformatted code
+# fails `ruff format --check` and resets the entire milestone to pending.
+# Always auto-format before handing off:
+uv run ruff format src tests
+uv run ruff check --fix src tests
+
+# Confirm against the EXACT command the milestone validator runs — this must
+# exit 0 or your milestone review will fail:
+uv run ruff check src tests && uv run ruff format --check src tests
 ```
 
 If any existing tests break due to the `app.py` deprecation wrapper change, fix them — the wrapper must preserve backward compatibility for scripts parsing checkpoint stdout.
