@@ -101,8 +101,8 @@ features:
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/7-2.yaml
   "7.3":
-    status: returned
-    attempts: 1
+    status: completed
+    attempts: 2
     return_count: 1
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/7-3.yaml
@@ -113,12 +113,14 @@ features:
       /home/hfeng1/conductor/missions/conductor-list/handoffs/8-1.yaml
   "8.2":
     status: completed
-    attempts: 1
+    attempts: 2
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/8-2.yaml
   "8.3":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/8-3.yaml
   "9.1":
     status: pending
     attempts: 0

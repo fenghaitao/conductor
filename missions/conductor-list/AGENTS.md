@@ -86,6 +86,7 @@ If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a cra
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: `conductor --help` shows 'checkpoints' inside the `list` command's help description line only ('Discover workflows, runs, checkpoints, and more.'). This is the subcommand help text, not a standalone command listing — correctly classified as non-blocking.
 - Pre-existing: `list registries` never had `--json` in the architecture spec. The feature 7.1 validation assertions are applied only to subcommands that have the flag, leaving registries without JSON support. This gap predates the implementation and is non-blocking.
 - Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as a list (isinstance(agents, list)), but Conductor YAML uses dicts for named agent definitions. Fixed in this change by accepting both dict and list forms via isinstance(agents, (dict, list)). Correctly classified as non-blocking since the fix was applied inline.
 - Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as list via `isinstance(agents, list)`, but Conductor YAML uses `agents:` as a dict of named agent definitions. Fixed in feature 3.1 by accepting both dict and list forms and using `agent_count > 0` for pipeline detection.
@@ -222,3 +223,28 @@ uv run conductor list templates --json
 
 
 When adding error paths to list/read-only CLI commands, follow the `error_on_inaccessible: bool = False` pattern: default to graceful degradation for table mode, raise/hard-error for `--json` mode. Always emit valid JSON to stdout before raising `typer.Exit(1)`.
+
+
+## Deprecation Pattern
+
+When deprecating a top-level command in favour of a subcommand under
+`list`, print a `[dim]` deprecation notice to `console` (stderr) then
+delegate to a shared `_list_*_impl()` function in `list_cmd.py`. The
+impl function writes to `output_console` (stdout for tables) or
+`print()` (for JSON) so stdout is clean and identical between old and
+new commands. See `app.py:988-1021` (checkpoints wrapper) and
+`list_cmd.py:761-823` (impl).
+
+
+### CLI Error-Handling Pattern for Dual-Mode (Table + JSON) Subcommands
+
+When adding error paths to list/read-only CLI commands, follow the
+`error_on_inaccessible: bool = False` pattern: default to graceful
+degradation for table/verbose mode, raise/hard-error for `--json` mode.
+Always emit valid JSON to stdout before raising `typer.Exit(1)`.
+
+Example from `list_cmd.py:_scan_event_logs()`: the function accepts an
+`error_on_inaccessible` flag. In table mode, inaccessible event logs are
+skipped silently; in `--json` mode, a well-formed JSON error payload is
+written to stdout before exiting with code 1. This ensures downstream
+JSON consumers always receive parseable output.

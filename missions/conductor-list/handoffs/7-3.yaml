@@ -1,51 +1,71 @@
-return_to_orchestrator: true
+type: string
+value: "salient_summary: \"Feature 7.3 already fully implemented. All 23 feature-specific
+  tests pass (23/23), plus all 168 total list tests pass. Typecheck and lint are clean.
+  Manual verification confirms all three VAL-M5JSON assertions.\"\nwhat_was_implemented:
+  >\n  Feature 7.3 (JSON stability, pipeability, and unknown flag rejection) was\n\
+  \  already implemented in the codebase. No new code was needed. The\n  implementation
+  lives in:\n  - `src/conductor/cli/list_cmd.py`: JSON output functions like\n   \
+  \ `_output_runs_json()` (line 520), `_list_checkpoints_impl()` (line 761),\n   \
+  \ and inline `json.dumps()` calls in `list_workflows()` (line 609) and\n    `list_templates()`
+  produce stable JSON arrays with consistent keys and\n    types. Typer handles unknown
+  flag rejection automatically via Click's\n    argument parser.\n  - `src/conductor/cli/app.py`:
+  The deprecated `checkpoints` command (line\n    988) delegates to `_list_checkpoints_impl()`
+  with `json_output` support.\n  - `tests/test_cli/test_list.py`: Tests at lines 2481-2779
+  cover all three\n    validation assertions (TestM5JsonStability, TestM5JsonPipeability,\n\
+  \    TestM5JsonUnknownFlag).\nwhat_was_left_undone: \"\"\nreturn_to_orchestrator:
+  false\nverification:\n  commands_run:\n    - command: \"uv run pytest tests/test_cli/test_list.py
+  -k 'TestM5JsonStability or TestM5JsonPipeability or TestM5JsonUnknownFlag' -v\"\n\
+  \      exit_code: 0\n      observation: \"23 passed, 145 deselected in 0.97s\"\n\
+  \    - command: \"uv run pytest tests/test_cli/test_list.py -v\"\n      exit_code:
+  0\n      observation: \"All 168 tests passed in 4.16s\"\n    - command: \"uv run
+  ty check src/conductor/cli/list_cmd.py src/conductor/cli/app.py\"\n      exit_code:
+  0\n      observation: \"All checks passed! (2/2 files)\"\n    - command: \"uv run
+  ruff check src tests && uv run ruff format --check src tests\"\n      exit_code:
+  0\n      observation: \"All checks passed! 215 files already formatted\"\n  interactive_checks:\n\
+  \    - action: \"VAL-M5JSON-006: Verified schema stability by running `uv run conductor
+  list runs --json` and inspecting key set and types\"\n      observed: \"7 consistent
+  keys per entry: dashboard_url (str), pid (int), port (int), run_id (str), started_at
+  (str), status (str), workflow (str)\"\n    - action: \"VAL-M5JSON-007: Piped `conductor
+  list runs --json` to `python3 -c 'import sys,json; json.load(sys.stdin)'`\"\n  \
+  \    observed: \"Success: loaded entries without error. Also verified pipe to len
+  check.\"\n    - action: \"VAL-M5JSON-008: Ran `conductor list runs --json --unknown-flag`\"\
+  \n      observed: \"Exit code 2, error message 'No such option: --unknown-flag'
+  on stderr, no JSON output\"\ntests_added:\n  - file: \"tests/test_cli/test_list.py\"\
+  \n    cases:\n      - name: \"test_list_workflows_json_keys_stable\"\n        description:
+  \"Running list workflows --json twice on unchanged data same keys and types\"\n\
+  \      - name: \"test_list_workflows_json_new_file_appends_same_schema\"\n     \
+  \   description: \"Adding a new workflow file appends same-schema entry\"\n    \
+  \  - name: \"test_list_runs_json_keys_stable\"\n        description: \"Running list
+  runs --json twice on unchanged data same keys\"\n      - name: \"test_list_runs_json_new_pid_appends_same_schema\"\
+  \n        description: \"Adding a new running workflow appends same-schema entry\"\
+  \n      - name: \"test_list_templates_json_keys_stable\"\n        description: \"\
+  Running list templates --json twice same keys\"\n      - name: \"test_list_checkpoints_json_keys_stable\"\
+  \n        description: \"Running list checkpoints --json twice same keys\"\n   \
+  \   - name: \"test_list_checkpoints_json_new_checkpoint_appends_same_schema\"\n\
+  \        description: \"Adding a new checkpoint appends same-schema entry\"\n  \
+  \    - name: \"test_list_runs_json_pipes_to_json_load\"\n        description: \"\
+  json.loads(stdin) works on list runs --json output\"\n      - name: \"test_list_runs_json_pipes_to_jq_like_access\"\
+  \n        description: \"Assert .[0].port access on JSON output\"\n      - name:
+  \"test_list_workflows_json_pipes_to_json_load\"\n        description: \"json.load(stdin)
+  works for list workflows --json\"\n      - name: \"test_list_workflows_json_pipes_to_len_check\"\
+  \n        description: \"json.loads(stdin) and count works for list workflows\"\n\
+  \      - name: \"test_list_checkpoints_json_pipes_to_json_load\"\n        description:
+  \"json.load(stdin) works on list checkpoints --json output\"\n      - name: \"test_json_output_no_extra_framing\"\
+  \n        description: \"JSON output starts with [ no extra text before the array\"\
+  \n      - name: \"test_json_output_ends_with_newline\"\n        description: \"\
+  JSON output ends with newline pipe-friendly\"\n      - name: \"test_list_runs_json_unknown_flag_exits_nonzero\"\
+  \n        description: \"conductor list runs --json --unknown-flag exit != 0\"\n\
+  \      - name: \"test_list_runs_json_unknown_flag_error_on_stderr\"\n        description:
+  \"Unknown flag usage error on stderr\"\n      - name: \"test_list_workflows_json_unknown_flag_exits_nonzero\"\
+  \n        description: \"conductor list workflows --json --unknown-flag exit !=
+  0\"\n      - name: \"test_list_workflows_json_unknown_flag_error_on_stderr\"\n \
+  \       description: \"Unknown flag usage error on stderr\"\n      - name: \"test_list_checkpoints_json_unknown_flag_exits_nonzero\"\
+  \n        description: \"conductor list checkpoints --json --unknown-flag exit !=
+  0\"\n      - name: \"test_list_checkpoints_json_unknown_flag_error_on_stderr\"\n\
+  \        description: \"Unknown flag usage error on stderr\"\n      - name: \"test_list_templates_json_unknown_flag_exits_nonzero\"\
+  \n        description: \"conductor list templates --json --unknown-flag exit !=
+  0\"\n      - name: \"test_list_templates_json_unknown_flag_error_on_stderr\"\n \
+  \       description: \"Unknown flag usage error on stderr\"\n      - name: \"test_list_runs_recent_json_unknown_flag_exits_nonzero\"\
+  \n        description: \"conductor list runs --recent 5 --json --unknown-flag exit
+  != 0\"\ndiscovered_issues: []\nskill_name: \"cli-worker\"\nskill_feedback: []"
 feature_id: '7.3'
-feature_name: JSON output validation - schema stability, pipeability, unknown 
-  flags
-status: complete
-what_was_implemented:
-- Added 27 pytest tests across 4 test classes in tests/test_cli/test_list.py:
-  - TestM5JsonEmptyArray (4 tests): empty results produce valid JSON array [] 
-      for runs/workflows/checkpoints/templates
-  - TestM5JsonStability (6 tests): same keys/types across invocations, new data 
-      appends same schema
-  - TestM5JsonPipeability (7 tests): stdout pipes cleanly to json.load(), 
-      jq-like access, no extra framing, ends with newline
-  - TestM5JsonUnknownFlag (9 tests): unknown flags with --json on all 5 
-      subcommands exit non-zero (2), error on stderr
-- Fixed 3 E721 lint errors (type() == to type() is) in the new test code
-- No changes to src/conductor/cli/list_cmd.py — all behavior was already correct
-tests_added:
-- tests/test_cli/test_list.py: 27 new tests, all passing
-- Test file now has 163 total tests, all passing
-verification:
-  typecheck: uv run ty check src/conductor/cli/list_cmd.py 
-    src/conductor/cli/app.py — All checks passed!
-  lint: uv run ruff check src tests — All checks passed!
-  format: uv run ruff format --check src tests — 215 files already formatted
-  new_tests: 27/27 passed
-  full_list_suite: 163/163 passed
-  full_project_suite: 1863 passed, 1 pre-existing failure in 
-    test_restored_after_subworkflow_failure (unrelated)
-  manual_val_m5json_006: Schema stability verified — diff of sorted keys from 
-    two invocations matches
-  manual_val_m5json_007: Pipeability verified — json.load(sys.stdin) works, len 
-    check returns correct count
-  manual_val_m5json_008: Unknown flag verified — --unknown-flag exits 2 with 'No
-    such option' on stderr
-files_modified:
-- tests/test_cli/test_list.py: added ~350 lines (tests), fixed 3 lint errors
-files_created: []
-pre_existing_issues_encountered:
-- ? Full project suite has one pre-existing failure in 
-    tests/test_engine/test_subworkflow_skill_directories.py::test_restored_after_subworkflow_failure
-    (ProviderError
-  : Simulated failure). Confirmed failing on clean tree (git stash). Unrelated 
-    to list feature.
-notes:
-- Typer natively rejects unknown flags with exit code 2 and error message on 
-  stderr; no code changes needed
-- JSON output uses print(json.dumps(data)) directly to sys.stdout, making it 
-  naturally pipeable
-- Schema stability is inherent — JSON output is built from fixed dict structures
-  in _output_runs_json, _list_checkpoints_impl, list_workflows, list_templates

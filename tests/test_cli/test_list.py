@@ -2780,6 +2780,272 @@ class TestM5JsonUnknownFlag:
 
 
 # ---------------------------------------------------------------------------
+# Test: VAL-CROSS-001 — running workflow discovery flow (feature 9.1)
+# ---------------------------------------------------------------------------
+
+
+class TestValCross001RunningDiscovery:
+    """Integration test for the running workflow discovery flow.
+
+    VAL-CROSS-001: A user runs ``conductor list`` and sees a count of
+    running workflows with a hint to run ``conductor list runs``. They run
+    ``conductor list runs`` and see a table of running background workflows
+    showing Port, PID, Workflow name, Dashboard URL, and Started time.
+    """
+
+    # ------------------------------------------------------------------
+    # Full flow with running workflows
+    # ------------------------------------------------------------------
+
+    def test_full_flow_summary_and_detail_with_running_workflows(self) -> None:
+        """With 2 running workflows: summary shows count 2 + hint;
+        runs table shows both entries with correct columns and data."""
+        from unittest.mock import patch
+
+        pid_entries = [
+            {
+                "pid": 12345,
+                "port": 8080,
+                "workflow": "my-workflow.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "abc12345",
+                "file": "/tmp/my-workflow-8080.pid",
+            },
+            {
+                "pid": 12346,
+                "port": 8081,
+                "workflow": "another-workflow.yaml",
+                "started_at": "2026-01-01T01:00:00+00:00",
+                "run_id": "def67890",
+                "file": "/tmp/another-workflow-8081.pid",
+            },
+        ]
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            # Step 1: Summary dashboard
+            summary = _invoke(["list"])
+            assert summary.exit_code == 0
+
+            # Strip ANSI for reliable matching
+            import re
+
+            clean_summary = re.sub(r"\x1b\[[0-9;]*m", "", summary.output)
+            assert re.search(r"Running workflows:\s*2", clean_summary), (
+                f"Running count should be 2, got: {clean_summary!r}"
+            )
+            assert "conductor list runs" in clean_summary, (
+                f"Summary should hint 'conductor list runs', got: {clean_summary!r}"
+            )
+            # stderr should be empty (no warnings/errors)
+            assert summary.stderr == "", f"stderr should be empty, got: {summary.stderr!r}"
+
+            # Step 2: Runs detail table
+            runs = _invoke(["list", "runs"])
+            assert runs.exit_code == 0
+
+            output = runs.output
+            # Table columns
+            assert "Port" in output, f"Table should have Port column, got: {output!r}"
+            assert "PID" in output, f"Table should have PID column, got: {output!r}"
+            assert "Workflow" in output, f"Table should have Workflow column, got: {output!r}"
+            assert "Dashboard URL" in output, (
+                f"Table should have Dashboard URL column, got: {output!r}"
+            )
+            assert "Started" in output, f"Table should have Started column, got: {output!r}"
+
+            # Table title
+            assert "Running Workflows" in output, (
+                f"Table should have 'Running Workflows' title, got: {output!r}"
+            )
+
+            # Data rows — both workflows present
+            assert "8080" in output, f"Port 8080 should appear, got: {output!r}"
+            assert "8081" in output, f"Port 8081 should appear, got: {output!r}"
+            assert "12345" in output, f"PID 12345 should appear, got: {output!r}"
+            assert "12346" in output, f"PID 12346 should appear, got: {output!r}"
+            assert "my-workflow" in output, (
+                f"Workflow stem 'my-workflow' should appear, got: {output!r}"
+            )
+            assert "another-workflow" in output, (
+                f"Workflow stem 'another-workflow' should appear, got: {output!r}"
+            )
+            # Dashboard URLs
+            assert "http://127.0.0.1:8080" in output, (
+                f"Dashboard URL http://127.0.0.1:8080 should appear, got: {output!r}"
+            )
+            assert "http://127.0.0.1:8081" in output, (
+                f"Dashboard URL http://127.0.0.1:8081 should appear, got: {output!r}"
+            )
+            # Started timestamps (partial match)
+            assert "2026-01-01" in output, (
+                f"Started date 2026-01-01 should appear, got: {output!r}"
+            )
+
+            # No empty-state message (since we have entries)
+            assert "No running workflows found" not in output, (
+                f"Should not show empty message when workflows are running, got: {output!r}"
+            )
+
+    # ------------------------------------------------------------------
+    # Full flow with zero running workflows
+    # ------------------------------------------------------------------
+
+    def test_full_flow_empty_state(self) -> None:
+        """With 0 running workflows: summary shows count 0; runs shows
+        graceful empty-state message."""
+        from unittest.mock import patch
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            # Step 1: Summary dashboard
+            summary = _invoke(["list"])
+            assert summary.exit_code == 0
+
+            import re
+
+            clean_summary = re.sub(r"\x1b\[[0-9;]*m", "", summary.output)
+            assert re.search(r"Running workflows:\s*0", clean_summary), (
+                f"Running count should be 0, got: {clean_summary!r}"
+            )
+            assert "conductor list runs" in clean_summary, (
+                f"Summary should still hint 'conductor list runs', got: {clean_summary!r}"
+            )
+            assert summary.stderr == "", f"stderr should be empty, got: {summary.stderr!r}"
+
+            # Step 2: Runs detail table — empty state
+            runs = _invoke(["list", "runs"])
+            assert runs.exit_code == 0
+
+            output = runs.output
+            assert "No running workflows found" in output, (
+                f"Should show empty-state message, got: {output!r}"
+            )
+            # Should not have table markers when empty
+            assert "Port" not in output, (
+                f"Should not show table columns when empty, got: {output!r}"
+            )
+            assert "Dashboard URL" not in output, (
+                f"Should not show Dashboard URL column when empty, got: {output!r}"
+            )
+
+    # ------------------------------------------------------------------
+    # Cross-command consistency
+    # ------------------------------------------------------------------
+
+    def test_running_count_matches_table_row_count(self) -> None:
+        """The running count in summary equals the number of rows
+        in the runs table."""
+        from unittest.mock import patch
+
+        pid_entries = [
+            {
+                "pid": 100,
+                "port": 8000,
+                "workflow": "alpha.yaml",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "run_id": "aaa11111",
+                "file": "/tmp/a.pid",
+            },
+            {
+                "pid": 200,
+                "port": 8001,
+                "workflow": "beta.yaml",
+                "started_at": "2026-01-01T01:00:00+00:00",
+                "run_id": "bbb22222",
+                "file": "/tmp/b.pid",
+            },
+            {
+                "pid": 300,
+                "port": 8002,
+                "workflow": "gamma.yaml",
+                "started_at": "2026-01-01T02:00:00+00:00",
+                "run_id": "ccc33333",
+                "file": "/tmp/c.pid",
+            },
+        ]
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            import re
+
+            # Summary: count should be 3
+            summary = _invoke(["list"])
+            assert summary.exit_code == 0
+            clean_summary = re.sub(r"\x1b\[[0-9;]*m", "", summary.output)
+            assert re.search(r"Running workflows:\s*3", clean_summary)
+
+            # Runs table: should have 3 data rows (each containing a port)
+            runs = _invoke(["list", "runs"])
+            assert runs.exit_code == 0
+            for port in (8000, 8001, 8002):
+                assert str(port) in runs.output, (
+                    f"Port {port} should appear in runs table"
+                )
+
+    # ------------------------------------------------------------------
+    # Dashboard URL format
+    # ------------------------------------------------------------------
+
+    def test_dashboard_url_format_is_http_localhost_port(self) -> None:
+        """Each running workflow's Dashboard URL follows the format
+        http://127.0.0.1:{port}."""
+        from unittest.mock import patch
+
+        pid_entries = [
+            {
+                "pid": 42,
+                "port": 9999,
+                "workflow": "test.yaml",
+                "started_at": "2026-06-01T12:00:00+00:00",
+                "run_id": "test42",
+                "file": "/tmp/t.pid",
+            },
+        ]
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            runs = _invoke(["list", "runs"])
+            assert runs.exit_code == 0
+            assert "http://127.0.0.1:9999" in runs.output, (
+                f"Dashboard URL should be http://127.0.0.1:9999, got: {runs.output!r}"
+            )
+            # Should use 127.0.0.1, not localhost or 0.0.0.0
+            assert "0.0.0.0" not in runs.output, (
+                f"Dashboard URL should use 127.0.0.1, not 0.0.0.0, got: {runs.output!r}"
+            )
+
+    # ------------------------------------------------------------------
+    # Both commands exit 0 irrespective of running workflows
+    # ------------------------------------------------------------------
+
+    def test_both_commands_exit_zero_with_running_workflows(self) -> None:
+        """`conductor list` and `conductor list runs` both exit 0
+        when workflows are running."""
+        from unittest.mock import patch
+
+        pid_entries = [
+            {
+                "pid": 1,
+                "port": 1,
+                "workflow": "x.yaml",
+                "started_at": "t",
+                "run_id": "r",
+                "file": "f",
+            },
+        ]
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=pid_entries):
+            assert _invoke(["list"]).exit_code == 0
+            assert _invoke(["list", "runs"]).exit_code == 0
+
+    def test_both_commands_exit_zero_without_running_workflows(self) -> None:
+        """`conductor list` and `conductor list runs` both exit 0
+        when no workflows are running."""
+        from unittest.mock import patch
+
+        with patch("conductor.cli.pid.read_pid_files", return_value=[]):
+            assert _invoke(["list"]).exit_code == 0
+            assert _invoke(["list", "runs"]).exit_code == 0
+
+
+# ---------------------------------------------------------------------------
 # Helper: create a minimal CheckpointData for testing
 # ---------------------------------------------------------------------------
 
