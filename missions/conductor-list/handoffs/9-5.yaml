@@ -1,0 +1,81 @@
+salient_summary: Added 6 integration tests for VAL-CROSS-005 (JSON export for CI
+  scripting) covering runs history JSON fields, workflows JSON with --recursive,
+  jq-like field access, pipe-safety, and empty-state JSON arrays
+what_was_implemented: >
+  Created TestValCross005JsonCIScripting class in tests/test_cli/test_list.py
+  with 6 test methods:
+  - test_list_runs_recent_json_required_fields_for_ci: Creates event logs for
+    completed and failed runs, invokes ``conductor list runs --recent 5 --json``,
+    verifies exit 0, valid JSON array, and every history entry contains
+    ``workflow``, ``run_id``, ``started_at``, ``status``, ``duration_seconds``
+    fields with correct types and values.
+  - test_list_workflows_json_recursive_required_fields_for_ci: Creates a directory
+    tree with pipeline, parallel, and for-each workflow YAML files (plus a
+    non-workflow config.yaml excluded by heuristic), invokes ``conductor list
+    workflows --json --recursive``, verifies exit 0, valid JSON array of 3 entries,
+    every entry has ``name``, ``path``, ``agent_count``, topology tags, and
+    ``jq '.[0].name'`` / ``jq '.[].name'``-equivalent field access works.
+  - test_both_json_commands_exit_zero_for_ci_pipeline: Simulates a CI pipeline
+    invoking ``list runs --recent --json`` then ``list workflows --json``
+    consecutively; both exit 0 and produce parseable JSON.
+  - test_json_output_supports_jq_like_field_access: Comprehensive jq-equivalent
+    tests — ``jq '.'`` → json.loads, ``jq '.[0].workflow'``, ``jq '.[].status'``,
+    ``jq '.[].name'``, ``jq '.[] | select(.has_pipeline == true) | .name'``,
+    and ``jq '.[] | {name, agent_count, ...}'`` — all extract fields without
+    KeyError. Both runs and workflows JSON covered.
+  - test_json_output_is_clean_for_ci_pipes: Verifies no ANSI escape codes, starts
+    with ``[``, ends with newline, parseable as JSON — safe for Unix pipes.
+  - test_empty_results_produce_empty_json_array: When there are no runs and no
+    workflows, both commands emit ``[]`` exactly (exit 0).
+  Uses tmp_path for temp directories, monkeypatch/patch for _conductor_run_dir
+  and read_pid_files, and _make_event_log helper for event log fixtures.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestValCross005JsonCIScripting -v
+    exit_code: 0
+    observation: 6 passed in 1.08s
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 193 passed in 6.48s — no regressions
+  - command: uv run ruff check tests/test_cli/test_list.py
+    exit_code: 1
+    observation: Only pre-existing F401/F811 issues on re/time imports; zero 
+      E501 from new code
+  - command: uv run ty check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed
+  interactive_checks: []
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_list_runs_recent_json_required_fields_for_ci
+    description: Verify ``list runs --recent N --json`` emits history objects 
+      with workflow, run_id, started_at, status, duration_seconds — all the 
+      fields a CI script needs
+  - name: test_list_workflows_json_recursive_required_fields_for_ci
+    description: Verify ``list workflows --json --recursive`` emits workflow 
+      metadata with name, path, agent_count, topology tags, extractable via 
+      jq-like access
+  - name: test_both_json_commands_exit_zero_for_ci_pipeline
+    description: CI pipeline invokes both list runs --json and list workflows 
+      --json consecutively; both exit 0
+  - name: test_json_output_supports_jq_like_field_access
+    description: jq . (json.loads), jq .[0].name, jq .[].status, jq 
+      select(.has_pipeline == true), etc. — all extract without KeyError
+  - name: test_json_output_is_clean_for_ci_pipes
+    description: JSON output has no ANSI codes, starts with [, ends with newline
+      — pipe-safe
+  - name: test_empty_results_produce_empty_json_array
+    description: When no runs and no workflows exist, both commands emit [] 
+      exactly and exit 0
+discovered_issues: []
+skill_name: test-worker
+skill_feedback: []
+feature_id: '9.5'

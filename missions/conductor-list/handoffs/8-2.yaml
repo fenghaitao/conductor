@@ -1,89 +1,48 @@
-salient_summary: Verified that the new `conductor list checkpoints` command does
-  NOT print any deprecation notice (stderr is empty), and stdout matches the old
-  `conductor checkpoints` command identically after stripping ANSI codes. Both 
-  table and JSON modes confirmed byte-for-byte identical.
-what_was_implemented: >
-  Feature 8.2 is a verification-only feature — no code changes were needed. The implementation
-  was already correct: `list_cmd.py:736-758` defines `list_checkpoints` which calls
-  `_list_checkpoints_impl(workflow, json_output)` with NO deprecation notice. `app.py:988-1021`
-  defines the deprecated `checkpoints` command which prints a dim deprecation notice
-  to stderr
-  via `console.print()` then delegates to the same `_list_checkpoints_impl()` function.
-  Both
-  commands share the exact same output logic, guaranteeing stdout parity.
+salient_summary: 'Feature 8.2 was already implemented by prior work. Verified all
+  three validation assertions pass: new `list checkpoints` has no deprecation stderr,
+  stdout is identical between old and new commands, and old command remains fully
+  functional with correct data.'
+what_was_implemented: Prior work already implemented this feature. The new 
+  `conductor list checkpoints` command at list_cmd.py:737-758 calls 
+  `_list_checkpoints_impl(workflow, json_output)` with NO deprecation notice. 
+  The deprecated `checkpoints` command at app.py:988-1021 prints a `[dim]` 
+  deprecation notice via `console.print()` then delegates to the same 
+  `_list_checkpoints_impl()` function. Both paths produce identical stdout — 
+  confirmed by diff comparison showing zero differences. All 174 list tests 
+  pass.
 what_was_left_undone: ''
 return_to_orchestrator: false
 verification:
   commands_run:
-  - command: uv run conductor list checkpoints (2>/tmp/sn.txt 
-      1>/tmp/sn_stdout.txt); echo $?
+  - command: uv run conductor list checkpoints; check stderr
     exit_code: 0
-    observation: stderr empty (0 lines), Rich table written to stdout
-  - command: uv run conductor checkpoints (2>/tmp/so.txt 1>/tmp/so_stdout.txt); 
-      echo $?
+    observation: Rich table output to stdout, stderr completely empty — no 
+      deprecation notice (VAL-M6DEPR-004 satisfied)
+  - command: diff <(conductor list checkpoints 2>/dev/null) <(conductor 
+      checkpoints 2>/dev/null)
     exit_code: 0
-    observation: "stderr contains 'Deprecated: use 'conductor list checkpoints' instead',
-      Rich table written to stdout"
-  - command: diff <(sed 's/\x1b\[[0-9;]*m//g' /tmp/sn_stdout.txt) <(sed 
-      's/\x1b\[[0-9;]*m//g' /tmp/so_stdout.txt); echo $?
+    observation: Stdout identical line-for-line between old and new commands 
+      (VAL-M6DEPR-005 satisfied)
+  - command: uv run conductor checkpoints; check stderr
     exit_code: 0
-    observation: No differences — stdout is identical line-for-line after 
-      stripping ANSI escape codes
-  - command: uv run conductor list checkpoints --json (2>/tmp/snj.txt 
-      1>/tmp/snj_stdout.txt); echo $?; uv run conductor checkpoints --json 
-      (2>/tmp/soj.txt 1>/tmp/soj_stdout.txt); echo $?
-    exit_code: 0, 0
-    observation: Both exit 0; JSON diff zero (byte-for-byte identical); new 
-      stderr empty; old stderr has deprecation notice only
+    observation: "Old command prints 'Deprecated: use conductor list checkpoints instead'
+      to stderr only, stdout matches new command exactly (VAL-M6DEPR-008 satisfied)"
+  - command: uv run conductor list checkpoints --json 2>/dev/null; uv run 
+      conductor checkpoints --json 2>/dev/null; diff stdout
+    exit_code: 0
+    observation: JSON output identical between old and new; same checkpoint 
+      counts, timestamps, error types, agent names
   - command: uv run pytest tests/test_cli/test_list.py -v
     exit_code: 0
-    observation: 168 tests passed — includes deprecation notice tests, 
-      checkpoint parity tests, JSON stability tests
+    observation: 174 passed in 4.41s — all existing tests pass, no regressions
   interactive_checks:
-  - action: Checked new stderr for 'Deprecated' text
-    observed: 0 lines, no 'Deprecated' text — VAL-M6DEPR-004 satisfied
-  - action: Diffed stdout after ANSI stripping for table and JSON modes
-    observed: Zero differences for both modes — VAL-M6DEPR-005 satisfied
-  - action: Verified checkpoint counts, timestamps, error types, agent names 
-      between old and new output
-    observed: Identical (same _list_checkpoints_impl function) — VAL-M6DEPR-008 
-      satisfied
-  - action: Verified old command exit codes for table and JSON modes
-    observed: Exit 0 for both — fully functional with correct data
-tests_added:
-- file: tests/test_cli/test_list.py
-  cases:
-  - name: test_deprecation_notice
-    description: conductor checkpoints emits deprecation to stderr, delegates 
-      correctly
-  - name: test_deprecation_stdout_unchanged
-    description: conductor checkpoints stdout matches list checkpoints stdout
-  - name: test_list_checkpoints_empty
-    description: No checkpoints → dim message, empty JSON array
-  - name: test_list_checkpoints_with_workflow_filter
-    description: Workflow path argument filters checkpoint results
-  - name: test_list_checkpoints_json
-    description: --json flag → valid JSON array of checkpoint objects
-  - name: test_list_checkpoints_json_is_valid_array
-    description: 'M5: JSON output is valid array'
-  - name: test_list_checkpoints_json_exit_zero
-    description: 'M5: JSON exit code is 0'
-  - name: test_list_checkpoints_json_missing_workflow_exits_1
-    description: 'M5: Missing workflow arg → exit 1'
-  - name: test_list_checkpoints_error_on_stderr_only
-    description: 'M5: Errors go to stderr only'
-  - name: test_list_checkpoints_empty_json
-    description: 'M5: Empty JSON array for no checkpoints'
-  - name: test_list_checkpoints_json_keys_stable
-    description: 'M5: JSON keys stable across versions'
-  - name: test_list_checkpoints_json_new_checkpoint_appends_same_schema
-    description: 'M5: New checkpoint uses same schema'
-  - name: test_list_checkpoints_json_pipes_to_json_load
-    description: 'M5: JSON pipeable (json.loads succeeds)'
-  - name: test_list_checkpoints_json_unknown_flag_exits_nonzero
-    description: 'M5: Unknown flag exits nonzero'
-  - name: test_list_checkpoints_json_unknown_flag_error_on_stderr
-    description: 'M5: Unknown flag error on stderr'
+  - action: uv run conductor list checkpoints
+    observed: Rich table with Version, Workflow, Created, Error, Agent columns. 
+      No deprecation message on stderr.
+  - action: uv run conductor checkpoints
+    observed: "Same Rich table on stdout. '[dim]Deprecated: use conductor list checkpoints
+      instead[/dim]' on stderr only."
+tests_added: []
 discovered_issues: []
 skill_name: cli-worker
 skill_feedback: []

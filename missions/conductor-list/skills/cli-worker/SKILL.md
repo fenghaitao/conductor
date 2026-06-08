@@ -413,3 +413,20 @@ Before writing any code for a CLI feature, always:
 4. Only then proceed to write tests and implementation
 
 This prevents handoffs where "pending: read files" is the only outcome.
+
+
+## Accumulated Worker Feedback
+
+These deviations were reported by workers during the mission.
+Review and incorporate into the procedure above as appropriate.
+
+- Step `Step 2: Test First (TDD)`: Skipped writing new tests because the implementation, tests, and app registration were already complete — all 27 existing tests pass and both validation assertions are satisfied. (reason: The feature was fully implemented before this worker was assigned. Writing duplicate tests would violate the boundary rule against modifying existing working code.)
+- Step `Step 2: Test First (TDD)`: Discovered feature was already fully implemented and tested — verified existing tests pass and performed manual validation instead of writing new tests. (reason: Feature 4.3 was already implemented by milestones 4.1/4.2. All 3 filtering tests already exist and pass. Manual validation confirmed VAL-M3LIST-003.)
+- Step `Step 2 (Test First)`: Found that the implementation was already correct for feature 6.3 — both table and JSON use the same sorted list from `_discover_templates`. Focused on improving existing tests rather than writing from scratch, since the existing test had a weak `>=` assertion that needed strengthening to exact equality. (reason: The existing tests already covered basic functionality; the gap was in assertion rigor and the missing --json --help test.)
+
+- Step `Step 2: Test First (TDD)`: Skipped writing new tests because the implementation, tests, and app registration were already complete — all 27 existing tests pass and both validation assertions are satisfied.
+- Step `Step 2: Test First (TDD)`: Discovered feature was already fully implemented and tested — verified existing tests pass and performed manual validation instead of writing new tests.
+- Step `Step 2 (Test First)`: Found that the implementation was already correct for feature 6.3 — both table and JSON use the same sorted list from `_discover_templates`. Focused on improving existing tests rather than writing from scratch, since the existing test had a weak `>=` assertion that needed strengthening to exact equality.
+- Step `Step 2: Test First (TDD)`: Skipped writing new tests because the implementation, tests, and app registration were already complete — all 27 existing tests pass and both validation assertions are satisfied.
+- Step `Step 2: Test First (TDD)`: Discovered feature was already fully implemented and tested — verified existing tests pass and performed manual validation instead of writing new tests.
+- Step `Step 2 (Test First)`: Found that the implementation was already correct for feature 6.3 — both table and JSON use the same sorted list from `_discover_templates`. Focused on improving existing tests rather than writing from scratch, since the existing test had a weak `>=` assertion that needed strengthening to exact equality.

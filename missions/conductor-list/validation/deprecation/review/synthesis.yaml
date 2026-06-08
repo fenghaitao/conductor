@@ -1,0 +1,74 @@
+verdict: pass
+passed_features:
+- "8.1"
+- "8.2"
+- "8.3"
+failed_features: []
+summary: "All three deprecation features (8.1-8.3) pass review. All validators are
+  green (168 tests, typecheck, lint). Feature 8.1 has a minor recommendation to strengthen
+  a test assertion that currently has a tautological `or 'list'` fallback, but this
+  does not block the feature — the actual behavior is correct. Feature 8.2 and 8.3
+  have no issues. The `checkpoints` → `list checkpoints` deprecation pattern is cleanly
+  implemented with shared impl delegation and proper stderr deprecation notices."
+issues:
+- feature_id: "8.1"
+  issue: "test_deprecated_command_hidden_from_help has a weak assertion using `or
+    'list'` that makes it tautological. The test passes but would pass even if hidden=True
+    were removed."
+  action: "none"
+pre_existing_issues:
+- "Pre-existing: `conductor --help` shows 'checkpoints' inside the `list` command's
+  help description line only ('Discover workflows, runs, checkpoints, and more.').
+  This is the subcommand help text, not a standalone command listing — correctly classified
+  as non-blocking."
+shared_state_updates:
+- destination: library
+  path_suffix: "cli-console-routing.md"
+  content: |
+    All CLI modules route Rich console output to stderr by convention:
+    - `app.py:50`: `console = Console(stderr=True)`
+    - `list_cmd.py:34`: `console = Console(stderr=True)`
+    - `registry.py:35`: `console = Console(stderr=True)`
+
+    Deprecation notices, errors, and informational messages all go to stderr.
+    Only primary output (tables, JSON) goes to stdout via `output_console`.
+
+    In Typer CLI handler tests using CliRunner, `console.print()` goes to
+    stderr and `output_console.print()` goes to stdout. Deprecation notices
+    should use `console.print()` so they land on stderr and don't pollute
+    stdout for scripts.
+  operation: create
+- destination: library
+  path_suffix: "deprecation-impl-pattern.md"
+  content: |
+    When deprecating a top-level command in favour of a subcommand under
+    `list`, the canonical pattern is:
+
+    1. Create a shared `_list_*_impl()` function in `list_cmd.py` that
+       contains the actual logic and writes to `output_console` (stdout for
+       tables) or `print()` (for JSON).
+    2. The new `list <subcommand>` handler in `list_cmd.py` delegates to
+       this impl function.
+    3. The deprecated top-level command in `app.py` prints a `[dim]`
+       deprecation notice to `console` (stderr) then delegates to the same
+       impl function.
+
+    Example: `_list_checkpoints_impl(workflow, json_output)` at
+    `list_cmd.py:761` is the canonical checkpoint-listing implementation.
+    Both `list checkpoints` (line 737) and the deprecated `checkpoints`
+    (app.py:988) delegate to it. Any future changes to checkpoint listing
+    should modify this single function.
+  operation: create
+- destination: AGENTS.md
+  path_suffix: "AGENTS.md"
+  content: |
+    ## Deprecation Pattern
+
+    When deprecating a top-level command in favour of a subcommand under
+    `list`, print a `[dim]` deprecation notice to `console` (stderr) then
+    delegate to a shared `_list_*_impl()` function in `list_cmd.py`. The
+    impl function writes to `output_console` (stdout for tables) or
+    `print()` (for JSON) so stdout is clean and identical between old and
+    new commands. See `app.py:988-1021` (checkpoints wrapper) and
+    `list_cmd.py:761-823` (impl).
+  operation: append

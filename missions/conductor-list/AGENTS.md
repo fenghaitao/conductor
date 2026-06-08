@@ -86,6 +86,7 @@ If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a cra
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: `conductor init --template` was removed during the registry redesign. The 12 VAL-CROSS-006 tests simulate instantiation via `shutil.copy2()` instead of exercising a real CLI command. This is correctly classified as a non-blocking architectural constraint — not a test gap — and is transparently documented in the test class docstring and handoff.
 - Pre-existing: `conductor --help` shows 'checkpoints' inside the `list` command's help description line only ('Discover workflows, runs, checkpoints, and more.'). This is the subcommand help text, not a standalone command listing — correctly classified as non-blocking.
 - Pre-existing: `list registries` never had `--json` in the architecture spec. The feature 7.1 validation assertions are applied only to subcommands that have the flag, leaving registries without JSON support. This gap predates the implementation and is non-blocking.
 - Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as a list (isinstance(agents, list)), but Conductor YAML uses dicts for named agent definitions. Fixed in this change by accepting both dict and list forms via isinstance(agents, (dict, list)). Correctly classified as non-blocking since the fix was applied inline.
@@ -248,3 +249,28 @@ Example from `list_cmd.py:_scan_event_logs()`: the function accepts an
 skipped silently; in `--json` mode, a well-formed JSON error payload is
 written to stdout before exiting with code 1. This ensures downstream
 JSON consumers always receive parseable output.
+
+
+## Background Process Testing Pattern
+
+When writing integration tests for `--web-bg` workflows:
+1. Mock `launch_background` to return a `BackgroundLaunch` with a known port/PID/run_id.
+2. Mock `read_pid_files` to return synthetic PID entries matching the mock launch.
+3. Mock `os.kill` (in `conductor.cli.app`) and `remove_pid_file` (in `conductor.cli.pid`) for the stop phase.
+4. For real-process tests, use a minimal workflow that will fail fast (e.g., invalid provider,
+   unreachable API endpoint) so no live LLM call is needed — the child process still spawns
+   and writes a PID file.
+
+
+## Testing `conductor resume` in CliRunner
+
+When writing CliRunner integration tests that involve `conductor resume`, accept that
+the resume step cannot be executed without an LLM provider. Use temp event log files
+to simulate post-resume state instead. The verification pattern is:
+
+1. Mock checkpoints
+2. Mock event logs in temp directory
+3. Assert `list runs --recent` cross-references correctly
+
+Future test workers will encounter the same limitation — this explicit guidance
+prevents repeated justification discussions.

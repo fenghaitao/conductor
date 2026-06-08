@@ -1,0 +1,75 @@
+salient_summary: Added 5 integration tests for checkpoint discovery and resume 
+  flow (VAL-CROSS-004), verifying that checkpoints show file_path/run_id, run 
+  history shows completed status with matching run_id, and both exit 0.
+what_was_implemented: >
+  Added TestCheckpointDiscoveryAndResume class to tests/test_cli/test_list.py with
+  5 test methods:
+  1. test_checkpoint_shows_file_path_and_run_id — verifies `list checkpoints --json`
+  produces entries with file_path, run_id, workflow_path, failure/error_type, current_agent,
+  created_at.
+  2. test_resumed_run_appears_in_history_with_matching_run_id — creates mocked checkpoint
+  with specific run_id (a1b2c3d4) and a temp event log showing a completed run; asserts
+  `list runs --recent 1 --json` shows status "completed" with matching run_id, ended_at,
+  and positive duration.
+  3. test_checkpoint_run_history_both_exit_zero — verifies both `list checkpoints`
+  and `list runs --recent 1` exit 0 with no errors on stderr.
+  4. test_multiple_checkpoints_and_recent_runs_cross_referenced — 3 checkpoints +
+  3 event logs (2 completed, 1 failed); verifies all run_ids cross-reference between
+  checkpoint listing and run history, and statuses (completed/failed) are correct.
+  5. test_checkpoint_table_shows_file_path_info — verifies the Rich table from `list
+  checkpoints` has Version, Workflow, Error, Agent columns and displays the correct
+  data.
+  Tests use CliRunner with monkeypatch on CheckpointManager.list_checkpoints, _conductor_run_dir,
+  and read_pid_files to isolate from the real filesystem. Event logs use temp directories
+  with realistic JSONL content. Run IDs use hex format (a1b2c3d4, a0000001, etc.)
+  to match real conductor conventions and the filename-based run_id extraction in
+  _parse_event_log.
+what_was_left_undone: >
+  No actual `conductor resume` invocation — the test simulates the post-resume state
+  with temp event log files. Running real resume requires LLM provider setup and would
+  be covered by a higher-level e2e test with a mock provider.
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestCheckpointDiscoveryAndResume -v
+    exit_code: 0
+    observation: 5 passed in 0.89s
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 187 passed in 5.99s
+  - command: uv run ruff check tests/test_cli/test_list.py
+    exit_code: 1
+    observation: 20 pre-existing F401/F811 errors (re/import re redefinitions, 
+      time unused) — none from new code
+  - command: uv run ty check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  interactive_checks:
+  - action: uv run conductor list checkpoints
+    observed: Rich table with Version, Workflow, Created, Error, Agent columns; 
+      real checkpoints listed; exit 0
+  - action: uv run conductor list checkpoints --json
+    observed: Valid JSON array with file_path, run_id, workflow_path, failure 
+      fields; exit 0
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_checkpoint_shows_file_path_and_run_id
+    description: JSON output has file_path, run_id, workflow_path, failure, 
+      created_at fields
+  - name: test_resumed_run_appears_in_history_with_matching_run_id
+    description: Run history shows completed status with same run_id as 
+      checkpoint; ended_at non-null; duration > 0
+  - name: test_checkpoint_run_history_both_exit_zero
+    description: Both list checkpoints and list runs --recent exit 0, no errors
+  - name: test_multiple_checkpoints_and_recent_runs_cross_referenced
+    description: 3 checkpoints + 3 event logs cross-reference run_ids; 
+      completed/failed statuses correct
+  - name: test_checkpoint_table_shows_file_path_info
+    description: Rich table has Version, Workflow, Created, Error, Agent columns
+      with correct values
+return_to_orchestrator: false
+discovered_issues: []
+skill_name: test-worker
+skill_feedback: []
+feature_id: '9.4'

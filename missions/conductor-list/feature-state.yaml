@@ -113,29 +113,46 @@ features:
       /home/hfeng1/conductor/missions/conductor-list/handoffs/8-1.yaml
   "8.2":
     status: completed
-    attempts: 2
+    attempts: 3
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/8-2.yaml
   "8.3":
     status: completed
-    attempts: 1
+    attempts: 2
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/8-3.yaml
   "9.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 2
+    last_reviewed_attempt: 2
+    handoff_path: missions/conductor-list/handoffs/9-1.yaml
   "9.2":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 2
+    last_reviewed_attempt: 2
+    handoff_path: missions/conductor-list/handoffs/9-2.yaml
   "9.3":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    last_reviewed_attempt: 1
+    handoff_path: missions/conductor-list/handoffs/9-3.yaml
   "9.4":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    last_reviewed_attempt: 1
+    handoff_path: missions/conductor-list/handoffs/9-4.yaml
   "9.5":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    last_reviewed_attempt: 1
+    handoff_path: missions/conductor-list/handoffs/9-5.yaml
   "9.6":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    last_reviewed_attempt: 1
+    handoff_path: missions/conductor-list/handoffs/9-6.yaml
+  '9.7':
+    status: completed
+    attempts: 1
+    handoff_path: missions/conductor-list/handoffs/9-7.yaml
+    last_reviewed_attempt: 1

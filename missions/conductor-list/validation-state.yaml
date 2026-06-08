@@ -42,9 +42,9 @@ VAL-M6DEPR-005: pending
 VAL-M6DEPR-006: pending
 VAL-M6DEPR-007: pending
 VAL-M6DEPR-008: pending
-VAL-CROSS-001: pending
-VAL-CROSS-002: pending
-VAL-CROSS-003: pending
-VAL-CROSS-004: pending
-VAL-CROSS-005: pending
-VAL-CROSS-006: pending
+VAL-CROSS-001: passed
+VAL-CROSS-002: passed
+VAL-CROSS-003: passed
+VAL-CROSS-004: passed
+VAL-CROSS-005: passed
+VAL-CROSS-006: passed

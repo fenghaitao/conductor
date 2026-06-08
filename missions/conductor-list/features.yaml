@@ -471,3 +471,16 @@ features:
     0."
   fulfills:
   - VAL-CROSS-006
+- id: '9.7'
+  milestone: cross-area
+  description: 'Fix blocked assertion VAL-CROSS-006 (originally in: Write an integration
+    test verifying template discovery to workflow instantiation: `conductor list templates`
+    shows template names, descriptions, and paths. Pick a template, run `conductor
+    init --template <template-name> <output-path>`, then run `conductor list workflows
+    --path <output-dir>` to confirm the newly created workflow file appears with the
+    expected agent count and topology from the template. Uses `CliRunner` with temp
+    output directories.)'
+  skill_name: test-worker
+  expected_behavior: Assertion VAL-CROSS-006 passes user testing
+  fulfills:
+  - VAL-CROSS-006

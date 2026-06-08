@@ -1,0 +1,116 @@
+salient_summary: Wrote 12 integration tests for VAL-CROSS-006 — template 
+  discovery to workflow instantiation flow. Since `conductor init` was removed 
+  during the registry redesign, instantiation is simulated by copying template 
+  YAML files to temp directories. All 12 tests pass, and the full suite of 205 
+  tests remains green.
+what_was_implemented: >
+  Added TestTemplateDiscoveryToWorkflowInstantiation class (12 test methods) to
+  tests/test_cli/test_list.py covering the VAL-CROSS-006 flow.
+
+  Template discovery tests (4):
+  - test_templates_list_json_exits_zero — --json mode exits 0, returns valid array
+  - test_templates_list_json_has_required_keys — every template has name/description/path
+  - test_templates_list_paths_exist — every path field points to an existing YAML
+  file
+  - test_templates_list_shows_pipeline_fanout_loop — table mode shows all 3 built-in
+  templates
+
+  Workflow instantiation + discovery tests (5):
+  - test_pipeline_template_discovery_after_instantiation — instantiated pipeline template
+  discovered with 3 agents and pipeline topology
+  - test_pipeline_template_discovery_json_metadata — JSON metadata confirms name,
+  agent_count=3, has_pipeline=true
+  - test_fan_out_template_discovery_after_instantiation — fan-out template discovered
+  with for_each topology
+  - test_loop_template_discovery_after_instantiation — loop template discovered with
+  3 agents and pipeline topology
+  - test_instantiated_workflow_excludes_non_workflow_files — heuristic filter excludes
+  non-workflow YAML
+
+  End-to-end flow tests (3):
+  - test_full_flow_template_to_workflow_discovery — canonical VAL-CROSS-006 test
+  - test_multiple_templates_instantiated_and_discovered — all 3 templates instantiated
+  and verified simultaneously
+  - test_all_commands_exit_zero_in_full_flow — every command in the flow exits 0
+
+  Helper methods: _get_template_path() locates a template by name from list templates
+  --json;
+  _instantiate_template() copies a template YAML to an output directory (simulating
+  the removed
+  conductor init --template command).
+what_was_left_undone: >
+  The conductor init --template command does not exist in the current codebase
+  (removed during registry redesign per docs/design/registry.md). The test simulates
+  instantiation by copying template YAML files using shutil.copy2. If conductor init
+  is reintroduced, the _instantiate_template helper should be updated to invoke
+  conductor init --template <name> <dir> via CliRunner.
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 205 passed in 7.60s — all existing + 12 new tests pass
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestTemplateDiscoveryToWorkflowInstantiation 
+      -v
+    exit_code: 0
+    observation: 12 passed in 1.37s
+  - command: uv run ty check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check tests/test_cli/test_list.py
+    exit_code: 1
+    observation: 20 pre-existing F401/F811 errors — zero new issues; E501 fixed
+  interactive_checks:
+  - action: uv run conductor list templates --json
+    observed: Valid JSON array of 3 template objects with name/description/path 
+      keys, exit 0
+  - action: uv run conductor list templates
+    observed: 'Rich table with Fan-out, Loop, Pipeline templates, Total: 3, exit 0'
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_templates_list_json_exits_zero
+    description: conductor list templates --json exits 0, returns valid JSON 
+      array of at least 3 templates
+  - name: test_templates_list_json_has_required_keys
+    description: Each template JSON object has non-empty name, description, path
+      string fields
+  - name: test_templates_list_paths_exist
+    description: Every template path field points to an existing .yaml/.yml file
+  - name: test_templates_list_shows_pipeline_fanout_loop
+    description: Table output includes Pipeline template, Fan-out template, Loop
+      template names
+  - name: test_pipeline_template_discovery_after_instantiation
+    description: After instantiating pipeline template, list workflows discovers
+      it with pipeline-template name, 3 agents, pipeline topology
+  - name: test_pipeline_template_discovery_json_metadata
+    description: JSON metadata confirms name=pipeline-template, agent_count=3, 
+      has_pipeline=true
+  - name: test_fan_out_template_discovery_after_instantiation
+    description: Fan-out template discovered with fan-out-template name, 1 
+      agent, has_for_each=true
+  - name: test_loop_template_discovery_after_instantiation
+    description: Loop template discovered with loop-template name, 3 agents, 
+      has_pipeline=true
+  - name: test_full_flow_template_to_workflow_discovery
+    description: 'Canonical VAL-CROSS-006: list templates → instantiate → list workflows
+      → verify metadata'
+  - name: test_multiple_templates_instantiated_and_discovered
+    description: All 3 templates instantiated simultaneously; list workflows 
+      discovers all with correct per-template metadata
+  - name: test_instantiated_workflow_excludes_non_workflow_files
+    description: Non-workflow YAML excluded by heuristic; only instantiated 
+      template appears
+  - name: test_all_commands_exit_zero_in_full_flow
+    description: Every command in the template→workflow flow exits 0
+discovered_issues: []
+skill_name: test-worker
+skill_feedback:
+- step: 'Step 2: Test First (TDD)'
+  what_i_did_instead: Tests were written against an already-implemented 
+    list_cmd.py. The conductor init --template command does not exist, so 
+    template instantiation is simulated via shutil.copy2.
+  why: The init command was removed during the registry redesign. The test 
+    validates the cross-command flow using the available CLI surface.
+feature_id: '9.6'
