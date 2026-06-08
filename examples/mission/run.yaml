@@ -308,11 +308,13 @@ agents:
       knowledge surfaced during the mission. Applies guidance updates
       and optionally escalates unresolved issues to the user.
     workflow: ./run/return-to-orchestrator.yaml
+    input:
+      - get_milestone.output
     input_mapping:
       mission_dir: "{{ workflow.input.mission_dir }}"
     routes:
       - to: get_milestone
-        when: "get_milestone.output.state == 'returned'"
+        when: "{{ get_milestone.output.state == 'returned' }}"
       - to: $end
 
 output:

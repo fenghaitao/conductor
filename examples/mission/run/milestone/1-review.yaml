@@ -254,7 +254,10 @@ agents:
   # ── Step 2 ──────────────────────────────────────────────────────────────────
   - name: load_milestone_data
     type: script
-    description: Collect all completed features in this milestone and their handoffs.
+    description: |
+      Collect completed features in this milestone that need (re-)review.
+      Skips features whose code hasn't changed since their last review
+      (attempts == last_reviewed_attempt).
     command: uv
     args:
       - run
@@ -270,7 +273,9 @@ agents:
         data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
         state_data = yaml.load((mission_dir / "feature-state.yaml").read_text()) or {}
         feat_state = state_data.get("features", {})
-        completed = [
+
+        # Collect all completed features in this milestone (exclude review/testing skills)
+        all_completed = [
             f for f in data.get("features", [])
             if f.get("milestone") == milestone
             and feat_state.get(f.get("id", ""), {}).get("status") == "completed"
@@ -278,8 +283,21 @@ agents:
             and not f.get("skill_name", "").startswith("user-testing-")
         ]
 
-        # Load handoffs
-        for f in completed:
+        # Split: features that need re-review vs. already-reviewed-and-unchanged
+        to_review = []
+        previously_reviewed = []
+        for f in all_completed:
+            fid = f["id"]
+            fs = feat_state.get(fid, {})
+            attempts = fs.get("attempts", 0)
+            last_reviewed = fs.get("last_reviewed_attempt")
+            if last_reviewed is None or attempts > last_reviewed:
+                to_review.append(f)
+            else:
+                previously_reviewed.append(fid)
+
+        # Load handoffs for features being reviewed
+        for f in to_review:
             safe_id = f["id"].replace(".", "-")
             handoff_path = mission_dir / "handoffs" / f"{safe_id}.yaml"
             if handoff_path.exists():
@@ -290,7 +308,9 @@ agents:
 
         def read(p): return p.read_text() if p.exists() else ""
         print(json.dumps({
-            "completed_features": completed,
+            "completed_features": to_review,
+            "previously_reviewed": previously_reviewed,
+            "all_previously_reviewed": len(to_review) == 0 and len(previously_reviewed) > 0,
             "mission_md":      read(mission_dir / "mission.md"),
             "architecture_md": read(mission_dir / "architecture.md"),
             "contract_md":     read(mission_dir / "validation-contract.md"),
@@ -298,10 +318,12 @@ agents:
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
     output:
-      completed_features: { type: array }
-      mission_md:         { type: string }
-      architecture_md:    { type: string }
-      contract_md:        { type: string }
+      completed_features:     { type: array }
+      previously_reviewed:    { type: array }
+      all_previously_reviewed: { type: boolean }
+      mission_md:             { type: string }
+      architecture_md:        { type: string }
+      contract_md:            { type: string }
     routes:
       - to: review_features
 
@@ -319,11 +341,18 @@ agents:
       VALIDATOR RESULTS:
       {{ run_validators.output.results | tojson }}
 
-      FEATURE REVIEWS (one review_yaml block per completed feature):
+      FEATURES PREVIOUSLY REVIEWED AND UNCHANGED (auto-pass, no re-review needed):
+      {{ load_milestone_data.output.previously_reviewed | tojson }}
+
+      FEATURE REVIEWS (one review_yaml block per completed feature — empty if all already reviewed):
       {{ review_features.outputs | tojson }}
 
       MISSION.MD (for context):
       {{ load_milestone_data.output.mission_md }}
+
+      When FEATURE REVIEWS is empty and PREVIOUSLY REVIEWED is non-empty, all
+      features were already reviewed and their code hasn't changed — output
+      verdict "pass" with empty passed_features/failed_features.
 
       Decide overall pass/fail for this milestone review.
 
@@ -372,7 +401,9 @@ agents:
   - name: handle_failures
     type: script
     description: |
-      Parse synthesis. Reset failed features to pending in features.yaml.
+      Parse synthesis. Reset failed features to pending in feature-state.yaml.
+      Record last_reviewed_attempt for features that passed (so they are
+      skipped on future review rounds unless re-implemented).
       Write synthesis to validation/<milestone>/review/synthesis.yaml.
     command: uv
     args:
@@ -386,6 +417,7 @@ agents:
         mission_dir = pathlib.Path(sys.argv[1])
         milestone = sys.argv[2]
         synthesis_yaml = sys.argv[3]
+        previously_reviewed = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
 
         yaml = YAML()
         yaml.preserve_quotes = True
@@ -401,16 +433,28 @@ agents:
         with open(out_dir / "synthesis.yaml", "w") as f:
             yaml.dump(synthesis, f)
 
-        # Reset failed features to pending in feature-state.yaml
+        # Load feature-state for reading/writing
+        state_path = mission_dir / "feature-state.yaml"
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+        state_features = state_data.get("features", {})
+
+        # Reset failed features to pending
         failed = synthesis.get("failed_features", [])
         if failed:
-            state_path = mission_dir / "feature-state.yaml"
-            state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
-            state_features = state_data.get("features", {})
             for fid in failed:
                 entry = state_features.get(fid, {})
                 entry["status"] = "pending"
                 state_features[fid] = entry
+
+        # Record last_reviewed_attempt for features that passed this round.
+        # This prevents re-reviewing unchanged features on future rounds.
+        passed = synthesis.get("passed_features", [])
+        for fid in passed + previously_reviewed:
+            entry = state_features.get(fid, {})
+            entry["last_reviewed_attempt"] = entry.get("attempts", 0)
+
+        # Persist state if anything changed
+        if failed or passed or previously_reviewed:
             state_data["features"] = dict(sorted(state_features.items(),
                 key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
             with open(state_path, "w") as fp:
@@ -468,6 +512,7 @@ agents:
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
       - "{{ synthesize.output.synthesis_yaml }}"
+      - "{{ load_milestone_data.output.previously_reviewed | tojson }}"
     output:
       review_passed:         { type: boolean }
       failed_count:            { type: number }

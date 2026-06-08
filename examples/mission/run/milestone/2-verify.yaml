@@ -337,8 +337,10 @@ agents:
   - name: inject_fix_features
     type: script
     description: |
-      For each failed assertion, add a fix feature to features.yaml
+      For each failed or blocked assertion, add a fix feature to features.yaml
       so the run loop will implement the fix before re-testing.
+      Handles both `failed` (real bug) and `blocked` (dependency unavailable)
+      assertions so the verify loop doesn't stall on unblockable tests.
     command: uv
     args:
       - run
@@ -351,9 +353,12 @@ agents:
         mission_dir = pathlib.Path(sys.argv[1])
         milestone = sys.argv[2]
         failed_ids = json.loads(sys.argv[3])
+        blocked_ids = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
 
-        if not failed_ids:
-            print(json.dumps({"injected": 0}))
+        # Process both failed and blocked assertions as fix-worthy
+        fix_ids_to_process = failed_ids + blocked_ids
+        if not fix_ids_to_process:
+            print(json.dumps({"injected": 0, "fix_feature_ids": []}))
             sys.exit(0)
 
         yaml = YAML()
@@ -385,21 +390,23 @@ agents:
                 (f for f in features if vid in f.get("fulfills", [])),
                 None
             )
-            for vid in failed_ids
+            for vid in fix_ids_to_process
         }
 
         def is_fix_for(f, vid):
             return (vid in f.get("fulfills", [])
-                    and str(f.get("description", "")).startswith(
-                        f"Fix failing assertion {vid}"))
+                    and (str(f.get("description", "")).startswith(
+                        f"Fix failing assertion {vid}")
+                        or str(f.get("description", "")).startswith(
+                        f"Fix blocked assertion {vid}")))
 
         injected = 0
         reset = 0
         fix_ids = []
         next_sub = max_sub
-        for vid in failed_ids:
+        for vid in fix_ids_to_process:
             # If a fix feature for this assertion already exists (the
-            # assertion failed on a prior round), re-attempt it rather than
+            # assertion failed/blocked on a prior round), re-attempt it rather than
             # appending a duplicate — two features fulfilling the same VAL-*
             # id would violate the coverage invariant.
             existing = next((f for f in features if is_fix_for(f, vid)), None)
@@ -412,13 +419,14 @@ agents:
             orig = original_features.get(vid)
             orig_desc = orig.get("description", "unknown feature") if orig else "unknown feature"
             skill = orig.get("skill_name", "backend-worker") if orig else "backend-worker"
+            kind = "blocked" if vid in blocked_ids else "failing"
 
             next_sub += 1
             fix_id = f"{ms_num}.{next_sub}"
             features.append({
                 "id": fix_id,
                 "milestone": milestone,
-                "description": f"Fix failing assertion {vid} (originally in: {orig_desc})",
+                "description": f"Fix {kind} assertion {vid} (originally in: {orig_desc})",
                 "skill_name": skill,
                 "expected_behavior": f"Assertion {vid} passes user testing",
                 "fulfills": [vid],
@@ -438,6 +446,7 @@ agents:
       - "{{ workflow.input.mission_dir }}"
       - "{{ workflow.input.milestone }}"
       - "{{ update_state.output.failed | tojson }}"
+      - "{{ update_state.output.blocked | tojson }}"
     output:
       injected:        { type: number }
       fix_feature_ids: { type: array }
