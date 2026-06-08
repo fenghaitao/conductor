@@ -1,0 +1,38 @@
+verdict: pass
+passed_features:
+- "7.1"
+- "7.2"
+failed_features: []
+summary: >-
+  Both features (7.1 and 7.2) pass review with all validators green
+  (163 tests passing, typecheck and lint clean). No blocking issues or
+  defects were found. Minor non-blocking recommendations were noted for
+  feature 7.1 around JSON stdout consistency across subcommands and a
+  code-comment suggestion for the OSError handler in list_runs.
+issues: []
+pre_existing_issues: []
+shared_state_updates:
+- destination: library
+  path_suffix: cli-testing.md
+  content: >-
+    CliRunner result objects expose `.stdout` and `.stderr` as
+    separate attributes (not just `.output` which merges both). Use
+    `.stdout` for JSON validation in error-case tests to avoid false
+    failures from error text in stderr.
+  operation: create
+- destination: library
+  path_suffix: conductor-run-dir.md
+  content: >-
+    `_conductor_run_dir()` returns the TMPDIR/conductor directory
+    (defaults to `./tmp/`). Set `CONDUCTOR_TMPDIR` env var to
+    override. In tests, patch `conductor.cli.list_cmd._conductor_run_dir`
+    to point to a temp directory.
+  operation: create
+- destination: AGENTS.md
+  path_suffix: AGENTS.md
+  content: >-
+    When adding error paths to list/read-only CLI commands, follow the
+    `error_on_inaccessible: bool = False` pattern: default to graceful
+    degradation for table mode, raise/hard-error for `--json` mode.
+    Always emit valid JSON to stdout before raising `typer.Exit(1)`.
+  operation: append

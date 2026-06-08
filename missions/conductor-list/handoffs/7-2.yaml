@@ -1,0 +1,41 @@
+salient_summary: Feature 7.2 is already fully implemented — all four `list` 
+  subcommands with `--json` already produce exactly `[]` (empty JSON array) on 
+  stdout when the result set is empty. No code changes were needed.
+what_was_implemented: 'Pre-existing implementation verified. All four subcommands
+  (`list runs --json`, `list workflows --json`, `list checkpoints --json`, `list templates
+  --json`) produce `[]` when results are empty. In `list_cmd.py`: `list_runs` delegates
+  to `_output_runs_json()` which builds an empty list and calls `json.dumps([])`;
+  `list_workflows` does `print(json.dumps(metas))` with an empty `metas` list; `list_checkpoints`
+  does `print(json.dumps(json_data))` with an empty `json_data` list; `list_templates`
+  does `print(json.dumps(templates))` with an empty `templates` list. All four paths
+  emit `[]` to stdout and exit 0.'
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 163 passed — including all 4 TestM5JsonEmptyArray tests 
+      (test_list_runs_empty_json, test_list_workflows_empty_json, 
+      test_list_checkpoints_empty_json, test_list_templates_empty_json)
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  interactive_checks:
+  - action: uv run conductor list runs --json
+    observed: '`[]` on stdout, exit 0'
+  - action: uv run conductor list workflows --path /tmp/conductor-test-empty 
+      --json
+    observed: '`[]` on stdout, exit 0'
+  - action: uv run conductor list checkpoints --json
+    observed: Valid JSON array (checkpoints exist so non-empty, but the code 
+      path for empty produces `[]`)
+  - action: uv run conductor list templates --json
+    observed: Valid JSON array with 3 entries (templates exist); empty case 
+      tested via mock
+tests_added: []
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '7.2'

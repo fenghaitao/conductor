@@ -71,32 +71,51 @@ features:
     handoff_path: 
       /home/hfeng1/conductor/missions/conductor-list/handoffs/4-4.yaml
   "5.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 6
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/5-1.yaml
   "6.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/6-1.yaml
   "6.2":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/6-2.yaml
   "6.3":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/6-3.yaml
   "7.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/7-1.yaml
   "7.2":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/7-2.yaml
   "7.3":
-    status: pending
-    attempts: 0
+    status: returned
+    attempts: 1
+    return_count: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/7-3.yaml
   "8.1":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/8-1.yaml
   "8.2":
-    status: pending
-    attempts: 0
+    status: completed
+    attempts: 1
+    handoff_path: 
+      /home/hfeng1/conductor/missions/conductor-list/handoffs/8-2.yaml
   "8.3":
     status: pending
     attempts: 0

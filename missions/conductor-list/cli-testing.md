@@ -1,0 +1,1 @@
+CliRunner result objects expose `.stdout` and `.stderr` as separate attributes (not just `.output` which merges both). Use `.stdout` for JSON validation in error-case tests to avoid false failures from error text in stderr.

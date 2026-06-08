@@ -1,0 +1,100 @@
+salient_summary: Feature 6.1 (`conductor list templates`) was already fully 
+  implemented in `src/conductor/cli/list_cmd.py`. Verified all validation 
+  assertions pass — Rich table with Name, Description, Path columns (3+ rows), 
+  non-empty values, absolute paths, exit code 0. All 115 existing tests pass.
+what_was_implemented: >
+  The `conductor list templates` command (lines 841-883 in `list_cmd.py`) discovers
+  built-in template YAML files from `plugins/conductor-workflow-creator/assets/templates/`
+  via `_get_template_directories()` (line 829), parses comment headers with
+  `_parse_template_headers()` (line 52) to extract template name (first comment line)
+  and description (second non-empty comment line), and displays results as a Rich
+  table
+  with columns Name, Description, Path (absolute) or JSON via `--json`. The
+  `_discover_templates()` helper (line 103) scans directories for .yaml/.yml files,
+  filtering out non-template files. Built-in templates (pipeline, fan-out, loop) produce
+  3 rows with non-empty name/description and absolute paths starting with `/`. Empty
+  state prints dim "No templates found." message. The `list_summary` callback includes
+  template count in the dashboard. Tests in `tests/test_cli/test_list.py` cover table
+  output, JSON output, empty state, filtering, and integration with the summary dashboard.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 115 tests passed in 2.78s. Covers TestListTemplates (3 
+      tests), TestListTemplatesJson (6 tests), TestListTemplatesEmpty (3 tests),
+      TestListTemplatesFiltering (2 tests), TestListHelp (2 tests), 
+      TestListSummary (10 tests), TestListRunsRunning/Json/Recent (19 tests), 
+      TestScanEventLogsEdgeCases (8 tests), 
+      TestListWorkflowsBasic/All/Json/Recursive/Path/EdgeCases (35 tests), 
+      TestListCheckpoints/Filtering/Json (9 tests), TestCheckpointsDeprecated (5
+      tests), TestListRegistries (5 tests).
+  - command: uv run conductor list templates; echo EXIT_CODE=$?
+    exit_code: 0
+    observation: "Rich table printed with columns Name, Description, Path. Shows 3
+      rows: Fan-out template, Loop template, Pipeline template. Each with non-empty
+      Name and Description. All paths are absolute starting with '/home/hfeng1/conductor/plugins/conductor-workflow-creator/assets/templates/'.
+      Total: 3 template(s) footer."
+  - command: uv run conductor list templates --json | python -m json.tool
+    exit_code: 0
+    observation: "Valid JSON array of 3 objects. Each has: name (non-empty string,
+      e.g. 'Loop template: Retry until condition is met'), description (non-empty
+      string, e.g. 'Use when: You need to iterate until a goal is reached...'), path
+      (absolute string pointing to existing .yaml file)."
+  interactive_checks:
+  - action: Verified table columns are 'Name', 'Description', 'Path'
+    observed: Three columns present in Rich table header
+  - action: Verified all 3 template names come from comment headers, not 
+      filename stems
+    observed: "Names are 'Pipeline template: Sequential stages with conditional routing'
+      etc., not bare 'pipeline.yaml'"
+  - action: Verified all 3 template descriptions are non-empty
+    observed: Each description starts with 'Use when:' — no blank or null 
+      descriptions
+  - action: Verified all 3 paths are absolute and point to existing files
+    observed: Paths start with '/' and match files in 
+      plugins/conductor-workflow-creator/assets/templates/
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_table_output_lists_all_builtins (TestListTemplates)
+    description: Rich table has Name, Description, Path columns; at least 3 rows
+      containing Pipeline template, Fan-out template, Loop template names and 
+      descriptions
+  - name: test_table_does_not_show_filenames_as_names (TestListTemplates)
+    description: Template names come from comment headers, not filename stems
+  - name: test_exit_code_zero_on_success (TestListTemplates)
+    description: Both table and JSON modes exit with 0
+  - name: test_json_output_is_valid_array (TestListTemplatesJson)
+    description: --json emits valid JSON array with ≥3 elements
+  - name: test_json_each_entry_has_required_fields (TestListTemplatesJson)
+    description: Each JSON object has name, description, path — all non-empty 
+      strings
+  - name: test_json_paths_point_to_existing_files (TestListTemplatesJson)
+    description: Each path field points to an existing .yaml or .yml file
+  - name: test_json_names_match_comment_headers_not_stems 
+      (TestListTemplatesJson)
+    description: Name field comes from first comment line, not filename
+  - name: test_json_descriptions_contain_use_when (TestListTemplatesJson)
+    description: Description field contains 'Use when:' text from comments
+  - name: test_json_array_length_matches_table_rows (TestListTemplatesJson)
+    description: JSON array length matches number of table data rows
+  - name: test_no_template_dir_shows_empty_message (TestListTemplatesEmpty)
+    description: When no template dir exists, prints friendly dim message, exit 
+      0
+  - name: test_empty_template_dir_emits_empty_json_array 
+      (TestListTemplatesEmpty)
+    description: When no templates, --json emits []
+  - name: test_template_dir_missing_exits_zero (TestListTemplatesEmpty)
+    description: Missing template dir is not an error — exits 0
+  - name: test_non_template_yaml_excluded (TestListTemplatesFiltering)
+    description: YAML files without proper comment headers are excluded by 
+      _parse_template_headers
+  - name: test_json_excludes_non_template_files (TestListTemplatesFiltering)
+    description: _discover_templates excludes files without parsable comment 
+      headers
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '6.1'

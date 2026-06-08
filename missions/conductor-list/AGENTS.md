@@ -86,6 +86,7 @@ If you encounter a bug in existing code (e.g., a race in `read_pid_files`, a cra
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: `list registries` never had `--json` in the architecture spec. The feature 7.1 validation assertions are applied only to subcommands that have the flag, leaving registries without JSON support. This gap predates the implementation and is non-blocking.
 - Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as a list (isinstance(agents, list)), but Conductor YAML uses dicts for named agent definitions. Fixed in this change by accepting both dict and list forms via isinstance(agents, (dict, list)). Correctly classified as non-blocking since the fix was applied inline.
 - Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as list via `isinstance(agents, list)`, but Conductor YAML uses `agents:` as a dict of named agent definitions. Fixed in feature 3.1 by accepting both dict and list forms and using `agent_count > 0` for pipeline detection.
 - Pre-existing: `_heuristic_filter` only handled `agents:` as a list (`isinstance(agents, list)`), but Conductor YAML uses dicts for named agent definitions. Fixed in this change to accept both `dict` and `list` forms.
@@ -215,3 +216,9 @@ uv run conductor list templates --json
   at the 2 KB boundary is tolerated by catching `YAMLError` and falling back to
   basic filename-derived metadata. This 2 KB limit is intentional; do not increase
   it without benchmarking against the performance NFRs.
+
+
+`list registries` does not support `--json` — it delegates to existing `conductor registry list` / `_list_all_registries()` helpers which have their own output formatting. Adding `--json` support requires either a pass-through parameter or wrapping/capturing the registry helpers' output. This is a known gap (as of feature 7.1) and should be resolved before declaring full `--json` parity across all `list` subcommands.
+
+
+When adding error paths to list/read-only CLI commands, follow the `error_on_inaccessible: bool = False` pattern: default to graceful degradation for table mode, raise/hard-error for `--json` mode. Always emit valid JSON to stdout before raising `typer.Exit(1)`.

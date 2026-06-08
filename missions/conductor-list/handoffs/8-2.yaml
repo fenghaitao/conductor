@@ -1,0 +1,3 @@
+type: string
+description: YAML handoff block from the worker
+feature_id: '8.2'

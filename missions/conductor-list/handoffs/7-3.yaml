@@ -1,0 +1,51 @@
+return_to_orchestrator: true
+feature_id: '7.3'
+feature_name: JSON output validation - schema stability, pipeability, unknown 
+  flags
+status: complete
+what_was_implemented:
+- Added 27 pytest tests across 4 test classes in tests/test_cli/test_list.py:
+  - TestM5JsonEmptyArray (4 tests): empty results produce valid JSON array [] 
+      for runs/workflows/checkpoints/templates
+  - TestM5JsonStability (6 tests): same keys/types across invocations, new data 
+      appends same schema
+  - TestM5JsonPipeability (7 tests): stdout pipes cleanly to json.load(), 
+      jq-like access, no extra framing, ends with newline
+  - TestM5JsonUnknownFlag (9 tests): unknown flags with --json on all 5 
+      subcommands exit non-zero (2), error on stderr
+- Fixed 3 E721 lint errors (type() == to type() is) in the new test code
+- No changes to src/conductor/cli/list_cmd.py — all behavior was already correct
+tests_added:
+- tests/test_cli/test_list.py: 27 new tests, all passing
+- Test file now has 163 total tests, all passing
+verification:
+  typecheck: uv run ty check src/conductor/cli/list_cmd.py 
+    src/conductor/cli/app.py — All checks passed!
+  lint: uv run ruff check src tests — All checks passed!
+  format: uv run ruff format --check src tests — 215 files already formatted
+  new_tests: 27/27 passed
+  full_list_suite: 163/163 passed
+  full_project_suite: 1863 passed, 1 pre-existing failure in 
+    test_restored_after_subworkflow_failure (unrelated)
+  manual_val_m5json_006: Schema stability verified — diff of sorted keys from 
+    two invocations matches
+  manual_val_m5json_007: Pipeability verified — json.load(sys.stdin) works, len 
+    check returns correct count
+  manual_val_m5json_008: Unknown flag verified — --unknown-flag exits 2 with 'No
+    such option' on stderr
+files_modified:
+- tests/test_cli/test_list.py: added ~350 lines (tests), fixed 3 lint errors
+files_created: []
+pre_existing_issues_encountered:
+- ? Full project suite has one pre-existing failure in 
+    tests/test_engine/test_subworkflow_skill_directories.py::test_restored_after_subworkflow_failure
+    (ProviderError
+  : Simulated failure). Confirmed failing on clean tree (git stash). Unrelated 
+    to list feature.
+notes:
+- Typer natively rejects unknown flags with exit code 2 and error message on 
+  stderr; no code changes needed
+- JSON output uses print(json.dumps(data)) directly to sys.stdout, making it 
+  naturally pipeable
+- Schema stability is inherent — JSON output is built from fixed dict structures
+  in _output_runs_json, _list_checkpoints_impl, list_workflows, list_templates

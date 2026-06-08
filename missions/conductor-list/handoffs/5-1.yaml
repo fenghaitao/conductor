@@ -1,0 +1,66 @@
+salient_summary: Feature 5.1 (`conductor list registries`) was already 
+  implemented. Verified delegation to existing `_list_all_registries()` and 
+  `_list_registry_workflows()` from `cli/registry.py` with proper error handling
+  for unknown registry names. All 6 registry-specific tests pass alongside all 
+  115 list tests and all 22 registry command tests (137 total, 0 failures).
+what_was_implemented: >
+  The `list_registries` command (lines 795-821 in `list_cmd.py`) delegates to the
+  existing `_list_all_registries()` function from `cli/registry.py` when invoked with
+  no arguments, producing a Rich table with Name, Type, Source, and Default columns.
+  When invoked with a `<name>` argument, it delegates to `_list_registry_workflows(name)`
+  which prints a table with Name and Description columns. Both `RegistryError` and
+  unexpected exceptions are caught and surfaced as red error messages to stderr with
+  exit code 1. The `list_app` Typer group was already registered in `app.py` at line
+  47.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v -k registr
+    exit_code: 0
+    observation: 6 passed — covers delegation, named registry lookup, unknown 
+      name error (VAL-M3LIST-007), error without recommendation, and list_all 
+      error path
+  - command: uv run pytest tests/test_cli/test_list.py 
+      tests/test_cli/test_registry_commands.py -v
+    exit_code: 0
+    observation: 137 passed (115 list + 22 registry) — zero failures, zero 
+      regressions
+  - command: uv run ruff check src tests && uv run ruff format --check src tests
+    exit_code: 0
+    observation: All checks passed; 215 files already formatted
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  interactive_checks:
+  - action: uv run conductor list registries
+    observed: No registries configured. Run conductor registry add <name> 
+      <source> to add one. Exit 0.
+  - action: uv run conductor list registries nonexistent-registry
+    observed: "Error: Registry 'nonexistent-registry' not found (+ suggestion) to
+      stderr. Exit 1."
+  - action: uv run conductor list registries --help
+    observed: Shows help text with [NAME] argument. Delegates to existing 
+      registry commands.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_list_registries_no_args_delegates_to_list_all
+    description: 'VAL-M3LIST-005: No args → delegates to _list_all_registries, exit
+      0'
+  - name: test_list_registries_with_name_delegates_to_workflows
+    description: 'VAL-M3LIST-006: With name → delegates to _list_registry_workflows(name),
+      exit 0'
+  - name: test_list_registries_unknown_name_error_to_stderr
+    description: 'VAL-M3LIST-007: Unknown registry → error to stderr mentioning the
+      name, exit 1'
+  - name: test_list_registries_error_without_recommendation_exits_1
+    description: RegistryError without suggestion still prints error and exits 1
+  - name: test_list_registries_list_all_error_to_stderr
+    description: _list_all_registries raising RegistryError → error to stderr, 
+      exit 1
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '5.1'
