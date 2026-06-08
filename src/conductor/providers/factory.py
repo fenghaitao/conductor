@@ -254,7 +254,13 @@ class ProviderFactory:
             provider_type = "copilot"
             provider_settings = None
 
-        default_model = getattr(runtime_config, "model", None)
+        # RuntimeConfig's field is ``default_model`` (there is no ``model``
+        # attribute). Reading ``model`` here always returned None, so the
+        # provider silently fell back to its hardcoded default ("gpt-4o") and
+        # ``runtime.default_model`` (including a ``-p`` profile override) never
+        # reached the provider. Agents without an explicit ``model:`` therefore
+        # ignored the workflow/profile default. Read the correct field.
+        default_model = getattr(runtime_config, "default_model", None)
         temperature = getattr(runtime_config, "temperature", None)
         max_tokens = getattr(runtime_config, "max_tokens", None)
         timeout = getattr(runtime_config, "timeout", None)

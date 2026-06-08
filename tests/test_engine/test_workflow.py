@@ -2754,6 +2754,26 @@ class TestProviderFactoryReasoningEffortWiring:
             await provider.close()
 
     @pytest.mark.asyncio
+    async def test_factory_forwards_default_model(self) -> None:
+        """``runtime.default_model`` must reach the provider so agents without an
+        explicit ``model:`` (and ``-p`` profile overrides, which set
+        ``runtime.default_model``) actually take effect. Regression: the factory
+        previously read the non-existent ``runtime_config.model`` attribute,
+        which always resolved to None, so the provider silently used its
+        hardcoded fallback instead.
+        """
+        from conductor.providers.copilot import CopilotProvider as _CopilotProvider
+        from conductor.providers.factory import ProviderFactory
+
+        runtime = RuntimeConfig(provider="copilot", default_model="kimi-k2.6")
+        provider = await ProviderFactory.create_provider(runtime, validate=False)
+        try:
+            assert isinstance(provider, _CopilotProvider)
+            assert provider._default_model == "kimi-k2.6"
+        finally:
+            await provider.close()
+
+    @pytest.mark.asyncio
     async def test_factory_forwards_to_claude(self) -> None:
         from conductor.providers.claude import (
             ANTHROPIC_SDK_AVAILABLE,
