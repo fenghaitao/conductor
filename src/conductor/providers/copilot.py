@@ -23,6 +23,7 @@ from conductor.providers._event_format import (
     extract_tool_result_text,
     format_tool_arguments,
 )
+from conductor.providers._routing import endpoint_requires_bearer_auth
 from conductor.providers.base import AgentOutput, AgentProvider, EventCallback, match_model_id
 from conductor.providers.capabilities import ProviderCapabilities
 from conductor.providers.reasoning import ReasoningEffort, resolve_reasoning_effort
@@ -124,7 +125,7 @@ def _make_stdin_user_input_handler(keyboard_listener: Any) -> Any:
                 else:
                     was_freeform = True
             else:
-                was_freeform = bool(answer) and not (answer in choices)
+                was_freeform = bool(answer) and answer not in choices
 
             return {"answer": answer, "wasFreeform": was_freeform}
 
@@ -473,6 +474,22 @@ class CopilotProvider(AgentProvider):
         provider_type: str | None = settings.type
         if provider_type is None and base_url:
             provider_type = "openai"
+
+        # Volcengine Ark speaks the anthropic wire but rejects the x-api-key
+        # header the SDK sends for api_key — it only accepts Authorization:
+        # Bearer. When an api_key is configured for an Ark anthropic endpoint
+        # (and no explicit bearer_token), forward it as bearer_token so the SDK
+        # sends the header Ark expects. Keeps provider profiles uniform (always
+        # api_key). Only applies to type=anthropic; the openai wire already
+        # sends api_key as a Bearer token natively. See examples/providers/ark.yaml.
+        if (
+            provider_type == "anthropic"
+            and api_key
+            and not bearer_token
+            and endpoint_requires_bearer_auth(base_url)
+        ):
+            bearer_token = api_key
+            api_key = None
 
         cfg: dict[str, Any] = {}
         if provider_type:

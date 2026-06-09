@@ -65,6 +65,71 @@ class TestResolveSdkProviderConfig:
             "api_key": "sk-yaml",
         }
 
+    def test_ark_anthropic_api_key_becomes_bearer(self) -> None:
+        """api_key for an Ark anthropic endpoint is forwarded as bearer_token."""
+        s = ProviderSettings.model_validate(
+            {
+                "name": "copilot",
+                "type": "anthropic",
+                "base_url": "https://ark.cn-beijing.volces.com/api/coding",
+                "api_key": "ark-secret",
+            }
+        )
+        provider = _make_provider(provider_settings=s, model="deepseek-v4-pro")
+        cfg = provider._resolve_sdk_provider_config()
+        assert cfg == {
+            "type": "anthropic",
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding",
+            "bearer_token": "ark-secret",
+        }
+        assert "api_key" not in cfg
+
+    def test_non_ark_anthropic_api_key_stays_x_api_key(self) -> None:
+        """DeepSeek (non-Ark) anthropic endpoint keeps api_key as-is."""
+        s = ProviderSettings.model_validate(
+            {
+                "name": "copilot",
+                "type": "anthropic",
+                "base_url": "https://api.deepseek.com/anthropic",
+                "api_key": "ds-secret",
+            }
+        )
+        provider = _make_provider(provider_settings=s, model="deepseek-v4-pro")
+        cfg = provider._resolve_sdk_provider_config()
+        assert cfg["api_key"] == "ds-secret"
+        assert "bearer_token" not in cfg
+
+    def test_ark_openai_wire_keeps_api_key(self) -> None:
+        """The openai wire sends api_key as a Bearer natively, so no flip for type=openai."""
+        s = ProviderSettings.model_validate(
+            {
+                "name": "copilot",
+                "type": "openai",
+                "wire_api": "completions",
+                "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                "api_key": "ark-secret",
+            }
+        )
+        provider = _make_provider(provider_settings=s, model="deepseek-v4-pro")
+        cfg = provider._resolve_sdk_provider_config()
+        assert cfg["api_key"] == "ark-secret"
+        assert "bearer_token" not in cfg
+
+    def test_ark_explicit_bearer_token_not_overwritten(self) -> None:
+        """An explicit bearer_token on an Ark endpoint is preserved (api_key untouched flip)."""
+        s = ProviderSettings.model_validate(
+            {
+                "name": "copilot",
+                "type": "anthropic",
+                "base_url": "https://ark.cn-beijing.volces.com/api/coding",
+                "bearer_token": "explicit-bearer",
+            }
+        )
+        provider = _make_provider(provider_settings=s, model="deepseek-v4-pro")
+        cfg = provider._resolve_sdk_provider_config()
+        assert cfg["bearer_token"] == "explicit-bearer"
+        assert "api_key" not in cfg
+
     def test_yaml_base_url_then_env_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """YAML opts in; ``COPILOT_PROVIDER_API_KEY`` fills missing
         ``api_key``. Ambient ``OPENAI_API_KEY`` is intentionally NOT

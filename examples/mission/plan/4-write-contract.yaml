@@ -1,0 +1,349 @@
+# Mission Planning — Validation Contract Phase
+#
+# Generates validation-contract.md and validation-state.yaml.
+#
+# Steps:
+#   1. check_existing          — skip if contract already written
+#   2. load_context            — read mission.md + architecture.md
+#   3. extract_areas           — parse proposal "Expected Functionality" → area list
+#   4. contract_area_writers   — for_each (parallel): one write-contract-area.yaml per area
+#   5. write_cross_area        — LLM: cross-area flow assertions
+#   6. assemble_contract       — script: cat area drafts + cross-area → draft
+#   7. review_contract         — LLM: gap review pass
+#   8. finalize_contract       — script: write validation-contract.md
+#   9. write_validation_state  — script: extract VAL-* IDs → validation-state.yaml
+
+workflow:
+  name: mission-write-contract
+  description: Generate validation-contract.md and validation-state.yaml
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 80
+
+for_each:
+  # ── Step 4 (for_each parallel) ──────────────────────────────────────────────
+  - name: contract_area_writers
+    type: for_each
+    description: |
+      Write assertion drafts for each area concurrently.
+      Each writes to contract-work/<area_slug>.md independently.
+    source: extract_areas.output.areas
+    as: area
+    max_concurrent: 3
+    failure_mode: continue_on_error
+
+    agent:
+      name: write_area_contract
+      type: workflow
+      workflow: ./4-write-contract-area.yaml
+      input_mapping:
+        mission_dir: "{{ workflow.input.mission_dir }}"
+        area_name: "{{ area.name }}"
+        area_features: "{{ area.features | join(', ') }}"
+        mission_md: "{{ load_context.output.mission_md }}"
+        architecture_md: "{{ load_context.output.architecture_md }}"
+        contract_work_dir: "{{ load_context.output.contract_work_dir }}"
+
+    routes:
+      - to: write_cross_area
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        contract = mission_dir / "validation-contract.md"
+        state = mission_dir / "validation-state.yaml"
+        print(json.dumps({
+            "state": "done" if (contract.exists() and state.exists()) else "ready",
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: load_context
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: load_context
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+
+        def read(p): return p.read_text() if p.exists() else ""
+
+        mission_md = read(mission_dir / "mission.md")
+        architecture_md = read(mission_dir / "architecture.md")
+
+        # Contract work staging dir
+        work_dir = mission_dir / "contract-work"
+        work_dir.mkdir(exist_ok=True)
+
+        print(json.dumps({
+            "mission_md": mission_md,
+            "architecture_md": architecture_md,
+            "contract_work_dir": str(work_dir),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      mission_md:         { type: string }
+      architecture_md:    { type: string }
+      contract_work_dir:  { type: string }
+    routes:
+      - to: extract_areas
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: extract_areas
+    type: script
+    description: |
+      Parse the "Expected Functionality" / "Milestones" section of mission.md
+      to produce a list of areas. Each area becomes one contract section and
+      spawns one write-contract-area.yaml sub-workflow.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        mission_md = sys.argv[1]
+
+        areas = []
+        current_section = None
+        in_functionality = False
+
+        for line in mission_md.split("\n"):
+            stripped = line.strip()
+            # Find Expected Functionality / Milestones section
+            if re.match(r"^#+\s+(Expected Functionality|Milestones|Features)", stripped, re.I):
+                in_functionality = True
+                continue
+            if in_functionality:
+                # New top-level section ends the block
+                if re.match(r"^#{1,2}\s", stripped):
+                    break
+                # Sub-sections within are milestones/areas
+                m = re.match(r"^#{2,3}\s+(.+)", stripped)
+                if m:
+                    current_section = m.group(1).strip()
+                    areas.append({"name": current_section, "features": []})
+                elif current_section and stripped.startswith("-") and areas:
+                    areas[-1]["features"].append(stripped.lstrip("- ").strip())
+
+        # Fallback: if parsing found nothing, treat entire mission as one area
+        if not areas:
+            areas = [{"name": "Core", "features": ["All mission requirements"]}]
+
+        print(json.dumps({"areas": areas}))
+      - "{{ load_context.output.mission_md }}"
+    output:
+      areas:
+        type: array
+        description: "List of {name, features[]} area objects"
+    routes:
+      - to: contract_area_writers
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: write_cross_area
+    model: deepseek-v4-pro
+    description: |
+      Write cross-area flow assertions (VAL-CROSS-XXX) for user journeys
+      that span multiple areas.
+    prompt: |
+      You are writing VAL-CROSS-XXX assertions for the validation contract.
+      These capture complete user journeys that span multiple areas.
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      ARCHITECTURE:
+      {{ load_context.output.architecture_md }}
+
+      Write a `## Cross-Area Flows` section for validation-contract.md.
+      Identify 2-6 end-to-end user journeys that exercise multiple areas.
+
+      Format each assertion as:
+      ```
+      ### VAL-CROSS-001: <title>
+      <behavioral description — from user perspective, clear pass/fail>
+      Tool: <agent-browser | curl | exec>
+      Evidence: <screenshot, console-errors, network(...), terminal-output, exit-code>
+      ```
+
+      Rules:
+      - User perspective only — never reference implementation details
+      - Each assertion must have a clear pass/fail condition
+      - Tool must be one of: agent-browser (web UI), curl (API), exec (CLI)
+      - Evidence must match what the tool can actually collect
+      - Number assertions VAL-CROSS-001, VAL-CROSS-002, etc.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
+    output:
+      content:
+        type: string
+        description: Cross-area section markdown
+    routes:
+      - to: assemble_contract
+
+  # ── Step 6 ──────────────────────────────────────────────────────────────────
+  - name: assemble_contract
+    type: script
+    description: |
+      Concatenate all area draft files from contract-work/ + cross-area content
+      into a single draft validation-contract.md for review.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        cross_area = sys.argv[2]
+
+        work_dir = mission_dir / "contract-work"
+        sections = []
+
+        for draft in sorted(f for f in work_dir.glob("*.md") if not f.name.startswith("_")):
+            sections.append(draft.read_text())
+
+        sections.append(cross_area)
+        draft = "\n\n".join(sections)
+
+        draft_path = mission_dir / "contract-work" / "_draft.md"
+        draft_path.write_text(draft)
+
+        print(json.dumps({"draft": draft, "draft_path": str(draft_path)}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ write_cross_area.output.content }}"
+    output:
+      draft:      { type: string }
+      draft_path: { type: string }
+    routes:
+      - to: review_contract
+
+  # ── Step 7 ──────────────────────────────────────────────────────────────────
+  - name: review_contract
+    model: deepseek-v4-pro
+    description: |
+      Review the assembled draft for gaps, implementation-detail leakage,
+      and missing coverage. Output the improved final contract.
+    prompt: |
+      Review this validation contract draft and produce the final version.
+
+      DRAFT:
+      {{ assemble_contract.output.draft }}
+
+      MISSION:
+      {{ load_context.output.mission_md }}
+
+      Check for and fix:
+      1. **IMPLEMENTATION-DETAIL LEAKAGE:**
+         - Function/method names: "the authenticate() function returns..."
+         - Class/module names: "UserRepository fetches from..."
+         - Database table/column names: "the users table has a password_hash column..."
+         - Internal state: "the session store is checked..."
+         → REWRITE: every assertion must be testable without reading source code.
+         A validator must determine pass/fail only by interacting with the running system.
+      2. Areas with only 1 assertion (too thin — add happy path + error path at minimum)
+      3. Missing error/edge case coverage (empty state, auth failure, validation errors)
+      4. Assertions without clear pass/fail conditions → tighten the description
+      5. Wrong tool choice (API assertions using agent-browser, UI flows using curl)
+      6. Missing evidence requirements
+
+      Output the complete, corrected validation-contract.md content.
+      Keep all existing VAL-* IDs stable. Only add new ones if gaps require new assertions.
+      New assertions in existing areas: VAL-AREA-NNN continuing the sequence.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
+    output:
+      content:
+        type: string
+        description: Final reviewed validation-contract.md content
+    routes:
+      - to: finalize_contract
+
+  # ── Step 8 ──────────────────────────────────────────────────────────────────
+  - name: finalize_contract
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        content = sys.argv[2]
+        path = mission_dir / "validation-contract.md"
+        path.write_text(content)
+        print(json.dumps({"path": str(path), "size": len(content)}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ review_contract.output.content }}"
+    output:
+      path: { type: string }
+      size: { type: number }
+    routes:
+      - to: write_validation_state
+
+  # ── Step 9 ──────────────────────────────────────────────────────────────────
+  - name: write_validation_state
+    type: script
+    description: |
+      Deterministically extract all VAL-* IDs from validation-contract.md
+      and write validation-state.yaml with every assertion set to "pending".
+      Never LLM-generated — must be an exact mirror of the contract IDs.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        contract = (mission_dir / "validation-contract.md").read_text()
+
+        # Extract all VAL-AREA-NNN IDs in order of appearance
+        ids = list(dict.fromkeys(re.findall(r"VAL-[A-Z0-9]+-\d+", contract)))
+
+        yaml = YAML()
+        yaml.default_flow_style = False
+        state = {id_: "pending" for id_ in ids}
+
+        state_path = mission_dir / "validation-state.yaml"
+        with open(state_path, "w") as f:
+            yaml.dump(state, f)
+
+        print(json.dumps({"assertion_count": len(ids), "path": str(state_path)}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      assertion_count: { type: number }
+      path:            { type: string }
+    routes:
+      - to: $end
+
+output:
+  contract_path:    "{{ finalize_contract.output.path if finalize_contract is defined else '' }}"
+  assertion_count:  "{{ write_validation_state.output.assertion_count if write_validation_state is defined else 0 }}"

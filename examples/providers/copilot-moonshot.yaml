@@ -1,0 +1,20 @@
+# Moonshot AI (Kimi) provider profile — international endpoint, Anthropic wire.
+#
+# Pass to any workflow with:  -p examples/providers/copilot-moonshot.yaml
+#
+# Uses Moonshot International's Anthropic-compatible endpoint
+# (https://api.moonshot.ai/anthropic — the client appends /v1/messages). The
+# api_key is read from $MOONSHOT_API_KEY so the secret never lands in this file
+# (or in checkpoints / event logs). default_model only fills agents that omit an
+# explicit `model:`.
+#
+# Moonshot's anthropic endpoint accepts the Anthropic-style `x-api-key` header
+# that the copilot provider sends for a configured api_key, so no special
+# bearer-auth handling is needed (unlike Volcengine Ark — see
+# providers/_routing.py endpoint_requires_bearer_auth).
+provider:
+  name: copilot
+  type: anthropic
+  base_url: https://api.moonshot.ai/anthropic
+  api_key: ${MOONSHOT_API_KEY:-your-api-key-here}
+default_model: kimi-k2.6

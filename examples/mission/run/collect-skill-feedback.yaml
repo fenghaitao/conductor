@@ -1,0 +1,112 @@
+# Collect Skill Feedback
+#
+# Post-mission: scans handoffs for skill deviation feedback
+# and applies improvements to skills/<type>/SKILL.md.
+
+workflow:
+  name: mission-collect-feedback
+  description: Collect worker skill feedback and update SKILL.md files
+  version: "1.0.0"
+  entry_point: collect_skill_feedback
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+
+  limits:
+    max_iterations: 10
+
+agents:
+  - name: collect_skill_feedback
+    type: script
+    description: |
+      Scan handoffs for skill deviation feedback and apply suggested
+      improvements to each skills/<type>/SKILL.md.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        skill_feedback = {}
+        handoffs_dir = mission_dir / "handoffs"
+        if handoffs_dir.exists():
+            for hf in sorted(handoffs_dir.glob("*.yaml")):
+                try:
+                    data = yaml.load(hf.read_text())
+                    fb = data.get("skill_feedback", [])
+                    if not fb:
+                        continue
+                    skill_name = data.get("skill_name", "")
+                    if not skill_name:
+                        fid = data.get("feature_id", "")
+                        features_path = mission_dir / "features.yaml"
+                        if features_path.exists():
+                            fd = yaml.load(features_path.read_text())
+                            for f in fd.get("features", []):
+                                if str(f.get("id", "")) == str(fid):
+                                    skill_name = f.get("skill_name", "")
+                                    break
+                    if skill_name:
+                        skill_feedback.setdefault(skill_name, []).extend(fb)
+                except Exception:
+                    pass
+
+        updated = []
+        skills_dir = mission_dir / "skills"
+        for skill_name, feedbacks in skill_feedback.items():
+            skill_path = skills_dir / skill_name / "SKILL.md"
+            if not skill_path.exists():
+                continue
+            current = skill_path.read_text()
+            feedback_section = "\n\n## Accumulated Worker Feedback\n\n"
+            feedback_section += "These deviations were reported by workers during the mission.\n"
+            feedback_section += "Review and incorporate into the procedure above as appropriate.\n\n"
+            for fb in feedbacks:
+                step = fb.get("step", "unknown")
+                did = fb.get("what_i_did_instead", "")
+                why = fb.get("why", "")
+                feedback_section += f"- Step `{step}`: {did}"
+                if why:
+                    feedback_section += f" (reason: {why})"
+                feedback_section += "\n"
+            marker = "## Accumulated Worker Feedback"
+            if marker not in current:
+                skill_path.write_text(current + feedback_section)
+            else:
+                skill_path.write_text(current + "\n" + "\n".join(
+                    f"- Step `{fb.get('step','?')}`: {fb.get('what_i_did_instead','')}"
+                    for fb in feedbacks
+                ))
+            updated.append(skill_name)
+
+        print(json.dumps({
+            "skills_updated": updated,
+            "feedback_count": sum(len(v) for v in skill_feedback.values()),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      skills_updated: { type: array }
+      feedback_count: { type: number }
+    routes:
+      - to: $end
+
+output:
+  skills_updated: "{{ collect_skill_feedback.output.skills_updated }}"
+  feedback_count: "{{ collect_skill_feedback.output.feedback_count }}"

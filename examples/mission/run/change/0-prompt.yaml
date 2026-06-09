@@ -1,0 +1,54 @@
+# Prompt for Changes
+#
+# Human gate at each milestone boundary. Gives the user a chance to
+# update scope or guidance before the next milestone begins.
+
+workflow:
+  name: mission-prompt-changes
+  description: Prompt user for mid-mission scope or guidance changes
+  version: "1.0.0"
+  entry_point: prompt_for_changes
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    milestone:
+      type: string
+      required: true
+    seal_path:
+      type: string
+      required: true
+
+  limits:
+    max_iterations: 5
+
+agents:
+  - name: prompt_for_changes
+    type: human_gate
+    prompt: |
+      ## Milestone {{ workflow.input.milestone }} Complete and Sealed
+
+      Sealed at: {{ workflow.input.seal_path }}
+
+      Before the next milestone begins, you can:
+      - **Make a scope change**: add/remove features or modify expected behavior
+      - **Make a guidance change**: update conventions, tool choices, or constraints
+
+      Selecting "Continue" resumes immediately with no changes.
+      The mission loop will pick up the next pending milestone.
+    options:
+      - label: "Continue — no changes needed"
+        value: continue
+        route: $end
+      - label: "Make a scope or guidance change"
+        value: change
+        route: $end
+
+output:
+  action: "{{ prompt_for_changes.output.selected }}"

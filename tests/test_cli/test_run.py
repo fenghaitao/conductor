@@ -991,9 +991,7 @@ class TestBuildSkillDirectories:
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            workflow=SimpleNamespace(
-                runtime=SimpleNamespace(skill_directories=dirs)
-            )
+            workflow=SimpleNamespace(runtime=SimpleNamespace(skill_directories=dirs))
         )
 
     def test_none_when_empty(self, tmp_path: Path) -> None:
@@ -1203,3 +1201,142 @@ output: {}
         assert "Workflow terminated" in result.stderr
         assert "resume terminated" in result.stderr
         assert "bye" in result.stderr
+
+
+class TestProviderProfileOverride:
+    """Tests for ``-p`` accepting a provider profile file (not just a name)."""
+
+    def test_looks_like_provider_file(self, tmp_path: Path) -> None:
+        from conductor.cli.run import _looks_like_provider_file
+
+        # YAML extensions are always treated as files.
+        assert _looks_like_provider_file("providers/ark.yaml") is True
+        assert _looks_like_provider_file("ark.yml") is True
+        # Bare provider names are never files.
+        assert _looks_like_provider_file("copilot") is False
+        assert _looks_like_provider_file("claude") is False
+        # An existing file with no YAML extension is still detected.
+        f = tmp_path / "profile"
+        f.write_text("provider: {name: copilot}\n")
+        assert _looks_like_provider_file(str(f)) is True
+
+    def test_load_profile_wrapped_with_env_and_default_model(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from conductor.cli.run import _load_provider_profile
+
+        monkeypatch.setenv("MY_KEY", "secret-123")
+        f = tmp_path / "ark.yaml"
+        f.write_text(
+            "provider:\n"
+            "  name: copilot\n"
+            "  type: anthropic\n"
+            "  base_url: https://ark.example/api/anthropic\n"
+            "  api_key: ${MY_KEY}\n"
+            "default_model: deepseek-v4-pro\n"
+        )
+        provider, default_model = _load_provider_profile(str(f))
+        assert provider.name == "copilot"
+        assert provider.type == "anthropic"
+        assert provider.base_url == "https://ark.example/api/anthropic"
+        assert provider.api_key.get_secret_value() == "secret-123"
+        assert default_model == "deepseek-v4-pro"
+
+    def test_load_profile_bare_mapping(self, tmp_path: Path) -> None:
+        from conductor.cli.run import _load_provider_profile
+
+        f = tmp_path / "bare.yaml"
+        f.write_text(
+            "name: copilot\n"
+            "type: anthropic\n"
+            "base_url: https://ark.example/api/anthropic\n"
+            "api_key: literal-key\n"
+        )
+        provider, default_model = _load_provider_profile(str(f))
+        assert provider.base_url == "https://ark.example/api/anthropic"
+        assert provider.api_key.get_secret_value() == "literal-key"
+        assert default_model is None
+
+    def test_load_profile_missing_file_raises(self) -> None:
+        from conductor.cli.run import _load_provider_profile
+        from conductor.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="not found"):
+            _load_provider_profile("/no/such/profile.yaml")
+
+    def test_load_profile_invalid_provider_raises(self, tmp_path: Path) -> None:
+        from conductor.cli.run import _load_provider_profile
+        from conductor.exceptions import ConfigurationError
+
+        f = tmp_path / "bad.yaml"
+        # type/base_url without name=copilot is rejected by ProviderSettings.
+        f.write_text("provider:\n  name: claude\n  type: anthropic\n")
+        with pytest.raises(ConfigurationError, match="Invalid provider config"):
+            _load_provider_profile(str(f))
+
+    def test_apply_override_file_sets_provider_and_model(self, tmp_path: Path) -> None:
+        from conductor.cli.run import _apply_cli_provider_override
+        from conductor.config.loader import ConfigLoader
+
+        workflow_file = tmp_path / "wf.yaml"
+        workflow_file.write_text(
+            "workflow:\n"
+            "  name: t\n"
+            "  entry_point: a\n"
+            "  runtime:\n"
+            "    provider:\n"
+            "      name: copilot\n"
+            "      type: anthropic\n"
+            "      base_url: https://api.deepseek.com/anthropic\n"
+            "      api_key: dk\n"
+            "    default_model: deepseek-v4-pro\n"
+            "agents:\n"
+            "  - name: a\n"
+            "    prompt: hi\n"
+            "    routes:\n"
+            "      - to: $end\n"
+            "output: {}\n"
+        )
+        config = ConfigLoader().load(workflow_file)
+
+        profile = tmp_path / "ark.yaml"
+        profile.write_text(
+            "provider:\n"
+            "  name: copilot\n"
+            "  type: anthropic\n"
+            "  base_url: https://ark.example/api/anthropic\n"
+            "  api_key: ark\n"
+            "default_model: ark-model\n"
+        )
+        _apply_cli_provider_override(config, str(profile))
+        assert config.workflow.runtime.provider.base_url == "https://ark.example/api/anthropic"
+        assert config.workflow.runtime.provider.api_key.get_secret_value() == "ark"
+        assert config.workflow.runtime.default_model == "ark-model"
+
+    def test_apply_override_name_still_works(self, tmp_path: Path) -> None:
+        from conductor.cli.run import _apply_cli_provider_override
+        from conductor.config.loader import ConfigLoader
+
+        workflow_file = tmp_path / "wf.yaml"
+        workflow_file.write_text(
+            "workflow:\n"
+            "  name: t\n"
+            "  entry_point: a\n"
+            "  runtime:\n"
+            "    provider:\n"
+            "      name: copilot\n"
+            "      type: anthropic\n"
+            "      base_url: https://api.deepseek.com/anthropic\n"
+            "      api_key: dk\n"
+            "agents:\n"
+            "  - name: a\n"
+            "    prompt: hi\n"
+            "    routes:\n"
+            "      - to: $end\n"
+            "output: {}\n"
+        )
+        config = ConfigLoader().load(workflow_file)
+        # Bare name swaps only the provider name, keeping structured routing.
+        _apply_cli_provider_override(config, "claude")
+        assert config.workflow.runtime.provider.name == "claude"
+        assert config.workflow.runtime.provider.base_url == "https://api.deepseek.com/anthropic"

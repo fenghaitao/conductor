@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -192,6 +191,167 @@ def verbose_log(message: str, style: str = "dim") -> None:
         _verbose_console.print(f"[{style}]{message}[/{style}]")
     if _file_console is not None:
         _file_console.print(message)
+
+
+_STRUCTURED_ROUTING_PROVIDERS = frozenset({"copilot", "claude", "claude-subscription"})
+
+
+def _apply_provider_override(
+    config_provider: ProviderSettings,
+    provider_override: str,
+) -> ProviderSettings:
+    """Return a new ProviderSettings with name swapped to ``provider_override``.
+
+    When the YAML has structured routing (base_url/api_key/etc.) and the
+    target provider supports it, only the ``name`` field is swapped so the
+    endpoint, credentials, and type carry over. For all other combinations
+    the override is a full replacement (original behavior).
+    """
+    from conductor.config.schema import ProviderSettings as _PS
+
+    if config_provider.has_custom_routing() and provider_override in _STRUCTURED_ROUTING_PROVIDERS:
+        data = config_provider.model_dump(mode="python")
+        data["name"] = provider_override
+        return _PS(**data)
+    return _PS(name=provider_override)
+
+
+def _looks_like_provider_file(value: str) -> bool:
+    """Return True when a ``-p`` value should be loaded as a profile file.
+
+    A value is treated as a file when it has a YAML extension or already
+    points at an existing file on disk. Bare provider names (``copilot``,
+    ``claude``, …) never match, so the common case is unambiguous.
+    """
+    if value.endswith((".yaml", ".yml")):
+        return True
+    return Path(value).is_file()
+
+
+def _load_provider_profile(path_str: str) -> tuple[ProviderSettings, str | None]:
+    """Load a ``-p`` provider profile file into ``(provider, default_model)``.
+
+    The file may use either shape:
+
+    - Wrapped (canonical)::
+
+        provider:
+          name: copilot
+          type: anthropic
+          base_url: https://ark.example/api/anthropic
+          api_key: ${ARK_API_KEY}
+        default_model: deepseek-v4-pro   # optional
+
+    - Bare provider mapping (``name``/``base_url``/… at the top level), with
+      an optional sibling ``default_model`` key.
+
+    Environment variables (``${VAR}`` / ``${VAR:-default}``) inside the file
+    are resolved before validation, so secrets such as ``api_key`` can stay
+    out of the file. Returns the validated :class:`ProviderSettings` plus an
+    optional ``default_model`` override (``None`` when absent).
+    """
+    from pydantic import ValidationError as PydanticValidationError
+    from ruamel.yaml import YAML
+    from ruamel.yaml.error import YAMLError
+
+    from conductor.config.loader import _resolve_env_vars_recursive
+    from conductor.config.schema import ProviderSettings as _PS
+    from conductor.exceptions import ConfigurationError
+
+    path = Path(path_str)
+    if not path.is_file():
+        raise ConfigurationError(
+            f"Provider config file not found: '{path_str}'",
+            suggestion="Pass a provider name (e.g. 'copilot') or a path to an "
+            "existing YAML provider profile.",
+        )
+    try:
+        raw = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+    except (YAMLError, OSError, UnicodeDecodeError) as e:
+        raise ConfigurationError(
+            f"Failed to read provider config file '{path_str}': {e}",
+            suggestion="Ensure the file is valid UTF-8 YAML.",
+        ) from e
+
+    if not isinstance(raw, dict):
+        raise ConfigurationError(
+            f"Provider config file '{path_str}' must contain a YAML mapping, "
+            f"got {type(raw).__name__}.",
+            suggestion="See the 'provider:' / 'default_model:' profile format.",
+        )
+
+    raw = _resolve_env_vars_recursive(raw)
+
+    data = dict(raw)
+    default_model = data.pop("default_model", None)
+    provider_data: Any = data.get("provider", data)
+    if isinstance(provider_data, str):
+        provider_data = {"name": provider_data}
+    if not isinstance(provider_data, dict):
+        raise ConfigurationError(
+            f"Provider config file '{path_str}' has an invalid 'provider' "
+            f"section ({type(provider_data).__name__}); expected a mapping.",
+            suggestion="Provide provider fields (name/type/base_url/api_key).",
+        )
+
+    try:
+        provider = _PS(**provider_data)
+    except PydanticValidationError as e:
+        raise ConfigurationError(
+            f"Invalid provider config in '{path_str}': {e}",
+            suggestion="Check field names and values against ProviderSettings.",
+        ) from e
+
+    if default_model is not None and not isinstance(default_model, str):
+        raise ConfigurationError(
+            f"'default_model' in '{path_str}' must be a string, "
+            f"got {type(default_model).__name__}.",
+        )
+
+    return provider, default_model
+
+
+def _apply_cli_provider_override(config: Any, provider_override: str) -> None:
+    """Apply a ``-p`` override (provider name *or* profile file) onto ``config``.
+
+    Mutates ``config.workflow.runtime`` in place: always sets ``provider`` and,
+    when a profile file supplies one, ``default_model``. Reassigning
+    ``runtime.provider`` re-triggers the before-validator on ``RuntimeConfig``
+    so the new value is validated as a ``ProviderSettings``.
+    """
+    existing = config.workflow.runtime.provider
+    if _looks_like_provider_file(provider_override):
+        new_provider, default_model = _load_provider_profile(provider_override)
+        verbose_log(
+            f"Provider override from file '{provider_override}': "
+            f"{_describe_provider(new_provider)}",
+            style="yellow",
+        )
+        config.workflow.runtime.provider = new_provider
+        if default_model is not None:
+            config.workflow.runtime.default_model = default_model
+            verbose_log(
+                f"Provider profile sets default_model: {default_model}",
+                style="yellow",
+            )
+        return
+
+    new_provider = _apply_provider_override(existing, provider_override)
+    if existing.has_custom_routing() and new_provider.has_custom_routing():
+        verbose_log(
+            f"Provider override: swapping name to '{provider_override}', "
+            f"keeping structured routing ({_describe_provider(new_provider)}).",
+            style="yellow",
+        )
+    elif existing.has_custom_routing():
+        verbose_log(
+            f"Provider override: '{provider_override}' does not support structured "
+            "routing; discarding base_url/api_key/type from YAML, using SDK defaults.",
+            style="yellow",
+        )
+    else:
+        verbose_log(f"Provider override: {provider_override}", style="yellow")
+    config.workflow.runtime.provider = new_provider
 
 
 def _describe_provider(provider: ProviderSettings) -> str:
@@ -752,8 +912,9 @@ def verbose_log_agent_message(content: str) -> None:
     Args:
         content: The model response text to display.
     """
-    from conductor.cli.app import is_verbose
     from rich.markdown import Markdown
+
+    from conductor.cli.app import is_verbose
 
     should_console = is_verbose()
     should_file = _file_console is not None
@@ -1431,21 +1592,13 @@ async def run_workflow_async(
         if inputs:
             verbose_log_section("Workflow Inputs", json.dumps(inputs, indent=2))
 
-        # Apply provider override if specified.
-        # Reassigning ``runtime.provider`` to a string re-triggers the
-        # before-validator on ``RuntimeConfig`` and coerces it back to a
-        # ``ProviderSettings`` with default fields, intentionally
-        # discarding any structured custom-routing config from YAML.
+        # Apply provider override if specified. The value is either a provider
+        # name (``copilot``) or a path to a YAML provider profile that carries
+        # base_url/api_key/type (and optionally default_model). Reassigning
+        # ``runtime.provider`` re-triggers the before-validator on
+        # ``RuntimeConfig`` so the new value is validated.
         if provider_override:
-            had_custom = config.workflow.runtime.provider.has_custom_routing()
-            verbose_log(f"Provider override: {provider_override}", style="yellow")
-            if had_custom:
-                verbose_log(
-                    "Provider override discards structured runtime.provider settings "
-                    "(base_url/type/etc.) from YAML; using SDK defaults.",
-                    style="yellow",
-                )
-            config.workflow.runtime.provider = provider_override  # type: ignore[assignment]
+            _apply_cli_provider_override(config, provider_override)
 
         # Build workspace instructions preamble
         instructions_preamble: str | None = None
@@ -1480,7 +1633,9 @@ async def run_workflow_async(
             )
 
         # Use ProviderRegistry for multi-provider support
-        async with ProviderRegistry(config, mcp_servers=mcp_servers, skill_directories=skill_directories) as registry:
+        async with ProviderRegistry(
+            config, mcp_servers=mcp_servers, skill_directories=skill_directories
+        ) as registry:
             # Create and run workflow engine
             verbose_log("Starting workflow execution...")
 
@@ -1951,15 +2106,7 @@ async def resume_workflow_async(
         # Apply provider override if specified (parity with run).
         # See ``run_workflow_async`` for why we re-validate via assignment.
         if provider_override:
-            had_custom = config.workflow.runtime.provider.has_custom_routing()
-            verbose_log(f"Provider override: {provider_override}", style="yellow")
-            if had_custom:
-                verbose_log(
-                    "Provider override discards structured runtime.provider settings "
-                    "(base_url/type/etc.) from YAML; using SDK defaults.",
-                    style="yellow",
-                )
-            config.workflow.runtime.provider = provider_override  # type: ignore[assignment]
+            _apply_cli_provider_override(config, provider_override)
 
         # Verify the current_agent exists in the workflow
         agent_names = {a.name for a in config.agents}
@@ -2009,12 +2156,18 @@ async def resume_workflow_async(
         skill_directories = _build_skill_directories(config, resolved_workflow_path)
 
         # Create engine and restore state
-        async with ProviderRegistry(config, mcp_servers=mcp_servers, skill_directories=skill_directories) as registry:
+        async with ProviderRegistry(
+            config, mcp_servers=mcp_servers, skill_directories=skill_directories
+        ) as registry:
             verbose_log("Starting resumed workflow execution...")
 
-            # Pass stored session IDs to registry for Copilot session resume
+            # Pass stored session IDs to registry for Copilot session resume.
+            # Skip for custom-routed providers (e.g. DeepSeek, local LLMs) —
+            # those endpoints are stateless and don't support session continuation.
             if cp.copilot_session_ids:
-                registry.set_resume_session_ids(cp.copilot_session_ids)
+                provider = config.workflow.runtime.provider
+                if not (hasattr(provider, "has_custom_routing") and provider.has_custom_routing()):
+                    registry.set_resume_session_ids(cp.copilot_session_ids)
 
             # Set up interrupt listener if interactive mode is enabled
             # Disabled in --web mode since the CLI isn't used for interaction

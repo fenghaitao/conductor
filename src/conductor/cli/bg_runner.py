@@ -34,7 +34,6 @@ import secrets
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from io import IOBase

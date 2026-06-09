@@ -26,6 +26,7 @@ from conductor.config.schema import (
     WorkflowDef,
 )
 from conductor.engine.workflow import WorkflowEngine
+from conductor.exceptions import ExecutionError
 from conductor.providers.copilot import CopilotProvider
 
 
@@ -196,9 +197,7 @@ class TestSubWorkflowSkillDirectoriesRestoration:
     """Tests for provider skill_directories restoration after sub-workflow."""
 
     @pytest.mark.asyncio
-    async def test_provider_restored_after_subworkflow(
-        self, tmp_workflow_dir: Path
-    ) -> None:
+    async def test_provider_restored_after_subworkflow(self, tmp_workflow_dir: Path) -> None:
         """Provider's skill_directories are restored after sub-workflow completes."""
         _write_yaml(
             tmp_workflow_dir / "sub.yaml",
@@ -266,9 +265,7 @@ class TestSubWorkflowSkillDirectoriesRestoration:
         assert provider.get_skill_directories() == parent_skills
 
     @pytest.mark.asyncio
-    async def test_no_skill_dirs_leaves_provider_unchanged(
-        self, tmp_workflow_dir: Path
-    ) -> None:
+    async def test_no_skill_dirs_leaves_provider_unchanged(self, tmp_workflow_dir: Path) -> None:
         """Sub-workflow without skill_directories doesn't modify the provider."""
         _write_yaml(
             tmp_workflow_dir / "sub.yaml",
@@ -405,9 +402,7 @@ class TestSubWorkflowSkillDirectoriesRestoration:
         assert seen_skill_dirs[0] == [shared_dir, extra]
 
     @pytest.mark.asyncio
-    async def test_restored_after_subworkflow_failure(
-        self, tmp_workflow_dir: Path
-    ) -> None:
+    async def test_restored_after_subworkflow_failure(self, tmp_workflow_dir: Path) -> None:
         """Provider skill_directories are restored even if sub-workflow fails."""
         _write_yaml(
             tmp_workflow_dir / "sub.yaml",
@@ -465,7 +460,7 @@ class TestSubWorkflowSkillDirectoriesRestoration:
 
         engine = WorkflowEngine(config, provider, workflow_path=parent_path)
 
-        with pytest.raises(Exception):
+        with pytest.raises(ExecutionError):
             await engine.run({})
 
         # Even after failure, provider should be restored
@@ -476,9 +471,7 @@ class TestSubWorkflowSkillDirectoriesSequential:
     """Tests for sequential sub-workflows with different skill_directories."""
 
     @pytest.mark.asyncio
-    async def test_sequential_subworkflows_apply_and_restore(
-        self, tmp_workflow_dir: Path
-    ) -> None:
+    async def test_sequential_subworkflows_apply_and_restore(self, tmp_workflow_dir: Path) -> None:
         """Each sequential sub-workflow gets its own dirs, restored between phases."""
         _write_yaml(
             tmp_workflow_dir / "phase1.yaml",

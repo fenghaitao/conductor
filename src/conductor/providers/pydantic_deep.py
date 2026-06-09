@@ -21,6 +21,7 @@ Canonical event vocabulary emitted via ``event_callback``:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from typing import TYPE_CHECKING, Any
@@ -40,9 +41,9 @@ logger = logging.getLogger(__name__)
 
 # Optional dependency guard — pydantic-deep is not in conductor's core deps.
 try:
+    from pydantic_ai_backends import StateBackend
     from pydantic_deep import create_deep_agent
     from pydantic_deep.deps import DeepAgentDeps
-    from pydantic_ai_backends import StateBackend
 
     PYDANTIC_DEEP_AVAILABLE = True
 except ImportError:
@@ -62,6 +63,7 @@ _RETRY_JITTER = 0.25
 # ---------------------------------------------------------------------------
 # Schema conversion: Conductor OutputField -> Pydantic BaseModel
 # ---------------------------------------------------------------------------
+
 
 def _conductor_type_to_python(field: OutputField) -> Any:
     """Recursively map a Conductor OutputField to a Python type annotation."""
@@ -108,6 +110,7 @@ def _build_output_model(output_schema: dict[str, OutputField]) -> type[BaseModel
 # MCP capability builder
 # ---------------------------------------------------------------------------
 
+
 def _build_mcp_capabilities(mcp_servers: dict[str, MCPServerDef]) -> list[Any]:
     """Convert Conductor MCPServerDef entries to pydantic-ai MCP capabilities.
 
@@ -137,13 +140,9 @@ def _build_mcp_capabilities(mcp_servers: dict[str, MCPServerDef]) -> list[Any]:
                 if srv.url:
                     caps.append(MCPServerHTTP(srv.url))
             else:
-                logger.warning(
-                    "Unknown MCP server type %r for server %r; skipping", srv.type, name
-                )
+                logger.warning("Unknown MCP server type %r for server %r; skipping", srv.type, name)
         except Exception:
-            logger.warning(
-                "Failed to build MCP capability for server %r", name, exc_info=True
-            )
+            logger.warning("Failed to build MCP capability for server %r", name, exc_info=True)
     return caps
 
 
@@ -173,6 +172,7 @@ def _safe_callback(callback: EventCallback, event_type: str, data: dict[str, Any
 # ---------------------------------------------------------------------------
 # Provider implementation
 # ---------------------------------------------------------------------------
+
 
 class PydanticDeepProvider(AgentProvider):
     """AgentProvider that executes agents via pydantic-deepagents.
@@ -376,7 +376,7 @@ class PydanticDeepProvider(AgentProvider):
             )
             output = result.output
             return output if isinstance(output, str) else str(output)
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             raise ProviderError(
                 f"Dialog turn timed out after {self._timeout}s",
                 suggestion="Increase timeout or simplify the dialog",
@@ -514,7 +514,7 @@ class PydanticDeepProvider(AgentProvider):
                 if not exc.is_retryable or attempt == _MAX_RETRY_ATTEMPTS:
                     raise
                 last_error = exc
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 if attempt == _MAX_RETRY_ATTEMPTS:
                     raise ProviderError(
                         f"Agent execution timed out after {self._timeout}s "
@@ -611,7 +611,7 @@ class PydanticDeepProvider(AgentProvider):
                 model=model,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except ProviderError:
             raise
@@ -641,9 +641,7 @@ class PydanticDeepProvider(AgentProvider):
 
         coro = pydantic_agent.run(prompt, deps=deps, **run_kwargs)
         run_coro: Any = (
-            asyncio.wait_for(coro, timeout=self._timeout)
-            if self._timeout is not None
-            else coro
+            asyncio.wait_for(coro, timeout=self._timeout) if self._timeout is not None else coro
         )
         run_task = asyncio.create_task(run_coro)
         interrupt_task = asyncio.create_task(interrupt_signal.wait())
@@ -653,17 +651,13 @@ class PydanticDeepProvider(AgentProvider):
         )
         for t in pending:
             t.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
-            except (asyncio.CancelledError, Exception):
-                pass
 
         if interrupt_task in done:
             run_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await run_task
-            except (asyncio.CancelledError, Exception):
-                pass
             return None  # caller maps to partial=True
 
         return run_task.result()
@@ -723,9 +717,7 @@ class PydanticDeepProvider(AgentProvider):
                                 event_callback, "agent_reasoning", {"content": thinking_buf}
                             )
                         if text_buf:
-                            _safe_callback(
-                                event_callback, "agent_message", {"content": text_buf}
-                            )
+                            _safe_callback(event_callback, "agent_message", {"content": text_buf})
 
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle:
@@ -782,17 +774,13 @@ class PydanticDeepProvider(AgentProvider):
         )
         for t in pending:
             t.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await t
-            except (asyncio.CancelledError, Exception):
-                pass
 
         if interrupt_task in done:
             run_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await run_task
-            except (asyncio.CancelledError, Exception):
-                pass
             return None  # caller maps to partial=True
 
         run_task.result()  # propagate any exception

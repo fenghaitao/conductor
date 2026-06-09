@@ -34,6 +34,7 @@ from conductor.providers._event_format import (
     extract_tool_result_text,
     format_tool_arguments,
 )
+from conductor.providers._routing import endpoint_requires_bearer_auth
 from conductor.providers.base import AgentOutput, AgentProvider, EventCallback, match_model_id
 from conductor.providers.capabilities import ProviderCapabilities
 from conductor.providers.reasoning import (
@@ -173,6 +174,7 @@ class ClaudeProvider(AgentProvider):
         self,
         api_key: str | None = None,
         auth_token: str | None = None,
+        base_url: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -191,6 +193,12 @@ class ClaudeProvider(AgentProvider):
                 When set, ``api_key`` is forced to ``None`` so the SDK sends
                 ``Authorization: Bearer <token>`` instead of ``x-api-key``.
                 Defaults to None (use ANTHROPIC_API_KEY env var).
+            base_url: Custom Anthropic-wire endpoint (e.g. DeepSeek's
+                ``https://api.deepseek.com/anthropic``). When set, the
+                ``models.list()`` connectivity probe is skipped in
+                ``validate_connection`` because third-party endpoints often
+                do not implement ``/v1/models``. Defaults to None (use the
+                Anthropic SDK's native ``ANTHROPIC_BASE_URL`` env var).
             model: Default model to use. Defaults to "claude-3-5-sonnet-latest".
                 This default is chosen for stability and to avoid dated model
                 deprecation risk. The "-latest" suffix ensures compatibility
@@ -226,6 +234,24 @@ class ClaudeProvider(AgentProvider):
         # Normalize empty string to None so the is-not-None guard in
         # _initialize_client and the truthiness check in resolve_auth_token agree.
         self._auth_token = auth_token or None
+        # Normalize empty string to None so the is-not-None guards in
+        # _initialize_client and validate_connection agree.
+        self._base_url = base_url or None
+
+        # Volcengine Ark rejects the ``x-api-key`` header the SDK sends for
+        # ``api_key`` and only accepts ``Authorization: Bearer``. When an
+        # api_key is configured for an Ark endpoint (and no explicit
+        # subscription auth_token is in play), present it as a Bearer
+        # auth_token so the SDK sends the header Ark expects. Keeps the claude
+        # provider profiles uniform (always ``api_key``) — see claude-ark.yaml.
+        if (
+            self._auth_token is None
+            and self._api_key is not None
+            and endpoint_requires_bearer_auth(self._base_url)
+        ):
+            self._auth_token = self._api_key
+            self._api_key = None
+
         self._default_model = model or "claude-3-5-sonnet-latest"
 
         # Validate and store temperature (enforce schema bounds at instantiation)
@@ -274,6 +300,8 @@ class ClaudeProvider(AgentProvider):
             return
 
         kwargs: dict[str, Any] = {"timeout": self._timeout}
+        if self._base_url is not None:
+            kwargs["base_url"] = self._base_url
         if self._auth_token is not None:
             kwargs["auth_token"] = self._auth_token
             # Explicitly suppress the SDK's ANTHROPIC_API_KEY env-var fallback so
@@ -363,12 +391,30 @@ class ClaudeProvider(AgentProvider):
             sets it.
 
         Raises:
-            ValidationError: If reasoning effort is requested for a model
-                that does not support extended thinking.
+            ValidationError: If reasoning effort is requested for a native
+                Anthropic model that does not support extended thinking. The
+                check is skipped for custom ``base_url`` endpoints (see below).
         """
         effort = resolve_reasoning_effort(agent, self._default_reasoning_effort)
         if effort is None:
             return None
+        # Custom Anthropic-wire endpoints (e.g. DeepSeek's /anthropic, Volcengine
+        # Ark) serve non-Claude model ids over the Anthropic wire and may well
+        # support a thinking budget. The static is_claude_thinking_model()
+        # allowlist matches model *names*, so it would hard-fail those before any
+        # request is made. Mirror validate_connection()'s base_url carve-out and
+        # the Copilot provider's skip-when-unknown policy: forward the thinking
+        # budget and let the endpoint accept or reject it, rather than gating on
+        # the model name alone.
+        if self._base_url is not None:
+            logger.info(
+                "Custom Anthropic base_url set (%s); skipping extended-thinking "
+                "model allowlist for %r and forwarding reasoning.effort=%r.",
+                self._base_url,
+                model,
+                effort,
+            )
+            return {"type": "enabled", "budget_tokens": effort_to_budget_tokens(effort)}
         if not is_claude_thinking_model(model):
             raise ValidationError(
                 f"Model {model!r} does not support extended thinking, but "
@@ -401,6 +447,17 @@ class ClaudeProvider(AgentProvider):
         """
         if self._client is None:
             return False
+
+        # Custom anthropic-wire endpoints (e.g. DeepSeek's /anthropic API)
+        # frequently do not implement the /v1/models route, which would make
+        # the probe below fail and abort startup. Skip it and trust the
+        # endpoint; credential/model errors then surface on the first execute.
+        if self._base_url is not None:
+            logger.info(
+                "Custom Anthropic base_url set (%s); skipping models.list() connectivity probe.",
+                self._base_url,
+            )
+            return True
 
         try:
             # Test: list models to verify API key works and perform model verification
@@ -642,12 +699,14 @@ class ClaudeProvider(AgentProvider):
 
             # Apply workflow-wide default reasoning effort if configured.
             # Per-agent reasoning is not available here (no AgentDef in scope).
-            # Mirrors _resolve_thinking_for_agent: raise ValidationError when
-            # the resolved model does not support extended thinking, rather
-            # than silently dropping the reasoning request.
+            # Mirrors _resolve_thinking_for_agent: raise ValidationError when a
+            # native model does not support extended thinking, but skip the
+            # allowlist for custom base_url endpoints (DeepSeek/Ark serve
+            # non-Claude model ids over the Anthropic wire) and forward the
+            # thinking budget for the endpoint to accept or reject.
             if self._default_reasoning_effort is not None:
                 resolved_model = kwargs["model"]
-                if not is_claude_thinking_model(resolved_model):
+                if self._base_url is None and not is_claude_thinking_model(resolved_model):
                     raise ValidationError(
                         f"Model {resolved_model!r} does not support extended thinking, "
                         f"but default_reasoning_effort={self._default_reasoning_effort!r} "

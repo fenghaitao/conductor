@@ -1,0 +1,17 @@
+# Anthropic (direct) via the native Claude / Anthropic provider.
+#
+# Pass to any workflow with:  -p examples/providers/claude-anthropic.yaml
+#
+# Routes to the official Anthropic Messages API through Conductor's `claude`
+# provider (Anthropic SDK). This is the native path — no base_url override
+# needed; the SDK defaults to api.anthropic.com and reads $ANTHROPIC_API_KEY
+# automatically. The api_key here makes the credential source explicit and
+# allows overriding via a different env var if needed.
+#
+# Note: the `claude` provider only honors `base_url` + `api_key` (and an
+# optional `type`, which must be `anthropic`). `bearer_token`, `wire_api`,
+# `headers`, and `azure` are copilot-only and rejected here.
+provider:
+  name: claude
+  api_key: ${ANTHROPIC_API_KEY:-your-api-key-here}
+default_model: claude-sonnet-4-6

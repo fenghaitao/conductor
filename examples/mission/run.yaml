@@ -1,0 +1,326 @@
+# Mission Run Pipeline
+#
+# Executes all pending features from features.yaml, milestone by milestone.
+# Per milestone: implement → review (lint/tests/code-review) → verify (E2E assertions).
+#
+# Can be run standalone after plan.yaml completes, or resumed
+# after interruption via `conductor resume`.
+#
+# Usage:
+#   conductor run examples/mission/run.yaml \
+#     --input mission_dir="/path/to/missions/my-app"
+#
+# Resume:
+#   conductor resume examples/mission/run.yaml
+#
+# The loop:
+#   get_milestone → implement_milestone → review_milestone
+#     → [passed?] → verify_milestone → [passed?] → seal_milestone
+#     → prompt_for_changes → [change?] → apply_scope_changes → loop
+#     → all done → collect_skill_feedback → return_to_orchestrator → $end
+#
+workflow:
+  name: mission-run
+  description: |
+    Execute all pending features in features.yaml, validate each milestone,
+    and loop until all milestones are complete.
+  version: "1.0.0"
+  entry_point: get_milestone
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+      description: Absolute path to the missionDir (output from plan.yaml)
+
+  context:
+    # explicit: each step below declares exactly which prior-step outputs its
+    # input_mapping consumes (see the `input:` lists). Route `when:` conditions
+    # are unaffected — they always evaluate in accumulate mode. This is a
+    # traceability choice; sub-workflows receive only their input_mapping, so it
+    # does not change what any worker model sees.
+    mode: explicit
+
+  limits:
+    max_iterations: 500   # generous — large missions have many features
+
+agents:
+  # ── Get next pending milestone ────────────────────────────────────────────
+  - name: get_milestone
+    type: script
+    description: |
+      Find the next milestone that has pending features.
+      Returns the milestone name, its pending features, and overall state.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        features_path   = mission_dir / "features.yaml"
+        state_path      = mission_dir / "feature-state.yaml"
+
+        # Load immutable plan
+        plan = yaml.load(features_path.read_text())
+        features = plan.get("features", [])
+
+        # Load or initialize feature-state.yaml
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        else:
+            state_data = {"features": {}}
+        state_features = state_data.get("features", {})
+
+        # Ensure every plan feature has a state entry
+        changed = False
+        for f in features:
+            fid = f.get("id", "")
+            if fid and fid not in state_features:
+                state_features[fid] = {"status": "pending", "attempts": 0}
+                changed = True
+        if changed:
+            # Sort by ID for readability
+            state_data["features"] = dict(sorted(state_features.items(),
+                key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+            with open(state_path, "w") as fp:
+                yaml.dump(state_data, fp)
+
+        # Group by milestone using state statuses
+        seen_milestones = []
+        milestone_pending = {}
+        for f in features:
+            ms = f.get("milestone", "default")
+            fid = f.get("id", "")
+            status = state_features.get(fid, {}).get("status", "pending")
+            if ms not in seen_milestones:
+                seen_milestones.append(ms)
+            if status == "pending":
+                milestone_pending.setdefault(ms, []).append(f)
+
+        returned = [f for f in features
+                    if state_features.get(f.get("id",""),{}).get("status") == "returned"]
+
+        current_milestone = None
+        state = None
+        for ms in seen_milestones:
+            ms_features = [f for f in features if f.get("milestone") == ms]
+            pending_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "pending"]
+            completed_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "completed"]
+            returned_in_ms = [f for f in ms_features
+                if state_features.get(f.get("id",""),{}).get("status") == "returned"]
+
+            if pending_in_ms:
+                # Has pending work — implement them
+                current_milestone = ms
+                milestone_pending[ms] = pending_in_ms
+                state = "ready"
+                break
+            elif returned_in_ms:
+                # A worker in this milestone escalated (return_to_orchestrator).
+                # Triage it NOW — before sealing this milestone or advancing to
+                # the next one — rather than deferring every returned feature to
+                # the very end of the mission (which let a milestone seal with a
+                # still-returned feature and its assertions unverified). The
+                # return_to_orchestrator sub-workflow resolves each one
+                # (reset→pending / dismiss→completed / escalate) and loops back.
+                current_milestone = ms
+                state = "returned"
+                break
+            elif completed_in_ms and len(completed_in_ms) == len(ms_features):
+                # All features completed but unreviewed — route to review
+                seal_path = mission_dir / "validation" / ms / "sealed.yaml"
+                if not seal_path.exists():
+                    current_milestone = ms
+                    milestone_pending[ms] = []  # empty — review handles completed
+                    state = "ready"
+                    break
+
+        if state is None:
+            state = "returned" if returned else "all_done"
+
+        def to_plain(d):
+            if isinstance(d, dict):
+                return {k: to_plain(v) for k, v in d.items()}
+            if isinstance(d, list):
+                return [to_plain(v) for v in d]
+            return d
+
+        print(json.dumps({
+            "state": state,
+            "milestone": current_milestone or "",
+            "pending_features": [to_plain(f) for f in milestone_pending.get(current_milestone, [])],
+            "total_features": len(features),
+            "completed_features": sum(1 for f in features
+                if state_features.get(f.get("id",""),{}).get("status") == "completed"),
+            "returned_features": [f.get("id") for f in returned],
+            "pending_count": len(milestone_pending.get(current_milestone, [])),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      state:              { type: string }
+      milestone:          { type: string }
+      pending_features:   { type: array }
+      total_features:     { type: number }
+      completed_features: { type: number }
+      returned_features:  { type: array }
+      pending_count:      { type: number }
+    routes:
+      - to: return_to_orchestrator
+        when: "state == 'returned'"
+      - to: collect_skill_feedback
+        when: "state == 'all_done'"
+      - to: review_milestone
+        when: "pending_count == 0"
+      - to: implement_milestone
+
+  # ── Implement milestone ──────────────────────────────────────────────────
+  - name: implement_milestone
+    type: workflow
+    description: |
+      Implement all pending features in this milestone, one at a time.
+      Each feature is a 0-implement-feature.yaml sub-workflow with its own checkpoint.
+    workflow: ./run/milestone/0-implement.yaml
+    input:
+      - get_milestone.output
+    input_mapping:
+      mission_dir:        "{{ workflow.input.mission_dir }}"
+      milestone:          "{{ get_milestone.output.milestone }}"
+      pending_features:   "{{ get_milestone.output.pending_features | tojson }}"
+    routes:
+      - to: review_milestone
+
+  # ── Review milestone ─────────────────────────────────────────────────────
+  - name: review_milestone
+    type: workflow
+    description: |
+      Run programmatic validators (test, typecheck, lint) and spawn per-feature
+      code review subagents for the completed milestone. Fails → features reset
+      to pending and feature_runner re-runs them.
+    workflow: ./run/milestone/1-review.yaml
+    input:
+      - get_milestone.output
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+      milestone:   "{{ get_milestone.output.milestone }}"
+    routes:
+      - to: verify_milestone
+        when: "review_passed == True"
+      - to: get_milestone
+        when: "review_passed == False"
+
+  # ── Verify milestone ─────────────────────────────────────────────────────
+  - name: verify_milestone
+    type: workflow
+    description: |
+      Test all pending VAL-* assertions for this milestone through real user surfaces.
+      Updates validation-state.yaml with pass/fail results.
+      Fails → fix features injected, loops back to feature_runner via get_milestone.
+      Passes → seal_milestone, then prompt for mid-mission changes.
+    workflow: ./run/milestone/2-verify.yaml
+    input:
+      - get_milestone.output
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+      milestone:   "{{ get_milestone.output.milestone }}"
+    routes:
+      - to: seal_milestone
+        when: "testing_passed == True"
+      - to: get_milestone
+        when: "testing_passed == False"
+
+  # ── Seal milestone ─────────────────────────────────────────────────────────
+  - name: seal_milestone
+    type: workflow
+    description: |
+      Write validation/<milestone>/sealed.yaml to mark this milestone as sealed.
+    workflow: ./run/milestone/3-seal.yaml
+    input:
+      - get_milestone.output
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+      milestone:   "{{ get_milestone.output.milestone }}"
+    routes:
+      - to: prompt_for_changes
+
+  # ── Prompt for mid-mission changes ────────────────────────────────────────────
+  - name: prompt_for_changes
+    type: workflow
+    description: |
+      Ask the user if they want to make scope or guidance changes
+      before the next milestone begins.
+    workflow: ./run/change/0-prompt.yaml
+    input:
+      - seal_milestone.output
+    input_mapping:
+      milestone: "{{ seal_milestone.output.milestone }}"
+      seal_path: "{{ seal_milestone.output.seal_path }}"
+    routes:
+      - to: get_milestone
+        when: "action == 'continue'"
+      - to: apply_scope_changes
+        when: "action == 'change'"
+
+  # ── Apply scope/guidance changes ──────────────────────────────────────────────
+  - name: apply_scope_changes
+    type: workflow
+    description: |
+      Propagate user-requested scope or guidance changes to mission artifacts.
+    workflow: ./run/change/1-apply.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: get_milestone
+
+  # ── Collect skill feedback (all milestones done) ─────────────────────────
+  - name: collect_skill_feedback
+    type: workflow
+    description: |
+      Scan all worker handoffs for skill deviation feedback and apply
+      improvements to skills/<type>/SKILL.md.
+    workflow: ./run/collect-skill-feedback.yaml
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: return_to_orchestrator
+
+  # ── Return to Orchestrator ──────────────────────────────────────────────
+  - name: return_to_orchestrator
+    type: workflow
+    description: |
+      Review worker handoff issues (return_to_orchestrator: true) and any
+      knowledge surfaced during the mission. Applies guidance updates
+      and optionally escalates unresolved issues to the user.
+    workflow: ./run/return-to-orchestrator.yaml
+    input:
+      - get_milestone.output
+    input_mapping:
+      mission_dir: "{{ workflow.input.mission_dir }}"
+    routes:
+      - to: get_milestone
+        when: "{{ get_milestone.output.state == 'returned' }}"
+      - to: $end
+
+output:
+  mission_dir:        "{{ workflow.input.mission_dir }}"
+  total_features:     "{{ get_milestone.output.total_features }}"
+  completed_features: "{{ get_milestone.output.completed_features }}"
+  summary: |
+    Mission run complete.
+    missionDir: {{ workflow.input.mission_dir }}

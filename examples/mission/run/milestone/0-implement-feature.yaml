@@ -1,0 +1,566 @@
+# Implement Feature (single feature)
+#
+# Sub-workflow invoked by 0-implement-milestone.yaml's for_each group.
+# Implements ONE feature and writes the handoff artifact.
+#
+# Steps:
+#   1. load_context    — script: read all mission artifacts + feature's SKILL.md
+#   2. run_init        — script: run init.sh if not yet run this session
+#   3. implement       — LLM worker with full tools; follows skill procedure
+#   4. save_handoff    — script: write handoffs/<feature_id>.yaml
+#   5. mark_complete   — script: update features.yaml feature status → completed
+
+workflow:
+  name: mission-implement-feature
+  description: Implement a single feature and write handoff
+  version: "1.0.0"
+  entry_point: load_context
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    feature_id:
+      type: string
+      required: true
+    feature_description:
+      type: string
+      required: true
+    skill_name:
+      type: string
+      required: true
+    expected_behavior:
+      type: string
+      required: true
+    fulfills:
+      type: string
+      required: false
+      description: Comma-separated VAL-* IDs
+    milestone:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 80
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: load_context
+    type: script
+    description: |
+      Load all mission artifacts and the feature's SKILL.md in one shot.
+      Also loads sibling features in the same milestone for context.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        skill_name  = sys.argv[2]
+        feature_id  = sys.argv[3]
+        milestone   = sys.argv[4]
+        fulfills_str = sys.argv[5]
+
+        def read(p): return p.read_text() if p.exists() else ""
+
+        # Core mission artifacts
+        mission_md      = read(mission_dir / "mission.md")
+        architecture_md = read(mission_dir / "architecture.md")
+        agents_md       = read(mission_dir / "AGENTS.md")
+        services_yaml   = read(mission_dir / "services.yaml")
+        contract_md     = read(mission_dir / "validation-contract.md")
+        working_dir     = read(mission_dir / "working_directory.txt").strip()
+
+        # Worker skill
+        skill_path = mission_dir / "skills" / skill_name / "SKILL.md"
+        skill_content = read(skill_path)
+
+        # Milestone sibling features (for context on what's been done)
+        yaml = YAML()
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        state_data = {}
+        state_path = mission_dir / "feature-state.yaml"
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        state_features = state_data.get("features", {})
+        milestone_features = [
+            f for f in features_data.get("features", [])
+            if f.get("milestone") == milestone
+        ]
+        # Format as readable list with runtime status from feature-state.yaml
+        sibling_summary = "\n".join(
+            f"  [{state_features.get(f.get('id',''),{}).get('status','?')}] {f.get('id')} — {f.get('description', '')}"
+            for f in milestone_features
+        )
+
+        # Filter contract to only the assertion IDs this feature fulfills
+        fulfills_ids = [x.strip() for x in fulfills_str.split(",") if x.strip()]
+        relevant_assertions = []
+        if fulfills_ids and contract_md:
+            lines = contract_md.split("\n")
+            capturing = False
+            for i, line in enumerate(lines):
+                for vid in fulfills_ids:
+                    if vid in line:
+                        capturing = True
+                if capturing:
+                    relevant_assertions.append(line)
+                    # Stop capturing after blank line following content
+                    if line.strip() == "" and relevant_assertions and len(relevant_assertions) > 2:
+                        capturing = False
+
+        assertions_context = "\n".join(relevant_assertions) if relevant_assertions else contract_md[:2000]
+
+        # Library knowledge base — factual patterns discovered during this mission
+        library_dir = mission_dir / "library"
+        library_context = ""
+        if library_dir.exists():
+            lib_files = sorted(library_dir.rglob("*.md"))
+            if lib_files:
+                parts = []
+                for lf in lib_files[:10]:  # cap at 10 to stay in context budget
+                    parts.append(f"### {lf.relative_to(library_dir)}\n{lf.read_text()}")
+                library_context = "\n\n".join(parts)
+
+        # Validate services.yaml schema before passing to worker. A missing
+        # or empty file is itself a problem — the planning phase failed to
+        # produce it (e.g. the LLM emitted unparseable YAML that save_services
+        # rejected) — so flag it rather than letting services_ok default True.
+        services_ok = True
+        services_warn = ""
+        if not services_yaml:
+            services_ok = False
+            services_warn = "services.yaml is missing or empty"
+        elif services_yaml:
+            try:
+                svcs = yaml.load(services_yaml)
+                if not isinstance(svcs, dict):
+                    services_ok = False
+                    services_warn = "services.yaml is not a YAML mapping"
+                elif "commands" not in svcs and "services" not in svcs:
+                    services_ok = False
+                    services_warn = "services.yaml missing both 'commands' and 'services' keys"
+                else:
+                    warns = []
+                    for svc_name, svc in (svcs.get("services") or {}).items():
+                        if not isinstance(svc, dict):
+                            continue
+                        if not svc.get("start"):
+                            warns.append(f"service '{svc_name}' missing start")
+                        if not svc.get("port"):
+                            warns.append(f"service '{svc_name}' missing port")
+                    if warns:
+                        services_warn = "; ".join(warns)
+            except Exception as e:
+                services_ok = False
+                services_warn = f"services.yaml parse error: {e}"
+
+        print(json.dumps({
+            "mission_md":        mission_md,
+            "architecture_md":   architecture_md,
+            "agents_md":         agents_md,
+            "services_yaml":     services_yaml,
+            "services_ok":       services_ok,
+            "services_warn":     services_warn,
+            "skill_content":     skill_content,
+            "assertions":        assertions_context,
+            "sibling_features":  sibling_summary,
+            "library_context":   library_context,
+            "working_directory": working_dir,
+            "init_marker":       str(mission_dir / ".init_done"),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.skill_name }}"
+      - "{{ workflow.input.feature_id }}"
+      - "{{ workflow.input.milestone }}"
+      - "{{ workflow.input.fulfills }}"
+    output:
+      mission_md:        { type: string }
+      architecture_md:   { type: string }
+      agents_md:         { type: string }
+      services_yaml:     { type: string }
+      services_ok:       { type: boolean }
+      services_warn:     { type: string }
+      skill_content:     { type: string }
+      assertions:        { type: string }
+      sibling_features:  { type: string }
+      library_context:   { type: string }
+      working_directory: { type: string }
+      init_marker:       { type: string }
+    routes:
+      - to: run_init
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: run_init
+    type: script
+    description: |
+      Run missionDir/init.sh if it exists and hasn't been run this session.
+      The .init_done marker prevents re-running on resume.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, subprocess, sys
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        working_dir = sys.argv[2]
+        marker = mission_dir / ".init_done"
+        init_sh = mission_dir / "init.sh"
+
+        if marker.exists() or not init_sh.exists():
+            print(json.dumps({"ran": False, "exit_code": 0, "output": ""}))
+            sys.exit(0)
+
+        result = subprocess.run(
+            ["bash", str(init_sh)],
+            cwd=working_dir or str(mission_dir),
+            capture_output=True, text=True, timeout=300
+        )
+        if result.returncode == 0:
+            marker.touch()
+
+        print(json.dumps({
+            "ran": True,
+            "exit_code": result.returncode,
+            "output": (result.stdout + result.stderr)[-2000:],
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ load_context.output.working_directory }}"
+    output:
+      ran:       { type: boolean }
+      exit_code: { type: number }
+      output:    { type: string }
+    routes:
+      - to: implement
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: implement
+    # Cap the agentic tool-use loop. Without this, a loop-prone model (observed:
+    # Kimi K2 grinding 100+ turns of redundant `git diff` on a single feature)
+    # can burn unbounded tokens. Efficient runs finish in ~20 turns; 50 leaves
+    # generous headroom for verification-heavy features while stopping runaways.
+    max_agent_iterations: 50
+    reasoning:
+      effort: high
+    # The Copilot SDK already retries ~5x internally (~90s) before surfacing an
+    # error. Cap Conductor's outer retries at 2 (was the provider default of 3)
+    # and space them 30s apart so a rate-limited Ark window has time to recover
+    # instead of being hammered by full-context re-runs. Each avoided retry saves
+    # a whole agentic run (~50-114K input tokens).
+    retry:
+      max_attempts: 2
+      backoff: exponential
+      delay_seconds: 30
+    description: |
+      Worker agent: implement the feature following the skill procedure.
+      Has full tool access to read/write files and run commands.
+    tools: null
+    prompt: |
+      You are a worker in a multi-agent software mission.
+
+      ═══════════════════════════════════════════════════════════
+      MISSION BOUNDARIES & GUIDANCE (READ THIS FIRST — CRITICAL)
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.agents_md }}
+
+      ═══════════════════════════════════════════════════════════
+      WORKING DIRECTORY
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.working_directory }}
+
+      All implementation work happens in this directory.
+      missionDir (for reading artifacts): {{ workflow.input.mission_dir }}
+
+      ═══════════════════════════════════════════════════════════
+      SERVICES (single source of truth — STRICT RULES)
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.services_yaml }}
+      {% if not load_context.output.services_ok %}
+      WARNING: services.yaml validation issue: {{ load_context.output.services_warn }}
+      Return to orchestrator (return_to_orchestrator: true) if you cannot determine
+      correct service start/stop commands from the above.
+      {% endif %}
+
+      SERVICE RULES:
+      - You MUST use ONLY services defined in services.yaml above
+      - Start services using ONLY the start command shown (with its hardcoded port)
+      - Stop services using ONLY the stop command shown (with its hardcoded port)
+      - NEVER start a service on a different port
+      - NEVER start a service not listed here
+      - If a service's healthcheck fails after retries, set return_to_orchestrator: true
+
+      ═══════════════════════════════════════════════════════════
+      MISSION
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.mission_md }}
+
+      ═══════════════════════════════════════════════════════════
+      ARCHITECTURE
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.architecture_md }}
+
+      ═══════════════════════════════════════════════════════════
+      LIBRARY (factual patterns discovered during this mission)
+      ═══════════════════════════════════════════════════════════
+      {% if load_context.output.library_context %}
+      {{ load_context.output.library_context }}
+      {% else %}
+      (empty — no library entries yet; add discoveries to missionDir/library/ as .md files)
+      {% endif %}
+
+      ═══════════════════════════════════════════════════════════
+      MILESTONE SIBLINGS
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.sibling_features }}
+
+      ═══════════════════════════════════════════════════════════
+      YOUR ASSIGNED FEATURE
+      ═══════════════════════════════════════════════════════════
+      ID:          {{ workflow.input.feature_id }}
+      Description: {{ workflow.input.feature_description }}
+      Expected:    {{ workflow.input.expected_behavior }}
+      Fulfills:    {{ workflow.input.fulfills }}
+
+      ═══════════════════════════════════════════════════════════
+      VALIDATION CONTRACT ASSERTIONS YOU MUST SATISFY
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.assertions }}
+
+      ═══════════════════════════════════════════════════════════
+      YOUR SKILL: {{ workflow.input.skill_name }}
+      ═══════════════════════════════════════════════════════════
+      {{ load_context.output.skill_content }}
+
+      ═══════════════════════════════════════════════════════════
+      INSTRUCTIONS
+      ═══════════════════════════════════════════════════════════
+      Follow the Work Procedure in your skill above.
+
+      BINDING TECHNOLOGY CHOICES:
+      Any packages, libraries, frameworks, or tools specified in AGENTS.md above are BINDING.
+      You MUST NOT substitute alternatives, even if they seem easier or are already installed.
+      If a specified dependency is unavailable, set return_to_orchestrator: true immediately.
+      Do not silently use Flask when FastAPI was specified; Pydantic when dataclasses were
+      specified; or any other substitution. Binding choices are there for architectural reasons.
+
+      VERIFICATION HYGIENE:
+      - NEVER pipe test output through `| tail`, `| head`, or `| grep` — these mask exit codes
+      - If you need less output, run a narrower test target (e.g. `pytest tests/test_auth.py`)
+      - Always record the actual exit code of each validator command in your handoff
+
+      PROCESS CLEANUP:
+      When your implementation is done, stop ALL test runners, dev servers, and browser
+      instances you started — by their declared stop command (services.yaml) or by PID.
+      NEVER use `pkill <name>` — use the stop command with the hardcoded port number.
+      Verify cleanup: run `lsof -ti:<PORT>` for each service port to confirm no orphans.
+
+      LIBRARY CONTRIBUTIONS:
+      If you discover useful factual patterns (env var names, API quirks, config file paths,
+      import conventions), write them to missionDir/library/<area>.md so future workers
+      benefit. Do NOT write normative guidance there — that belongs in AGENTS.md.
+
+      PRE-EXISTING ISSUES:
+      If you find a pre-existing bug that is non-blocking, note it in discovered_issues
+      with severity "non_blocking" and prefix the description with "Pre-existing:". Do NOT
+      fix pre-existing issues — report them and continue.
+
+      HANDOFF SIGNAL — `return_to_orchestrator`:
+      This flag is a BLOCKER ESCALATION, not a completion sign-off. It means
+      "I cannot finish within my authority — the orchestrator must change the
+      plan, guidance, or environment first." Setting it hands the feature to
+      mission-level triage and may cause it to be re-run.
+      - Successful completion is ALWAYS `return_to_orchestrator: false` — even
+        when the feature was already implemented by prior work and you only
+        verified it (a no-op verification is still a completion).
+      - Non-blocking findings go in `discovered_issues` / `skill_feedback` with
+        the flag still `false`. Do NOT escalate just to surface a minor issue or
+        to have the orchestrator "take a look."
+      - Set it `true` ONLY for the genuine blockers called out above (binding
+        dependency unavailable, service healthcheck failing, pre-existing suite
+        breakage, primitives diverged from the architecture). When in doubt, if
+        acceptance criteria are met and assertions verify, the answer is `false`.
+
+      When done, output your handoff as a YAML block in this exact format:
+
+      ```yaml
+      salient_summary: "<1-4 sentences on what happened>"
+      what_was_implemented: "<concrete description, min 50 chars>"
+      what_was_left_undone: "<empty string if truly done>"
+      return_to_orchestrator: false
+      verification:
+        commands_run:
+          - command: "<cmd>"
+            exit_code: <N>
+            observation: "<what you saw>"
+        interactive_checks:
+          - action: "<what you did>"
+            observed: "<what you saw>"
+      tests_added:
+        - file: "<path>"
+          cases:
+            - name: "<test name matching test runner>"
+              description: "<what it checks>"
+      discovered_issues: []
+      skill_name: "{{ workflow.input.skill_name }}"
+      skill_feedback:
+        - step: "<skill step you deviated from>"
+          what_i_did_instead: "<what you actually did>"
+          why: "<reason — e.g. step was unclear, better approach found>"
+      ```
+      Leave skill_feedback as an empty list if you followed the skill exactly.
+
+      NEVER mark a feature complete if its fulfills assertions would not pass.
+    output:
+      handoff_yaml:
+        type: string
+        description: YAML handoff block from the worker
+    routes:
+      - to: save_handoff
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: save_handoff
+    type: script
+    description: Write handoffs/<feature_id>.yaml
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        feature_id = sys.argv[2]
+        handoff_yaml = sys.argv[3]
+
+        handoffs_dir = mission_dir / "handoffs"
+        handoffs_dir.mkdir(exist_ok=True)
+
+        # Normalize feature_id for filename
+        safe_id = feature_id.replace(".", "-")
+        path = handoffs_dir / f"{safe_id}.yaml"
+
+        # Parse and re-serialize for consistent formatting
+        yaml = YAML()
+        try:
+            data = yaml.load(handoff_yaml)
+        except Exception:
+            # If YAML extraction failed, store raw text
+            data = {"raw": handoff_yaml}
+
+        if not isinstance(data, dict):
+            data = {"raw": str(data)}
+
+        data["feature_id"] = feature_id
+
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+
+        # Robustly determine return_to_orchestrator. Workers sometimes emit the
+        # handoff wrapped in a `raw:` string (YAML parse hiccup) or a
+        # `{type:, value:}` schema echo, which buries the flag inside a string
+        # where data.get() can't see it — silently dropping a genuine
+        # escalation. Prefer a clean top-level boolean; otherwise scan the raw
+        # handoff text, which catches every wrapping form. Default False
+        # (normal completion) when the flag is absent entirely.
+        flag = data.get("return_to_orchestrator")
+        if isinstance(flag, bool):
+            return_to_orch = flag
+        else:
+            m = re.search(
+                r"return_to_orchestrator\s*:\s*[\"']?(true|false)",
+                handoff_yaml, re.IGNORECASE,
+            )
+            return_to_orch = bool(m) and m.group(1).lower() == "true"
+        print(json.dumps({
+            "path": str(path),
+            "return_to_orchestrator": return_to_orch,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.feature_id }}"
+      - "{{ implement.output.handoff_yaml }}"
+    output:
+      path:                    { type: string }
+      return_to_orchestrator:  { type: boolean }
+    routes:
+      - to: mark_complete
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: mark_complete
+    type: script
+    description: |
+      Update this feature's status in feature-state.yaml to "completed".
+      Deterministic script — never LLM.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        feature_id = sys.argv[2]
+        return_to_orch = sys.argv[3].lower() == "true"
+        handoff_path = sys.argv[4]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        state_path = mission_dir / "feature-state.yaml"
+
+        if state_path.exists():
+            state_data = yaml.load(state_path.read_text()) or {}
+        else:
+            state_data = {"features": {}}
+        state_features = state_data.get("features", {})
+
+        entry = state_features.get(feature_id, {"status": "pending", "attempts": 0})
+        if return_to_orch:
+            entry["status"] = "returned"
+            entry["return_count"] = int(entry.get("return_count", 0) or 0) + 1
+        else:
+            entry["status"] = "completed"
+        entry["handoff_path"] = handoff_path
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        state_features[feature_id] = entry
+
+        state_data["features"] = dict(sorted(state_features.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
+
+        print(json.dumps({"feature_id": feature_id, "status": entry["status"]}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.feature_id }}"
+      - "{{ save_handoff.output.return_to_orchestrator }}"
+      - "{{ save_handoff.output.path }}"
+    output:
+      feature_id: { type: string }
+      status:     { type: string }
+    routes:
+      - to: $end
+
+output:
+  feature_id:             "{{ workflow.input.feature_id }}"
+  status:                 "{{ mark_complete.output.status }}"
+  return_to_orchestrator: "{{ save_handoff.output.return_to_orchestrator }}"
+  handoff_path:           "{{ save_handoff.output.path }}"

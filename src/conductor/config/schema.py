@@ -506,9 +506,7 @@ class AgentDef(BaseModel):
     """Agent type. Defaults to 'agent' if not specified."""
 
     provider: (
-        Literal[
-            "copilot", "claude", "pydantic-deep", "claude-agent-sdk", "claude-subscription"
-        ]
+        Literal["copilot", "claude", "pydantic-deep", "claude-agent-sdk", "claude-subscription"]
         | None
     ) = None
     """Provider override for this agent.
@@ -1405,18 +1403,41 @@ class ProviderSettings(BaseModel):
             "azure": self.azure,
         }
         if self.name != "copilot":
-            extras = sorted(k for k, v in copilot_only_fields.items() if v is not None)
-            if extras:
-                raise ValueError(
-                    f"Provider fields {extras} are only supported when name='copilot'. "
-                    "Structured routing config for other providers is not supported."
-                )
-            if self.base_url is not None or self.api_key is not None:
-                raise ValueError(
-                    f"Structured provider config (base_url/api_key) is not supported "
-                    f"for name='{self.name}'; use the string shorthand "
-                    f"(provider: {self.name}) and configure credentials via environment variables."
-                )
+            if self.name in ("claude", "claude-subscription"):
+                # The claude family routes the Anthropic SDK at a custom
+                # anthropic-wire endpoint (e.g. DeepSeek's /anthropic API).
+                # base_url + api_key are honored; type is optional but must
+                # be 'anthropic'. The remaining fields are Copilot-only.
+                forbidden = {
+                    "wire_api": self.wire_api,
+                    "bearer_token": self.bearer_token,
+                    "headers": self.headers,
+                    "azure": self.azure,
+                }
+                offenders = sorted(k for k, v in forbidden.items() if v is not None)
+                if offenders:
+                    raise ValueError(
+                        f"Provider fields {offenders} are only supported when name='copilot'."
+                    )
+                if self.type not in (None, "anthropic"):
+                    raise ValueError(
+                        f"name='{self.name}' only supports type='anthropic' "
+                        f"(got type={self.type!r})."
+                    )
+            else:
+                extras = sorted(k for k, v in copilot_only_fields.items() if v is not None)
+                if extras:
+                    raise ValueError(
+                        f"Provider fields {extras} are only supported when name='copilot'. "
+                        "Structured routing config for other providers is not supported."
+                    )
+                if self.base_url is not None or self.api_key is not None:
+                    raise ValueError(
+                        f"Structured provider config (base_url/api_key) is not supported "
+                        f"for name='{self.name}'; use the string shorthand "
+                        f"(provider: {self.name}) and configure credentials via "
+                        "environment variables."
+                    )
 
         if self.azure is not None and self.type != "azure":
             raise ValueError("'azure' options require type='azure'")
@@ -1482,6 +1503,19 @@ class ProviderSettings(BaseModel):
                 self.azure,
             )
         )
+
+    def resolve_anthropic_routing(self) -> tuple[str | None, str | None]:
+        """Resolve ``(base_url, api_key)`` for the Anthropic SDK.
+
+        Used by the ``claude`` / ``claude-subscription`` providers to route
+        the Anthropic SDK at a custom anthropic-wire endpoint (e.g.
+        DeepSeek's ``/anthropic`` API). Returns the YAML-supplied values
+        (``api_key`` unwrapped from ``SecretStr``). When either is ``None``
+        the Anthropic SDK falls back to its native ``ANTHROPIC_BASE_URL`` /
+        ``ANTHROPIC_API_KEY`` environment variables.
+        """
+        api_key = self.api_key.get_secret_value() if self.api_key is not None else None
+        return self.base_url, api_key
 
     @model_serializer(mode="wrap")
     def _serialize(self, nxt: Any) -> Any:

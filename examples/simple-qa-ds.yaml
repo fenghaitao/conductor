@@ -1,26 +1,36 @@
-# Simple Question-Answering Workflow with BYOK (Bring Your Own Key)
+# Simple Question-Answering Workflow — provider profiles (BYOK)
 #
-# This example demonstrates how to use a custom API endpoint with the
-# Copilot provider via BYOK configuration. It mirrors examples/simple-qa.yaml
-# but routes all model requests through a user-provided API endpoint.
+# This example demonstrates switching the model backend at runtime with a
+# provider profile file via `-p`. The workflow carries NO endpoint or
+# credentials itself — base_url / api_key / type (and default_model) all come
+# from the profile you pass on the command line. Switching DeepSeek <-> Ark is
+# a one-word change with no edits to this file.
 #
-# Usage:
-#   conductor run examples/simple-qa-byok.yaml --input question="What is Python?"
+# Run against DeepSeek (direct):
+#   export DEEPSEEK_API_KEY=sk-...
+#   conductor run examples/simple-qa-ds.yaml \
+#     -p examples/providers/copilot-deepseek.yaml \
+#     --input question="What is Python?"
+#
+# Run the SAME workflow against Volcengine Ark:
+#   export VOLCES_ARK_API_KEY=...
+#   conductor run examples/simple-qa-ds.yaml \
+#     -p examples/providers/copilot-ark.yaml \
+#     --input question="What is Python?"
+#
+# `-p` also still accepts a bare provider name (e.g. `-p copilot`).
 
 workflow:
-  name: simple-qa-byok
-  description: A simple question-answering workflow using a BYOK endpoint
+  name: simple-qa-ds
+  description: Question-answering workflow whose backend is chosen via a -p profile
   version: "1.0.0"
   entry_point: answerer
 
   runtime:
-    provider:
-      name: copilot
-      base_url: https://api.deepseek.com/anthropic
-      api_key: ${CONDUCTOR_BYOK_API_KEY:-your-api-key-here}
-      type: anthropic
+    # Provider routing (base_url / api_key / type) and default_model are
+    # supplied by the `-p <profile>` file at runtime — see the header.
+    # temperature is provider-agnostic, so it stays here.
     temperature: 0.7
-    default_model: deepseek-v4-pro
 
   input:
     question:

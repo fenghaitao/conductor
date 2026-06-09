@@ -1,0 +1,227 @@
+# Write Skill (single skill type)
+#
+# Sub-workflow invoked by 6-write-artifacts.yaml's for_each group.
+# Writes missionDir/skills/<skill_name>/SKILL.md for one worker type.
+#
+# Steps:
+#   1. check_existing   — skip if SKILL.md already written
+#   2. generate_skill   — LLM writes the skill following the designing-worker-system template
+#   3. save_skill       — script writes to skills/<skill_name>/SKILL.md
+
+workflow:
+  name: mission-write-artifacts-skill
+  description: Write SKILL.md for one worker type
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    skill_name:
+      type: string
+      required: true
+      description: kebab-case worker type (e.g. "backend-worker", "frontend-worker")
+    mission_md:
+      type: string
+      required: true
+    architecture_md:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        mission_dir = pathlib.Path(sys.argv[1])
+        skill_name = sys.argv[2]
+        if not skill_name:
+            print(json.dumps({"state": "done", "skill_path": ""}))
+            sys.exit(0)
+        skill_path = mission_dir / "skills" / skill_name / "SKILL.md"
+        print(json.dumps({
+            "state": "done" if skill_path.exists() else "ready",
+            "skill_path": str(skill_path),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.skill_name }}"
+    output:
+      state:      { type: string }
+      skill_path: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: generate_skill
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: generate_skill
+    model: deepseek-v4-pro
+    description: |
+      Write a SKILL.md for this worker type following the mission design template.
+    prompt: |
+      Write a SKILL.md for the worker type "{{ workflow.input.skill_name }}".
+
+      MISSION:
+      {{ workflow.input.mission_md }}
+
+      ARCHITECTURE:
+      {{ workflow.input.architecture_md }}
+
+      Use this exact template:
+
+      ```markdown
+      ---
+      name: {{ workflow.input.skill_name }}
+      description: <one-line description of what workers of this type do>
+      ---
+
+      # {{ workflow.input.skill_name | title }}
+
+      NOTE: Startup and cleanup are handled by worker-base. This skill defines the WORK PROCEDURE.
+
+      ## Required Skills and Tools
+
+      <List the tools and MCP capabilities workers of this type must use.
+      Be specific: filesystem tools, bash, browser automation, specific CLIs, etc.
+      Include any binding technology choices from the mission.>
+
+      ## Work Procedure
+
+      ### Step 1: Understand Your Feature
+      Read your feature description and fulfills assertions carefully.
+      Read relevant sections of architecture.md to understand where your code goes.
+
+      ### Step 2: Test First (TDD)
+      Write failing tests before writing implementation code.
+      Locate the test directory from architecture.md and services.yaml.
+      Run: <test command from services.yaml> -- confirm tests fail.
+
+      ### Step 3: Implement
+      <Specific guidance for this worker type — which directories, patterns,
+      how to structure new files, how to integrate with existing code.
+      Be concrete about the architecture boundaries this worker owns.>
+
+      ### Step 4: Verify
+      Run tests: <test command — SCOPED to changed files, e.g. pytest tests/test_auth.py -v>
+      Run typecheck: <typecheck command — scoped if possible, e.g. mypy src/auth/>
+      Run lint: <lint command>
+      Fix all failures before proceeding.
+
+      SCOPING GUIDANCE: For each validator, provide the narrowest command
+      that covers the changed area. Full-suite runs are slow; workers should run the
+      narrowest target that proves their feature is correct:
+      - pytest: `pytest tests/test_<area>.py -v`
+      - mypy: `mypy src/<area>/`
+      - jest: `jest --testPathPattern=<area>`
+      - go test: `go test ./internal/<area>/...`
+      Workers run the full suite at milestone boundary (via services.yaml), but
+      during development they should use the scoped form shown here.
+
+      ### Step 5: Manual Verification
+      <Specific manual checks for this worker type — what to look for,
+      how to exercise the feature by hand, what success looks like.>
+
+      ## Example Handoff
+
+      CRITICAL: The Example Handoff section sets the upper bound of expected worker effort.
+      Make it realistic, specific, and thorough. Workers pattern-match against it —
+      the effort level shown here is the effort level you will receive.
+      A thin example produces thin implementations; a thorough example produces thorough ones.
+
+      The example below is a TEMPLATE. Replace every placeholder with content specific
+      to this worker type and mission:
+      salient_summary: "Implemented user authentication with JWT tokens"
+      what_was_implemented: >
+        POST /api/auth/login endpoint validating credentials against DB,
+        returning signed JWT. POST /api/auth/logout invalidating session.
+        Middleware extracting and validating JWT from Authorization header.
+      what_was_left_undone: ""
+      verification:
+        commands_run:
+          - command: "uv run pytest tests/test_auth.py -v"
+            exit_code: 0
+            observation: "12 tests passed"
+          - command: "uv run mypy src/auth/"
+            exit_code: 0
+            observation: "No type errors"
+        interactive_checks:
+          - action: "POST /api/auth/login with valid credentials"
+            observed: "200 response with JWT token"
+          - action: "POST /api/auth/login with invalid password"
+            observed: "401 response with error message"
+      tests_added:
+        - file: "tests/test_auth.py"
+          cases:
+            - name: "test_login_success"
+              description: "Valid credentials return 200 with JWT"
+            - name: "test_login_invalid_password"
+              description: "Wrong password returns 401"
+      return_to_orchestrator: false
+      discovered_issues: []
+      skill_name: "{{ workflow.input.skill_name }}"
+      skill_feedback: []  # empty if skill was followed exactly
+      ```
+
+      ## When to Return to Orchestrator
+
+      Return immediately (set return_to_orchestrator: true) if:
+      - A service from services.yaml fails its healthcheck after retries
+      - A required dependency is unavailable or blocked
+      - The feature's fulfills assertions cannot be satisfied with the current scope
+      - You encounter a pre-existing breaking issue that blocks your work
+      - <Any skill-specific conditions>
+      ```
+
+      Be specific to this worker type and mission. The Example Handoff defines
+      the upper bound of expected effort — make it realistic and thorough.
+
+      IMPORTANT: Output ONLY the raw markdown — do NOT wrap it in JSON, YAML, or code fences.
+    output:
+      content:
+        type: string
+        description: Complete SKILL.md content
+    routes:
+      - to: save_skill
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: save_skill
+    type: script
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+        skill_path = pathlib.Path(sys.argv[1])
+        content = sys.argv[2]
+        if not str(skill_path):
+            print(json.dumps({"path": "", "size": 0, "skipped": True}))
+            sys.exit(0)
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(content)
+        print(json.dumps({"path": str(skill_path), "size": len(content)}))
+      - "{{ check_existing.output.skill_path }}"
+      - "{{ generate_skill.output.content }}"
+    output:
+      path: { type: string }
+      size: { type: number }
+    routes:
+      - to: $end
+
+output:
+  skill_path: "{{ save_skill.output.path if save_skill is defined else check_existing.output.skill_path }}"

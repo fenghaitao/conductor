@@ -23,16 +23,15 @@ import pytest
 from conductor.config.schema import AgentDef, OutputField
 from conductor.exceptions import ProviderError
 from conductor.providers.pydantic_deep import (
-    PYDANTIC_DEEP_AVAILABLE,
     PydanticDeepProvider,
     _build_output_model,
     _conductor_type_to_python,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_agent(
     name: str = "test",
@@ -77,6 +76,7 @@ def _make_provider(**kwargs: Any) -> PydanticDeepProvider:
 # Schema conversion
 # ---------------------------------------------------------------------------
 
+
 class TestOutputSchema:
     """Tests for _conductor_type_to_python and _build_output_model."""
 
@@ -91,7 +91,7 @@ class TestOutputSchema:
         assert result == list[str]
 
     def test_array_without_items(self) -> None:
-        from typing import get_args, get_origin
+        from typing import get_origin
 
         field = OutputField(type="array")
         result = _conductor_type_to_python(field)
@@ -144,6 +144,7 @@ class TestOutputSchema:
 # Initialization
 # ---------------------------------------------------------------------------
 
+
 class TestPydanticDeepProviderInit:
     """Tests for PydanticDeepProvider.__init__."""
 
@@ -180,6 +181,7 @@ class TestPydanticDeepProviderInit:
 # execute() — plain string output
 # ---------------------------------------------------------------------------
 
+
 class TestExecute:
     """Tests for PydanticDeepProvider.execute()."""
 
@@ -211,8 +213,6 @@ class TestExecute:
 
     @pytest.mark.asyncio
     async def test_structured_output(self) -> None:
-        from pydantic import BaseModel
-
         provider = _make_provider()
         schema = {
             "summary": OutputField(type="string"),
@@ -284,9 +284,9 @@ class TestExecute:
                 "conductor.providers.pydantic_deep.StateBackend",
                 return_value=MagicMock(),
             ),
+            pytest.raises(ProviderError, match="boom"),
         ):
-            with pytest.raises(ProviderError, match="boom"):
-                await provider.execute(agent, {}, "do it")
+            await provider.execute(agent, {}, "do it")
 
     @pytest.mark.asyncio
     async def test_per_agent_model_override(self) -> None:
@@ -294,8 +294,6 @@ class TestExecute:
         agent = _make_agent(model="openai:gpt-4o")
         mock_result = _make_mock_result()
         built_agents: list[Any] = []
-
-        original_build = provider._build_agent
 
         def capture_build(model: str, thinking: Any, output_type: Any = None) -> Any:
             built_agents.append(model)
@@ -356,6 +354,7 @@ class TestExecute:
 # execute() with event_callback
 # ---------------------------------------------------------------------------
 
+
 class TestEventCallback:
     """Tests for canonical event names emitted via event_callback."""
 
@@ -371,9 +370,7 @@ class TestEventCallback:
 
         with (
             patch.object(provider, "_build_agent", return_value=MagicMock()),
-            patch.object(
-                provider, "_run_with_events", new=AsyncMock(return_value=mock_result)
-            ),
+            patch.object(provider, "_run_with_events", new=AsyncMock(return_value=mock_result)),
             patch(
                 "conductor.providers.pydantic_deep.DeepAgentDeps",
                 return_value=MagicMock(),
@@ -403,6 +400,7 @@ class TestEventCallback:
 # Retry logic
 # ---------------------------------------------------------------------------
 
+
 class TestRetry:
     """Tests for _execute_with_retry behavior."""
 
@@ -411,25 +409,25 @@ class TestRetry:
         provider = _make_provider()
         agent = _make_agent()
 
-        with patch.object(
-            provider,
-            "_execute_once",
-            new=AsyncMock(
-                side_effect=ProviderError("fatal", is_retryable=False)
+        with (
+            patch.object(
+                provider,
+                "_execute_once",
+                new=AsyncMock(side_effect=ProviderError("fatal", is_retryable=False)),
             ),
+            pytest.raises(ProviderError, match="fatal"),
         ):
-            with pytest.raises(ProviderError, match="fatal"):
-                await provider._execute_with_retry(agent, {}, "go")
+            await provider._execute_with_retry(agent, {}, "go")
 
     @pytest.mark.asyncio
     async def test_retryable_error_retries_and_succeeds(self) -> None:
         provider = _make_provider()
         agent = _make_agent()
-        mock_result = _make_mock_result()
+        _make_mock_result()
 
         call_count = 0
 
-        async def flaky_execute(*args: Any, **kwargs: Any) -> AgentOutput:
+        async def flaky_execute(*args: Any, **kwargs: Any) -> Any:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -440,7 +438,7 @@ class TestRetry:
             patch.object(provider, "_execute_once", new=AsyncMock(side_effect=flaky_execute)),
             patch("conductor.providers.pydantic_deep.asyncio.sleep", new=AsyncMock()),
         ):
-            result = await provider._execute_with_retry(agent, {}, "go")
+            await provider._execute_with_retry(agent, {}, "go")
 
         assert call_count == 2
 
@@ -448,6 +446,7 @@ class TestRetry:
 # ---------------------------------------------------------------------------
 # execute_dialog_turn()
 # ---------------------------------------------------------------------------
+
 
 class TestDialogTurn:
     """Tests for execute_dialog_turn()."""
@@ -530,7 +529,7 @@ class TestDialogTurn:
     async def test_timeout_raises_provider_error(self) -> None:
         provider = _make_provider(timeout=0.001)
         mock_agent = MagicMock()
-        mock_agent.run = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_agent.run = AsyncMock(side_effect=TimeoutError())
 
         with (
             patch(
@@ -545,15 +544,19 @@ class TestDialogTurn:
                 "conductor.providers.pydantic_deep.StateBackend",
                 return_value=MagicMock(),
             ),
-            patch("conductor.providers.pydantic_deep.asyncio.wait_for", side_effect=asyncio.TimeoutError()),
+            patch(
+                "conductor.providers.pydantic_deep.asyncio.wait_for",
+                side_effect=TimeoutError(),
+            ),
+            pytest.raises(ProviderError, match="timed out"),
         ):
-            with pytest.raises(ProviderError, match="timed out"):
-                await provider.execute_dialog_turn("sys", "hi")
+            await provider.execute_dialog_turn("sys", "hi")
 
 
 # ---------------------------------------------------------------------------
 # validate_connection()
 # ---------------------------------------------------------------------------
+
 
 class TestValidateConnection:
     """Tests for validate_connection()."""
@@ -595,6 +598,7 @@ class TestValidateConnection:
 # close()
 # ---------------------------------------------------------------------------
 
+
 class TestClose:
     @pytest.mark.asyncio
     async def test_close_is_noop(self) -> None:
@@ -605,6 +609,7 @@ class TestClose:
 # ---------------------------------------------------------------------------
 # Factory wiring
 # ---------------------------------------------------------------------------
+
 
 class TestFactoryWiring:
     """Tests for create_provider("pydantic-deep") factory wiring."""
@@ -660,6 +665,7 @@ class TestFactoryWiring:
 # Schema wiring
 # ---------------------------------------------------------------------------
 
+
 class TestSchemaWiring:
     """Tests for schema Literal extensions."""
 
@@ -681,8 +687,9 @@ class TestSchemaWiring:
         assert agent.provider == "pydantic-deep"
 
     def test_registry_provider_type_includes_pydantic_deep(self) -> None:
-        from conductor.providers.registry import ProviderType
         import typing
+
+        from conductor.providers.registry import ProviderType
 
         args = typing.get_args(ProviderType)
         assert "pydantic-deep" in args

@@ -1659,9 +1659,7 @@ class TestSkillDirectoriesPlumbing:
         """skill_directories are passed through to create_session when configured."""
         captured: dict[str, Any] = {}
         skill_dirs = ["/skills/brainstorming", "/skills/writing-plans"]
-        provider = await self._build_provider(
-            captured, monkeypatch, skill_directories=skill_dirs
-        )
+        provider = await self._build_provider(captured, monkeypatch, skill_directories=skill_dirs)
         agent = AgentDef(name="planner", model="gpt-4o", prompt="Plan")
         await provider.execute(agent=agent, context={}, rendered_prompt="Plan")
         assert captured["create_session_kwargs"]["skill_directories"] == skill_dirs

@@ -1,0 +1,270 @@
+# Mission Planning — Understand Phase
+#
+# Iterative Q&A + codebase investigation. Produces a planning_summary
+# consumed by 1-propose.yaml.
+#
+# Steps:
+#   0. check_existing     — skip if mission.md already written (idempotent)
+#   1. inspect_codebase   — script: directory listing, README, package files
+#   2. clarify            — LLM asks user clarifying questions about requirements,
+#                           infrastructure, tech choices, validation approach
+#  2b. clarify_answers    — human gate: user answers the clarifying questions
+#   3. investigate        — LLM deep-dives into codebase, researches tech if needed
+#   4. summarize_plan     — LLM produces a structured planning_summary
+
+workflow:
+  name: mission-explore
+  description: Understand requirements and codebase before proposing
+  version: "1.0.0"
+  entry_point: check_existing
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_name:
+      type: string
+      required: true
+    working_directory:
+      type: string
+      required: false
+      description: Absolute path to the repository (defaults to current directory)
+    idea:
+      type: string
+      required: false
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 60
+
+agents:
+  # ── Step 0 ──────────────────────────────────────────────────────────────────
+  - name: check_existing
+    type: script
+    description: Skip if mission.md already exists (idempotent).
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, sys
+
+        mission_name = sys.argv[1]
+        mission_dir = pathlib.Path("missions") / mission_name
+        mission_md = mission_dir / "mission.md"
+
+        if mission_md.exists():
+            print(json.dumps({
+                "state": "done",
+                "working_directory": (mission_dir / "working_directory.txt").read_text().strip()
+                    if (mission_dir / "working_directory.txt").exists() else str(pathlib.Path.cwd()),
+            }))
+        else:
+            print(json.dumps({"state": "ready"}))
+      - "{{ workflow.input.mission_name }}"
+    output:
+      state:             { type: string }
+      working_directory: { type: string }
+    routes:
+      - to: $end
+        when: "state == 'done'"
+      - to: inspect_codebase
+
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: inspect_codebase
+    type: script
+    description: |
+      Gather structural overview of the working directory so the LLM has
+      baseline context before asking clarifying questions.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, subprocess, sys
+
+        wd = pathlib.Path(sys.argv[1]) if sys.argv[1] else pathlib.Path.cwd()
+
+        def read(p):
+            try: return p.read_text(errors="replace")[:3000]
+            except: return ""
+
+        # Directory tree (2 levels, skip hidden/.venv/node_modules)
+        def tree(d, depth=0, max_depth=2):
+            if depth > max_depth: return []
+            lines = []
+            try:
+                entries = sorted(d.iterdir(), key=lambda x: (x.is_file(), x.name))
+            except: return []
+            for e in entries:
+                if e.name.startswith(".") or e.name in ("node_modules", ".venv", "__pycache__", "dist", "build"):
+                    continue
+                prefix = "  " * depth
+                if e.is_dir():
+                    lines.append(f"{prefix}{e.name}/")
+                    lines.extend(tree(e, depth+1, max_depth))
+                else:
+                    lines.append(f"{prefix}{e.name}")
+            return lines
+
+        structure = "\n".join(tree(wd)) if wd.exists() else "(directory not found)"
+
+        # Key files
+        readme = read(wd / "README.md") or read(wd / "readme.md") or ""
+        pkg = read(wd / "package.json") or read(wd / "pyproject.toml") or ""
+        agents_md = read(wd / "AGENTS.md") or ""
+
+        # Running processes on common ports
+        try:
+            ports = subprocess.check_output(
+                ["bash", "-c", "lsof -i -P -n 2>/dev/null | grep LISTEN | head -30"],
+                text=True, timeout=5
+            )
+        except:
+            ports = "(could not check)"
+
+        print(json.dumps({
+            "structure": structure,
+            "readme": readme,
+            "package_file": pkg,
+            "agents_md": agents_md,
+            "listening_ports": ports,
+            "working_directory": str(wd),
+        }))
+      - "{{ workflow.input.working_directory }}"
+    output:
+      structure:        { type: string }
+      readme:           { type: string }
+      package_file:     { type: string }
+      agents_md:        { type: string }
+      listening_ports:  { type: string }
+      working_directory: { type: string }
+    routes:
+      - to: clarify
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: clarify
+    model: deepseek-v4-pro
+    description: |
+      Ask the user clarifying questions to fully understand requirements,
+      tech choices, infrastructure constraints, and validation approach.
+      Iterates until all important unknowns are resolved.
+    prompt: |
+      You are the architect of a multi-agent software mission. Your job is to
+      deeply understand what needs to be built before proposing anything.
+
+      MISSION NAME: {{ workflow.input.mission_name }}
+      WORKING DIRECTORY: {{ inspect_codebase.output.working_directory }}
+
+      {% if workflow.input.idea %}
+      INITIAL IDEA: {{ workflow.input.idea }}
+      {% endif %}
+
+      CODEBASE STRUCTURE:
+      {{ inspect_codebase.output.structure }}
+
+      {% if inspect_codebase.output.readme %}
+      README:
+      {{ inspect_codebase.output.readme }}
+      {% endif %}
+
+      {% if inspect_codebase.output.package_file %}
+      PACKAGE FILE:
+      {{ inspect_codebase.output.package_file }}
+      {% endif %}
+
+      {% if inspect_codebase.output.listening_ports %}
+      CURRENTLY LISTENING PORTS:
+      {{ inspect_codebase.output.listening_ports }}
+      {% endif %}
+
+      ---
+
+      Ask the user ALL questions needed to understand:
+      1. What exactly needs to be built (features, user flows, edge cases)
+      2. Technology and framework requirements (explicit package/library choices are binding)
+      3. Infrastructure needs (services, databases, APIs, ports)
+      4. External dependencies (APIs, auth providers, third-party SDKs)
+      5. Testing surfaces (web UI, CLI, API) and validation approach
+      6. Any constraints, performance requirements, or security requirements
+
+      Ask everything in one go — be thorough. The user's answers become the
+      foundation of the validation contract and feature decomposition.
+
+      CRITICAL: If the user explicitly names a package, library, SDK, or tool,
+      treat it as a binding requirement — never substitute an alternative later.
+    output:
+      questions:
+        type: string
+        description: All clarifying questions the user needs to answer
+    routes:
+      - to: clarify_answers
+
+  # ── Step 2b ─────────────────────────────────────────────────────────────────
+  - name: clarify_answers
+    type: human_gate
+    description: Collect the user's answers to the clarifying questions
+    prompt: |
+      ## Clarifying Questions
+
+      {{ clarify.output.questions }}
+
+      Please provide detailed answers to all the questions above.
+      Your answers become the foundation of the validation contract
+      and feature decomposition.
+    options:
+      - label: "Submit answers"
+        value: submitted
+        route: investigate
+        prompt_for: response
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: investigate
+    model: deepseek-v4-pro
+    description: |
+      Deep-dive into the codebase and research technologies as needed.
+      Uses available tools to read files, trace code, check ports.
+      Produces a thorough understanding of the implementation landscape.
+    tools: null
+    prompt: |
+      You now have the user's answers from the clarification above.
+
+      USER ANSWERS:
+      {{ clarify_answers.output.response }}
+
+      Investigate the codebase and any technologies as needed to answer:
+      - Where does complexity concentrate?
+      - What existing code is relevant and must be respected?
+      - What infrastructure is already running vs. needs to be set up?
+      - What testing surfaces exist and how can they be exercised?
+      - Are there technology/SDK choices where you need to verify correct patterns?
+
+      Working directory: {{ inspect_codebase.output.working_directory }}
+
+      Use your tools to read files, check running services, research technologies.
+      Investigate until nothing important is ambiguous.
+
+      After investigation, output a comprehensive planning summary with these sections:
+      - **What we're building**: precise feature list with user flows
+      - **Technology decisions**: explicit package/tool choices (binding)
+      - **Architecture approach**: how the system is structured
+      - **Infrastructure**: services needed, ports, external APIs
+      - **Milestones**: logical groupings of features in build order
+      - **Worker types**: distinct skill domains (e.g. backend-worker, frontend-worker)
+      - **Testing surfaces**: how each area will be validated
+      - **Open risks**: anything that needs special attention
+    output:
+      planning_summary:
+        type: string
+        description: Structured planning summary for the propose phase
+    routes:
+      - to: $end
+
+output:
+  planning_summary: "{{ investigate.output.planning_summary if investigate is defined else '' }}"
+  working_directory: "{{ check_existing.output.working_directory if check_existing is defined else inspect_codebase.output.working_directory }}"

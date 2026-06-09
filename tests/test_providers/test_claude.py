@@ -2732,6 +2732,35 @@ class TestClaudeReasoningEffort:
     @patch("conductor.providers.claude.AsyncAnthropic")
     @patch("conductor.providers.claude.anthropic")
     @pytest.mark.asyncio
+    async def test_custom_base_url_skips_thinking_model_allowlist(
+        self, mock_anthropic_module: Mock, mock_anthropic_class: Mock
+    ) -> None:
+        """A non-Claude model id over a custom base_url must NOT be gated by the
+        static extended-thinking allowlist; the thinking budget is forwarded for
+        the endpoint to accept or reject (e.g. DeepSeek/Ark over the Anthropic
+        wire). Mirrors the Copilot provider's skip-when-unknown policy.
+        """
+        from conductor.config.schema import ReasoningConfig
+
+        provider, mock_client = self._build_provider(mock_anthropic_module, mock_anthropic_class)
+        # Custom Anthropic-wire endpoint (DeepSeek/Ark). Read at execute time by
+        # _resolve_thinking_for_agent; mocked client makes no real request.
+        provider._base_url = "https://ark.cn-beijing.volces.com/api/coding"
+        agent = AgentDef(
+            name="t",
+            prompt="p",
+            model="deepseek-v4-pro",
+            reasoning=ReasoningConfig(effort="high"),
+        )
+        # Should not raise despite the non-Claude model name.
+        await provider.execute(agent=agent, context={}, rendered_prompt="p")
+        thinking = mock_client.messages.create.call_args[1]["thinking"]
+        assert thinking == {"type": "enabled", "budget_tokens": 16384}
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    @pytest.mark.asyncio
     async def test_runtime_default_used_when_agent_unset(
         self, mock_anthropic_module: Mock, mock_anthropic_class: Mock
     ) -> None:
@@ -3230,6 +3259,66 @@ class TestClaudeProviderAuthToken:
 
         _, kwargs = mock_async_anthropic.call_args
         assert "default_headers" not in kwargs
+
+
+class TestClaudeArkBearerRouting:
+    """An api_key configured for a Volcengine Ark endpoint is sent as a Bearer token."""
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_ark_endpoint_sends_api_key_as_bearer(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """Ark base_url + api_key -> SDK gets auth_token (Bearer), api_key forced None."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(
+            api_key="ark-key",
+            base_url="https://ark.cn-beijing.volces.com/api/coding",
+        )
+
+        _, kwargs = mock_async_anthropic.call_args
+        assert kwargs.get("auth_token") == "ark-key"
+        assert kwargs.get("api_key") is None
+        assert kwargs.get("base_url") == "https://ark.cn-beijing.volces.com/api/coding"
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_non_ark_endpoint_keeps_x_api_key(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """DeepSeek (non-Ark) base_url + api_key -> stays x-api-key (no auth_token)."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(
+            api_key="ds-key",
+            base_url="https://api.deepseek.com/anthropic",
+        )
+
+        _, kwargs = mock_async_anthropic.call_args
+        assert kwargs.get("api_key") == "ds-key"
+        assert "auth_token" not in kwargs or kwargs.get("auth_token") is None
+
+    @patch("conductor.providers.claude.ANTHROPIC_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude.AsyncAnthropic")
+    @patch("conductor.providers.claude.anthropic")
+    def test_explicit_auth_token_not_clobbered_on_ark(
+        self, mock_anthropic_module: Mock, mock_async_anthropic: Mock
+    ) -> None:
+        """A subscription auth_token wins even on an Ark base_url (api_key ignored)."""
+        mock_anthropic_module.__version__ = "0.77.0"
+
+        ClaudeProvider(
+            api_key="ark-key",
+            auth_token="oauth-token",
+            base_url="https://ark.cn-beijing.volces.com/api/coding",
+        )
+
+        _, kwargs = mock_async_anthropic.call_args
+        assert kwargs.get("auth_token") == "oauth-token"
+        assert kwargs.get("api_key") is None
 
 
 class TestClaudeSubscriptionSystemPrompt:

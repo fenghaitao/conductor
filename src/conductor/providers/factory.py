@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 
 async def create_provider(
     provider_type: Literal[
-        "copilot", "openai-agents", "claude", "pydantic-deep", "claude-agent-sdk",
+        "copilot",
+        "openai-agents",
+        "claude",
+        "pydantic-deep",
+        "claude-agent-sdk",
         "claude-subscription",
     ] = "copilot",
     validate: bool = True,
@@ -111,8 +115,17 @@ async def create_provider(
                     suggestion="Install with: uv add 'anthropic>=0.77.0,<1.0.0'",
                 )
             auth_token = resolve_auth_token() if provider_type == "claude-subscription" else None
+            # Structured runtime.provider routing: point the Anthropic SDK at
+            # a custom anthropic-wire endpoint (e.g. DeepSeek's /anthropic API).
+            # base_url/api_key win over the SDK's native env-var fallbacks.
+            base_url: str | None = None
+            settings_api_key: str | None = None
+            if provider_settings is not None and provider_settings.has_custom_routing():
+                base_url, settings_api_key = provider_settings.resolve_anthropic_routing()
             provider = ClaudeProvider(
+                api_key=settings_api_key,
                 auth_token=auth_token,
+                base_url=base_url,
                 model=default_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -241,7 +254,13 @@ class ProviderFactory:
             provider_type = "copilot"
             provider_settings = None
 
-        default_model = getattr(runtime_config, "model", None)
+        # RuntimeConfig's field is ``default_model`` (there is no ``model``
+        # attribute). Reading ``model`` here always returned None, so the
+        # provider silently fell back to its hardcoded default ("gpt-4o") and
+        # ``runtime.default_model`` (including a ``-p`` profile override) never
+        # reached the provider. Agents without an explicit ``model:`` therefore
+        # ignored the workflow/profile default. Read the correct field.
+        default_model = getattr(runtime_config, "default_model", None)
         temperature = getattr(runtime_config, "temperature", None)
         max_tokens = getattr(runtime_config, "max_tokens", None)
         timeout = getattr(runtime_config, "timeout", None)

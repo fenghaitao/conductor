@@ -1,0 +1,535 @@
+# Review Milestone
+#
+# Auto-injected quality gate at the end of each milestone.
+#   1. Run programmatic validators (test, typecheck, lint)
+#   2. Review each completed feature's handoff + code via LLM
+#   3. Synthesize findings — fail → features reset to pending for re-run
+#
+# Steps:
+#   1. run_validators        — script: run test/typecheck/lint from services.yaml
+#   2. load_milestone_data   — script: collect completed features + handoffs
+#   3. review_features       — for_each (parallel): LLM reviews each feature
+#   4. synthesize            — LLM: aggregate findings, decide pass/fail
+#   5. handle_failures       — script: reset failed features to pending
+
+workflow:
+  name: mission-review
+  description: Run validators and review completed features for a milestone
+  version: "1.0.0"
+  entry_point: run_validators
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    milestone:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 60
+
+for_each:
+  # ── Step 3 (for_each parallel) ──────────────────────────────────────────────
+  - name: review_features
+    type: for_each
+    description: |
+      LLM reviews each completed feature's handoff for quality and correctness.
+      Parallel since each review is independent.
+    source: load_milestone_data.output.completed_features
+    as: feature
+    # Serialized (was 3) so we don't burst 3 concurrent large-context requests
+    # into a rate-limited Ark window. Bump back up if the endpoint has headroom.
+    max_concurrent: 1
+    failure_mode: continue_on_error
+
+    agent:
+      name: review_one_feature
+      retry:
+        max_attempts: 2
+        backoff: exponential
+        delay_seconds: 30
+      description: Review one feature's implementation quality
+      prompt: |
+        Review feature {{ feature.id }}: "{{ feature.description }}"
+
+        HANDOFF:
+        {{ feature.handoff | tojson }}
+
+        VALIDATION ASSERTIONS THIS FEATURE FULFILLS:
+        {% for vid in feature.fulfills %}{{ vid }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+        ARCHITECTURE:
+        {{ load_milestone_data.output.architecture_md }}
+
+        Review for:
+        1. Are the stated fulfills assertions actually satisfied by what was implemented?
+        2. Does the handoff show adequate test coverage (TDD — tests written before implementation)?
+        3. Are there obvious gaps in verification (interactive checks missing, commands not run)?
+        4. Any red flags in what_was_left_undone or discovered_issues?
+        5. Does the implementation scope align with the feature description?
+        6. Did the worker stay within architectural boundaries (correct directories, patterns)?
+        7. For any pre-existing issues noted: are they correctly classified as non-blocking?
+
+        SHARED STATE OBSERVATIONS:
+        While reviewing, also note any observations about shared mission state that belong
+        in specific places. Classify each as one of:
+        - services.yaml: operational commands/services that should be declared there
+        - library: factual patterns/quirks/env-vars discovered during implementation
+        - AGENTS.md: normative guidance the orchestrator should add for future workers
+        - skills: procedural improvements to the skill definition
+
+        Output a review as YAML:
+        ```yaml
+        feature_id: "{{ feature.id }}"
+        verdict: pass | fail | warning
+        issues:
+          - "<issue description>"
+        recommendations:
+          - "<recommendation>"
+        pre_existing_issues:
+          - "<Pre-existing: description>"  # only if handoff lists any
+        shared_state_observations:
+          - destination: services.yaml | library | AGENTS.md | skills
+            content: "<what should be added>"
+            rationale: "<why it belongs there>"
+        ```
+      output:
+        review_yaml:
+          type: string
+
+    routes:
+      - to: synthesize
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: run_validators
+    type: script
+    description: |
+      Run test, typecheck, and lint commands from services.yaml.
+      Captures exit codes and output. Does NOT pipe through head/tail.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, re, subprocess, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        yaml = YAML()
+        services = yaml.load((mission_dir / "services.yaml").read_text()) or {}
+        working_dir_file = mission_dir / "working_directory.txt"
+        cwd = working_dir_file.read_text().strip() if working_dir_file.exists() else str(mission_dir)
+
+        commands = services.get("commands", {})
+        results = []
+        all_passed = True
+
+        for key in ("test", "typecheck", "lint"):
+            cmd = commands.get(key)
+            if not cmd:
+                continue
+            try:
+                result = subprocess.run(
+                    cmd, shell=True, cwd=cwd,
+                    capture_output=True, text=True, timeout=300
+                )
+                passed = result.returncode == 0
+                if not passed:
+                    all_passed = False
+                # Strip ANSI escapes and limit output size
+                output = (result.stdout + result.stderr)[-2000:]
+                output = re.sub(r"\\x1b\[[0-9;]*[a-zA-Z]", "", output)
+                results.append({
+                    "command": cmd,
+                    "key": key,
+                    "exit_code": result.returncode,
+                    "output": output,
+                    "passed": passed,
+                })
+            except Exception as ex:
+                all_passed = False
+                results.append({
+                    "command": cmd,
+                    "key": key,
+                    "exit_code": -1,
+                    "output": str(ex)[:500],
+                    "passed": False,
+                })
+
+        print(json.dumps({"results": results, "all_passed": all_passed}))
+      - "{{ workflow.input.mission_dir }}"
+    output:
+      results:    { type: array }
+      all_passed: { type: boolean }
+    routes:
+      - to: fail_milestone
+        when: "all_passed == False"
+      - to: load_milestone_data
+        when: "all_passed == True"
+
+  # ── Step 1b (validator failure path) ────────────────────────────────────────
+  - name: fail_milestone
+    type: script
+    description: |
+      Called when programmatic validators fail. Resets all completed milestone
+      features back to pending so the run loop can retry them.
+      Writes a synthesis artifact for audit purposes.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import datetime, json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        # Reset all completed features in this milestone to pending in feature-state.yaml
+        state_path = mission_dir / "feature-state.yaml"
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+        state_features = state_data.get("features", {})
+        reset = []
+        # Load features.yaml to find which features belong to this milestone
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        for f in features_data.get("features", []):
+            fid = f.get("id", "")
+            if f.get("milestone") == milestone:
+                entry = state_features.get(fid, {})
+                if entry.get("status") == "completed":
+                    entry["status"] = "pending"
+                    state_features[fid] = entry
+                    reset.append(str(fid))
+        state_data["features"] = dict(sorted(state_features.items(),
+            key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+        with open(state_path, "w") as fp:
+            yaml.dump(state_data, fp)
+
+        # Write synthesis artifact for audit trail
+        out_dir = mission_dir / "validation" / milestone / "review"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        synthesis = {
+            "verdict": "fail",
+            "passed_features": [],
+            "failed_features": reset,
+            "summary": "Programmatic validators failed (tests/typecheck/lint). All milestone features reset to pending.",
+            "issues": [{"feature_id": fid, "issue": "Validator failure", "action": "reset_to_pending"} for fid in reset],
+            "pre_existing_issues": [],
+        }
+        with open(out_dir / "synthesis.yaml", "w") as f:
+            yaml.dump(synthesis, f)
+
+        print(json.dumps({
+            "review_passed": False,
+            "failed_count": len(reset),
+            "reset_features": reset,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      review_passed: { type: boolean }
+      failed_count:    { type: number }
+      reset_features:  { type: array }
+    routes:
+      - to: $end
+
+  # ── Step 2 ──────────────────────────────────────────────────────────────────
+  - name: load_milestone_data
+    type: script
+    description: |
+      Collect completed features in this milestone that need (re-)review.
+      Skips features whose code hasn't changed since their last review
+      (attempts == last_reviewed_attempt).
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        yaml = YAML()
+        data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        state_data = yaml.load((mission_dir / "feature-state.yaml").read_text()) or {}
+        feat_state = state_data.get("features", {})
+
+        # Collect all completed features in this milestone (exclude review/testing skills)
+        all_completed = [
+            f for f in data.get("features", [])
+            if f.get("milestone") == milestone
+            and feat_state.get(f.get("id", ""), {}).get("status") == "completed"
+            and not f.get("skill_name", "").startswith("review-")
+            and not f.get("skill_name", "").startswith("user-testing-")
+        ]
+
+        # Split: features that need re-review vs. already-reviewed-and-unchanged
+        to_review = []
+        previously_reviewed = []
+        for f in all_completed:
+            fid = f["id"]
+            fs = feat_state.get(fid, {})
+            attempts = fs.get("attempts", 0)
+            last_reviewed = fs.get("last_reviewed_attempt")
+            if last_reviewed is None or attempts > last_reviewed:
+                to_review.append(f)
+            else:
+                previously_reviewed.append(fid)
+
+        # Load handoffs for features being reviewed
+        for f in to_review:
+            safe_id = f["id"].replace(".", "-")
+            handoff_path = mission_dir / "handoffs" / f"{safe_id}.yaml"
+            if handoff_path.exists():
+                try:
+                    f["handoff"] = yaml.load(handoff_path.read_text())
+                except Exception:
+                    f["handoff"] = {}
+
+        def read(p): return p.read_text() if p.exists() else ""
+        print(json.dumps({
+            "completed_features": to_review,
+            "previously_reviewed": previously_reviewed,
+            "all_previously_reviewed": len(to_review) == 0 and len(previously_reviewed) > 0,
+            "mission_md":      read(mission_dir / "mission.md"),
+            "architecture_md": read(mission_dir / "architecture.md"),
+            "contract_md":     read(mission_dir / "validation-contract.md"),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      completed_features:     { type: array }
+      previously_reviewed:    { type: array }
+      all_previously_reviewed: { type: boolean }
+      mission_md:             { type: string }
+      architecture_md:        { type: string }
+      contract_md:            { type: string }
+    routes:
+      - to: review_features
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: synthesize
+    retry:
+      max_attempts: 2
+      backoff: exponential
+      delay_seconds: 30
+    description: |
+      Aggregate all feature reviews + validator results into a pass/fail decision.
+    prompt: |
+      Synthesize the review results for milestone "{{ workflow.input.milestone }}".
+
+      VALIDATOR RESULTS:
+      {{ run_validators.output.results | tojson }}
+
+      FEATURES PREVIOUSLY REVIEWED AND UNCHANGED (auto-pass, no re-review needed):
+      {{ load_milestone_data.output.previously_reviewed | tojson }}
+
+      FEATURE REVIEWS (one review_yaml block per completed feature — empty if all already reviewed):
+      {{ review_features.outputs | tojson }}
+
+      MISSION.MD (for context):
+      {{ load_milestone_data.output.mission_md }}
+
+      When FEATURE REVIEWS is empty and PREVIOUSLY REVIEWED is non-empty, all
+      features were already reviewed and their code hasn't changed — output
+      verdict "pass" with empty passed_features/failed_features.
+
+      Decide overall pass/fail for this milestone review.
+
+      Also perform SHARED STATE TRIAGE:
+      Collect all shared_state_observations from the feature reviews above and triage
+      each observation using first-principles:
+      - services.yaml: does it describe a service with start/stop/port/healthcheck?
+      - library/: is it a factual discovery (env var, API quirk, path convention)?
+        Write to library/<area-slug>.md. NOT normative guidance.
+      - AGENTS.md: is it normative guidance the orchestrator wants workers to follow?
+        Append to the appropriate section.
+      - skills/<name>/SKILL.md: is it a procedural improvement to a specific skill?
+
+      Output YAML:
+      ```yaml
+      verdict: pass | fail
+      passed_features: []   # feature IDs that passed review
+      failed_features: []   # feature IDs that failed review (need re-implementation)
+      summary: "<2-4 sentence summary>"
+      issues:
+        - feature_id: "1.1"
+          issue: "<what's wrong>"
+          action: "reset_to_pending"
+      pre_existing_issues:
+        - "<Pre-existing: description>"  # deduplicated from all feature reviews
+      shared_state_updates:
+        - destination: library | AGENTS.md | skills
+          path_suffix: "<e.g. auth-patterns.md or AGENTS.md or skills/backend-worker/SKILL.md>"
+          content: "<text to write or append>"
+          operation: append | create
+      ```
+
+      A feature should be in failed_features only if:
+      - Its fulfills assertions are clearly not satisfied
+      - Critical verification was skipped (no tests added, no commands run)
+      - There is a breaking defect mentioned in the handoff
+
+      Warnings alone do not fail a feature.
+    output:
+      synthesis_yaml:
+        type: string
+    routes:
+      - to: handle_failures
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: handle_failures
+    type: script
+    description: |
+      Parse synthesis. Reset failed features to pending in feature-state.yaml.
+      Record last_reviewed_attempt for features that passed (so they are
+      skipped on future review rounds unless re-implemented).
+      Write synthesis to validation/<milestone>/review/synthesis.yaml.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        synthesis_yaml = sys.argv[3]
+        previously_reviewed = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        try:
+            synthesis = yaml.load(synthesis_yaml)
+        except Exception:
+            synthesis = {"verdict": "pass", "failed_features": [], "summary": "parse error"}
+
+        # Write synthesis artifact
+        out_dir = mission_dir / "validation" / milestone / "review"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / "synthesis.yaml", "w") as f:
+            yaml.dump(synthesis, f)
+
+        # Load feature-state for reading/writing
+        state_path = mission_dir / "feature-state.yaml"
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {"features": {}}
+        state_features = state_data.get("features", {})
+
+        # Reset failed features to pending
+        failed = synthesis.get("failed_features", [])
+        if failed:
+            for fid in failed:
+                entry = state_features.get(fid, {})
+                entry["status"] = "pending"
+                state_features[fid] = entry
+
+        # Record last_reviewed_attempt for features that passed this round.
+        # This prevents re-reviewing unchanged features on future rounds.
+        passed = synthesis.get("passed_features", [])
+        for fid in passed + previously_reviewed:
+            entry = state_features.get(fid, {})
+            entry["last_reviewed_attempt"] = entry.get("attempts", 0)
+
+        # Persist state if anything changed
+        if failed or passed or previously_reviewed:
+            state_data["features"] = dict(sorted(state_features.items(),
+                key=lambda x: (tuple(int(n) for n in x[0].split(".")))))
+            with open(state_path, "w") as fp:
+                yaml.dump(state_data, fp)
+
+        verdict = synthesis.get("verdict", "pass")
+
+        # Apply shared-state updates
+        shared_updates = synthesis.get("shared_state_updates", [])
+        for update in shared_updates:
+            dest = update.get("destination", "")
+            path_suffix = update.get("path_suffix", "")
+            content = update.get("content", "").strip()
+            operation = update.get("operation", "append")
+            if not path_suffix or not content:
+                continue
+            target_path = mission_dir / path_suffix
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if operation == "create" or not target_path.exists():
+                target_path.write_text(content + "\n")
+            else:  # append
+                existing = target_path.read_text()
+                # Avoid exact duplicates
+                if content[:80] not in existing:
+                    target_path.write_text(existing + "\n\n" + content + "\n")
+
+        # Update Known Pre-Existing Issues in AGENTS.md
+        pre_existing = synthesis.get("pre_existing_issues", [])
+        if pre_existing:
+            agents_path = mission_dir / "AGENTS.md"
+            if agents_path.exists():
+                agents_text = agents_path.read_text()
+                marker = "## Known Pre-Existing Issues"
+                if marker in agents_text:
+                    # Find where to insert (after the section header and any existing content)
+                    insert_pos = agents_text.index(marker) + len(marker)
+                    new_entries = "\n".join(f"- {issue}" for issue in pre_existing
+                                            if issue not in agents_text)
+                    if new_entries:
+                        agents_text = agents_text[:insert_pos] + "\n" + new_entries + agents_text[insert_pos:]
+                        agents_path.write_text(agents_text)
+                else:
+                    # Append section
+                    new_section = "\n\n## Known Pre-Existing Issues\n\n"
+                    new_section += "\n".join(f"- {issue}" for issue in pre_existing)
+                    agents_path.write_text(agents_text + new_section + "\n")
+
+        print(json.dumps({
+            "review_passed": verdict == "pass",
+            "failed_count": len(failed),
+            "synthesis_path": str(out_dir / "synthesis.yaml"),
+            "shared_updates_applied": len(shared_updates),
+            "pre_existing_added": len(pre_existing),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+      - "{{ synthesize.output.synthesis_yaml }}"
+      - "{{ load_milestone_data.output.previously_reviewed | tojson }}"
+    output:
+      review_passed:         { type: boolean }
+      failed_count:            { type: number }
+      synthesis_path:          { type: string }
+      shared_updates_applied:  { type: number }
+      pre_existing_added:      { type: number }
+    routes:
+      - to: $end
+
+output:
+  # Two mutually exclusive failure-reset steps can run: fail_milestone (validators
+  # failed: run_validators -> fail_milestone -> $end) or handle_failures (validators
+  # passed: ... -> handle_failures -> $end). Prefer whichever actually executed so
+  # failed_count reflects the real reset count instead of the else-fallback.
+  review_passed: >-
+    {{ fail_milestone.output.review_passed if fail_milestone is defined
+       else (handle_failures.output.review_passed if handle_failures is defined else false) }}
+  failed_count: >-
+    {{ fail_milestone.output.failed_count if fail_milestone is defined
+       else (handle_failures.output.failed_count if handle_failures is defined else 0) }}

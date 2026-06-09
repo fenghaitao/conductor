@@ -1,0 +1,459 @@
+# Verify Milestone
+#
+# Auto-injected quality gate after review passes for each milestone.
+# Tests pending VAL-* assertions through REAL user surfaces.
+# Updates validation-state.yaml with pass/fail results.
+# Failed assertions → fix features injected into features.yaml.
+#
+# E2E validation is the DEFAULT. Mocks are a conscious opt-out
+# requiring explicit user approval — not a silent fallback.
+# Concurrency is set to a conservative fixed limit.
+#
+# Steps:
+#   1. collect_assertions  — script: get pending assertions for this milestone
+#   2. test_assertions     — for_each (parallel groups): LLM tests each assertion group
+#   3. update_state        — script: write pass/fail to validation-state.yaml
+#   4. inject_fix_features — script: for failed assertions, add fix features to features.yaml
+
+workflow:
+  name: mission-verify
+  description: Test VAL-* assertions through real user surfaces for a milestone
+  version: "1.0.0"
+  entry_point: collect_assertions
+
+  runtime:
+    provider:
+      name: copilot
+      base_url: https://api.deepseek.com/anthropic
+      api_key: ${DEEPSEEK_API_KEY}
+      type: anthropic
+    default_model: deepseek-v4-pro
+
+  input:
+    mission_dir:
+      type: string
+      required: true
+    milestone:
+      type: string
+      required: true
+
+  context:
+    mode: accumulate
+
+  limits:
+    max_iterations: 80
+
+for_each:
+  # ── Step 3 (for_each parallel) ──────────────────────────────────────────────
+  - name: test_assertions
+    type: for_each
+    description: |
+      Test each assertion group concurrently. Each group targets one contract area.
+      Uses the tool specified in the assertion (agent-browser, curl, exec).
+      Concurrency is set to a conservative fixed limit.
+    source: collect_assertions.output.assertion_groups
+    as: group
+    # Serialized (was 2) to avoid concurrent large-context bursts against a
+    # rate-limited Ark window. Bump back up if the endpoint has headroom.
+    max_concurrent: 1
+    failure_mode: continue_on_error
+
+    agent:
+      name: test_one_group
+      retry:
+        max_attempts: 2
+        backoff: exponential
+        delay_seconds: 30
+      description: Test assertions for one contract area
+      tools: null
+      prompt: |
+        Test these validation contract assertions for area "{{ group.group_id }}".
+
+        WORKING DIRECTORY: {{ collect_assertions.output.working_directory }}
+        SERVICES:
+        {{ collect_assertions.output.services_yaml }}
+
+        TESTING GUIDANCE (from AGENTS.md):
+        {{ collect_assertions.output.agents_md }}
+
+        ASSERTIONS TO TEST:
+        {% for a in group.assertions %}
+        {{ a.text }}
+        {% endfor %}
+
+        ══════════════════════════════════════════════════════
+        E2E VALIDATION POLICY (CRITICAL)
+        ══════════════════════════════════════════════════════
+        DEFAULT: Test through REAL integrations — real database, real API, real browser.
+        DO NOT substitute mocks, stubs, or fakes unless the user has explicitly requested it.
+
+        If a real dependency appears unavailable:
+        1. Attempt to start it using services.yaml commands
+        2. If startup fails, report status "blocked" with exact error
+        3. DO NOT silently switch to mocks — that hides real failures
+
+        Setting status "blocked" is the correct response when E2E testing is impossible.
+        A blocked assertion is NOT a passed assertion.
+        ══════════════════════════════════════════════════════
+
+        For each assertion:
+        1. Start required services if not running (use services.yaml start command only)
+        2. Test through the REAL user surface specified in the assertion's Tool field
+        3. Collect the evidence specified in the Evidence field
+        4. Determine pass/fail/blocked with a clear reason
+
+        VERIFICATION HYGIENE:
+        - Do NOT pipe test output through `| tail`, `| head`, or `| grep` — this masks exit codes
+        - If you need less output, run a narrower test target instead
+        - Always capture the actual exit code of each command
+
+        Output results as YAML:
+        ```yaml
+        group_id: "{{ group.group_id }}"
+        results:
+          - id: "VAL-XXX-001"
+            status: pass | fail | blocked
+            reason: "<what you observed>"
+            evidence: "<screenshots taken, commands run with exit codes, responses received>"
+        ```
+
+        Status meanings:
+        - pass: behavior confirmed as specified via real integration
+        - fail: behavior does not match specification (real bug found)
+        - blocked: cannot test E2E — prerequisite service unavailable after startup attempt
+      output:
+        results_yaml:
+          type: string
+
+    routes:
+      - to: update_state
+
+agents:
+  # ── Step 1 ──────────────────────────────────────────────────────────────────
+  - name: collect_assertions
+    type: script
+    description: |
+      Collect pending VAL-* assertion IDs for features in this milestone.
+      Groups assertions by area for parallel testing (2-5 per group).
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        yaml = YAML()
+
+        # Get assertion IDs claimed by completed features in this milestone
+        features_data = yaml.load((mission_dir / "features.yaml").read_text()) or {}
+        # Read runtime status from feature-state.yaml
+        state_path = mission_dir / "feature-state.yaml"
+        feat_state = yaml.load(state_path.read_text()) if state_path.exists() else {}
+        feat_state = feat_state.get("features", {}) if feat_state else {}
+        milestone_assertion_ids = set()
+        for f in features_data.get("features", []):
+            fid = f.get("id", "")
+            status = feat_state.get(fid, {}).get("status", "pending")
+            if (f.get("milestone") == milestone and
+                status == "completed" and
+                not f.get("skill_name", "").startswith("review-") and
+                not f.get("skill_name", "").startswith("user-testing-")):
+                for vid in f.get("fulfills", []):
+                    milestone_assertion_ids.add(vid)
+
+        # Collect every assertion not yet confirmed passing. "failed" and
+        # "blocked" MUST be re-collected here: a fix feature gets implemented
+        # for a failed assertion, but if we only re-tested "pending" ids the
+        # assertion would never be re-exercised and the milestone would seal
+        # with it still failing. "blocked" is re-tried in case the blocking
+        # dependency has since become available.
+        state_path = mission_dir / "validation-state.yaml"
+        state = yaml.load(state_path.read_text()) if state_path.exists() else {}
+        pending_ids = [
+            vid for vid in milestone_assertion_ids
+            if state.get(vid, "pending") in ("pending", "failed", "blocked")
+        ]
+
+        if not pending_ids:
+            print(json.dumps({
+                "state": "all_done",
+                "assertion_groups": [],
+                "contract_md": "",
+                "services_yaml": "",
+                "working_directory": "",
+                "agents_md": "",
+            }))
+            sys.exit(0)
+
+        # Parse the full assertion text for each pending ID
+        contract_path = mission_dir / "validation-contract.md"
+        contract_text = contract_path.read_text() if contract_path.exists() else ""
+
+        def extract_assertion(vid, text):
+            """Extract full assertion block for a VAL-* ID."""
+            pattern = rf"(### {re.escape(vid)}:.*?)(?=### VAL-|## |$)"
+            m = re.search(pattern, text, re.DOTALL)
+            return m.group(1).strip() if m else f"### {vid}: (not found in contract)"
+
+        # Extract tool from assertion text
+        def get_tool(assertion_text):
+            m = re.search(r"Tool:\s*(\S+)", assertion_text)
+            return m.group(1) if m else "exec"
+
+        assertions = [
+            {
+                "id": vid,
+                "text": extract_assertion(vid, contract_text),
+                "tool": get_tool(extract_assertion(vid, contract_text)),
+            }
+            for vid in pending_ids
+        ]
+
+        # Group by area prefix (VAL-AUTH-001 → AUTH) for parallel testing
+        groups = {}
+        for a in assertions:
+            m = re.match(r"VAL-([A-Z]+)-\d+", a["id"])
+            area = m.group(1) if m else "MISC"
+            groups.setdefault(area, []).append(a)
+
+        # Convert to list of groups for for_each
+        assertion_groups = [
+            {"group_id": area, "assertions": items}
+            for area, items in groups.items()
+        ]
+
+        def read(p): return p.read_text() if p.exists() else ""
+        wd = read(mission_dir / "working_directory.txt").strip()
+
+        print(json.dumps({
+            "state": "ready",
+            "assertion_groups": assertion_groups,
+            "contract_md": contract_text,
+            "services_yaml": read(mission_dir / "services.yaml"),
+            "working_directory": wd,
+            "agents_md": read(mission_dir / "AGENTS.md"),
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+    output:
+      state:             { type: string }
+      assertion_groups:  { type: array }
+      contract_md:       { type: string }
+      services_yaml:     { type: string }
+      working_directory: { type: string }
+      agents_md:         { type: string }
+    routes:
+      - to: $end
+        when: "state == 'all_done'"
+      - to: test_assertions
+
+  # ── Step 3 ──────────────────────────────────────────────────────────────────
+  - name: update_state
+    type: script
+    description: |
+      Parse all group results and update validation-state.yaml.
+      Write per-milestone testing report.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        # Load current state
+        state_path = mission_dir / "validation-state.yaml"
+        state = yaml.load(state_path.read_text()) if state_path.exists() else {}
+
+        passed, failed, blocked = [], [], []
+
+        # Parse results from for_each context outputs
+        outputs = json.loads(sys.argv[3]) if sys.argv[3] else []
+        for item in (outputs if isinstance(outputs, list) else []):
+            results_yaml_str = item.get("results_yaml", "")
+            if not results_yaml_str:
+                continue
+            try:
+                data = yaml.load(results_yaml_str)
+                for r in data.get("results", []):
+                    vid = r.get("id", "")
+                    status = r.get("status", "blocked")
+                    if status == "pass":
+                        passed.append(vid)
+                    elif status == "fail":
+                        failed.append(vid)
+                    else:
+                        blocked.append(vid)
+            except Exception:
+                pass
+
+        # Record every outcome — including blocked — so the next
+        # collect_assertions pass can re-test still-unverified ids.
+        for vid in passed:
+            state[vid] = "passed"
+        for vid in failed:
+            state[vid] = "failed"
+        for vid in blocked:
+            state[vid] = "blocked"
+
+        with open(state_path, "w") as f:
+            yaml.dump(state, f)
+
+        # A blocked assertion is NOT a pass — E2E could not be exercised, so
+        # the milestone must not seal on it. The gate clears only when there
+        # are zero failed AND zero blocked assertions.
+        print(json.dumps({
+            "passed": passed,
+            "failed": failed,
+            "blocked": blocked,
+            "testing_passed": len(failed) == 0 and len(blocked) == 0,
+        }))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+      - "{{ test_assertions.outputs | tojson }}"
+    output:
+      passed:         { type: array }
+      failed:         { type: array }
+      blocked:        { type: array }
+      testing_passed: { type: boolean }
+    routes:
+      - to: $end
+        when: "testing_passed == True"
+      - to: inject_fix_features
+        when: "testing_passed == False"
+
+  # ── Step 5 ──────────────────────────────────────────────────────────────────
+  - name: inject_fix_features
+    type: script
+    description: |
+      For each failed or blocked assertion, add a fix feature to features.yaml
+      so the run loop will implement the fix before re-testing.
+      Handles both `failed` (real bug) and `blocked` (dependency unavailable)
+      assertions so the verify loop doesn't stall on unblockable tests.
+    command: uv
+    args:
+      - run
+      - python3
+      - "-c"
+      - |
+        import json, pathlib, sys
+        from ruamel.yaml import YAML
+
+        mission_dir = pathlib.Path(sys.argv[1])
+        milestone = sys.argv[2]
+        failed_ids = json.loads(sys.argv[3])
+        blocked_ids = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
+
+        # Process both failed and blocked assertions as fix-worthy
+        fix_ids_to_process = failed_ids + blocked_ids
+        if not fix_ids_to_process:
+            print(json.dumps({"injected": 0, "fix_feature_ids": []}))
+            sys.exit(0)
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        features_path = mission_dir / "features.yaml"
+        state_path = mission_dir / "feature-state.yaml"
+        data = yaml.load(features_path.read_text()) or {}
+        features = data.get("features", [])
+        # Load runtime state
+        state_data = yaml.load(state_path.read_text()) if state_path.exists() else {}
+        state_features = state_data.get("features", {}) if state_data else {}
+
+        # Find the highest feature ID for this milestone
+        milestone_ids = [
+            f["id"] for f in features
+            if f.get("milestone") == milestone and "." in str(f.get("id", ""))
+        ]
+        numeric_ids = [fid for fid in milestone_ids if str(fid).split(".")[1].isdigit()]
+        if numeric_ids:
+            ms_num = str(numeric_ids[0]).split(".")[0]
+            max_sub = max(int(str(fid).split(".")[1]) for fid in numeric_ids)
+        else:
+            ms_num = "99"
+            max_sub = 0
+
+        # Find original feature descriptions for context
+        original_features = {
+            vid: next(
+                (f for f in features if vid in f.get("fulfills", [])),
+                None
+            )
+            for vid in fix_ids_to_process
+        }
+
+        def is_fix_for(f, vid):
+            return (vid in f.get("fulfills", [])
+                    and (str(f.get("description", "")).startswith(
+                        f"Fix failing assertion {vid}")
+                        or str(f.get("description", "")).startswith(
+                        f"Fix blocked assertion {vid}")))
+
+        injected = 0
+        reset = 0
+        fix_ids = []
+        next_sub = max_sub
+        for vid in fix_ids_to_process:
+            # If a fix feature for this assertion already exists (the
+            # assertion failed/blocked on a prior round), re-attempt it rather than
+            # appending a duplicate — two features fulfilling the same VAL-*
+            # id would violate the coverage invariant.
+            existing = next((f for f in features if is_fix_for(f, vid)), None)
+            if existing is not None:
+                state_features[existing["id"]] = {"status": "pending", "attempts": 0}
+                fix_ids.append(existing["id"])
+                reset += 1
+                continue
+
+            orig = original_features.get(vid)
+            orig_desc = orig.get("description", "unknown feature") if orig else "unknown feature"
+            skill = orig.get("skill_name", "backend-worker") if orig else "backend-worker"
+            kind = "blocked" if vid in blocked_ids else "failing"
+
+            next_sub += 1
+            fix_id = f"{ms_num}.{next_sub}"
+            features.append({
+                "id": fix_id,
+                "milestone": milestone,
+                "description": f"Fix {kind} assertion {vid} (originally in: {orig_desc})",
+                "skill_name": skill,
+                "expected_behavior": f"Assertion {vid} passes user testing",
+                "fulfills": [vid],
+            })
+            state_features[fix_id] = {"status": "pending", "attempts": 0}
+            fix_ids.append(fix_id)
+            injected += 1
+
+        data["features"] = features
+        with open(features_path, "w") as f:
+            yaml.dump(data, f)
+        state_data["features"] = state_features
+        with open(state_path, "w") as f:
+            yaml.dump(state_data, f)
+
+        print(json.dumps({"injected": injected, "reset": reset, "fix_feature_ids": fix_ids}))
+      - "{{ workflow.input.mission_dir }}"
+      - "{{ workflow.input.milestone }}"
+      - "{{ update_state.output.failed | tojson }}"
+      - "{{ update_state.output.blocked | tojson }}"
+    output:
+      injected:        { type: number }
+      fix_feature_ids: { type: array }
+    routes:
+      - to: $end
+
+output:
+  testing_passed: "{{ update_state.output.testing_passed if update_state is defined else true }}"
+  passed_count:   "{{ update_state.output.passed | length if update_state is defined else 0 }}"
+  failed_count:   "{{ update_state.output.failed | length if update_state is defined else 0 }}"

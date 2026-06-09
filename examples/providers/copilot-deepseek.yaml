@@ -1,0 +1,13 @@
+# DeepSeek (direct) provider profile.
+#
+# Pass to any workflow with:  -p examples/providers/copilot-deepseek.yaml
+#
+# The api_key is read from $DEEPSEEK_API_KEY so the secret never lands in this
+# file (or in checkpoints / event logs). default_model only fills agents that
+# omit an explicit `model:`.
+provider:
+  name: copilot
+  type: anthropic
+  base_url: https://api.deepseek.com/anthropic
+  api_key: ${DEEPSEEK_API_KEY:-your-api-key-here}
+default_model: deepseek-v4-pro
