@@ -1,0 +1,1 @@
+`_conductor_run_dir()` returns the TMPDIR/conductor directory (defaults to `./tmp/`). Set `CONDUCTOR_TMPDIR` env var to override. In tests, patch `conductor.cli.list_cmd._conductor_run_dir` to point to a temp directory.

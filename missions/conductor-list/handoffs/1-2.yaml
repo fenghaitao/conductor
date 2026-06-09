@@ -1,0 +1,72 @@
+salient_summary: Verified milestone 1.2 — the `conductor list` summary dashboard
+  callback is already fully implemented. It collects counts for running 
+  workflows (via read_pid_files), recent runs (via JSONL glob), local workflows 
+  (via YAML heuristic), and templates (via template dir scan), then renders a 
+  Rich Panel with integer counts and subcommand hints.
+what_was_implemented: >
+  The `list_summary` callback in `src/conductor/cli/list_cmd.py` (lines 152-223) was
+  already
+  implemented during milestone 1.1. It gathers four counts: running workflows via
+  `read_pid_files()`, recent runs via glob of `conductor-*.events.jsonl` in
+  `_conductor_run_dir()`, local workflow YAML files via heuristic frontmatter scan
+  (first 2 KB
+  for `agents:`, `type: workflow`, or `runtime:`), and templates via `_discover_templates()`.
+  Each count is rendered inside a Rich Panel with a dim subcommand hint:
+  `(conductor list runs)`, `(conductor list runs --recent)`, `(conductor list workflows)`,
+  `(conductor list templates)`. All counts are integers including zero. No Rich table
+  headers
+  or column lines appear in the summary panel. Exit code is 0. All defensive I/O is
+  wrapped
+  in try/except with debug logging on failure.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 27 tests passed, including all 11 summary-specific tests
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  interactive_checks:
+  - action: uv run conductor list
+    observed: "Rich Panel with 'Running workflows: 0 (conductor list runs)', 'Recent
+      runs: 228 (conductor list runs --recent)', 'Local workflows: 0 (conductor list
+      workflows)', 'Templates: 3 (conductor list templates)'. Exit code 0."
+  - action: uv run conductor list --help
+    observed: Shows runs, workflows, checkpoints, registries, templates 
+      subcommands with options.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_list_summary_exit_code_zero
+    description: Exit code is 0 when no subcommand given
+  - name: test_list_summary_uses_panel_not_table
+    description: Output uses Rich Panel, not Table (no column headers)
+  - name: test_list_summary_has_running_count
+    description: Output contains 'Running workflows' with count
+  - name: test_list_summary_has_recent_count
+    description: Output contains 'Recent runs' with count
+  - name: test_list_summary_has_workflow_count
+    description: Output contains 'Local workflows' with count
+  - name: test_list_summary_has_template_count
+    description: Output contains 'Templates' with count
+  - name: test_list_summary_counts_are_integers
+    description: All counts are integers (regex validation)
+  - name: test_list_summary_with_zero_running
+    description: Shows 0 when no PID files exist
+  - name: test_list_summary_with_running_workflows
+    description: Shows correct count when PID files exist
+  - name: test_list_summary_resilient_to_pid_error
+    description: Does not crash when read_pid_files raises
+  - name: test_list_summary_stderr_is_empty
+    description: No output written to stderr
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '1.2'

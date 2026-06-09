@@ -1,0 +1,71 @@
+salient_summary: 'Wrote 3 integration tests for VAL-CROSS-003 covering the full background
+  workflow lifecycle: launch with --web-bg, verify in list runs, stop via port, and
+  confirm removal from running table. All tests pass.'
+what_was_implemented: >
+  Added TestValCross003BackgroundLifecycle class to tests/test_cli/test_list.py with
+  3 test methods:
+
+  1. test_full_background_lifecycle — Canonical VAL-CROSS-003 integration test. Creates
+  a valid
+  workflow YAML in tmp_path, mocks launch_background to return a BackgroundLaunch
+  with known
+  port/PID/run_id, invokes `conductor run <path> --web-bg`, then verifies `conductor
+  list runs`
+  shows the entry with correct Port, PID, Workflow, and Dashboard URL columns (both
+  table and JSON
+  modes). Mocks read_pid_files, os.kill, and remove_pid_file to simulate `conductor
+  stop --port 8080`.
+  Finally verifies `conductor list runs` shows empty state after stop (both table
+  and JSON modes).
+
+  2. test_list_runs_empty_before_any_launch — Verifies graceful empty-state message
+  when no
+  workflows are running.
+
+  3. test_list_summary_reflects_running_count — Verifies `conductor list` summary
+  shows
+  running count = 1 with hint after a mock launch.
+
+  Uses unittest.mock.patch for all dependencies (launch_background, read_pid_files,
+  os.kill,
+  remove_pid_file). No actual process spawning or filesystem writes.
+what_was_left_undone: >
+  No full end-to-end test with a real background process (would require a live LLM
+  provider and
+  actual process forking — out of scope for unit/integration tests). The mock coverage
+  validates
+  the CLI surface contract for all phases of the lifecycle.
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestValCross003BackgroundLifecycle -v
+    exit_code: 0
+    observation: 3 tests passed in 2.52s
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 208 tests passed in 6.84s — no regressions
+  - command: make lint
+    exit_code: 0
+    observation: All checks passed — 215 files already formatted
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed (pre-existing type errors are in unrelated 
+      files)
+  interactive_checks: []
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_full_background_lifecycle
+    description: 'Canonical VAL-CROSS-003: launch bg workflow → list runs shows PID
+      and Dashboard URL → stop → list runs shows empty state (table + JSON modes)'
+  - name: test_list_runs_empty_before_any_launch
+    description: Empty state message when no workflows are running
+  - name: test_list_summary_reflects_running_count
+    description: conductor list summary shows running count = 1 with hint after 
+      mock launch
+discovered_issues: []
+skill_name: test-worker
+skill_feedback: []
+feature_id: '9.3'

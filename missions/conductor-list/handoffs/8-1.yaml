@@ -1,0 +1,59 @@
+salient_summary: Added --json flag to the deprecated `conductor checkpoints` 
+  command so it prints deprecation to stderr and valid JSON to stdout. The old 
+  command now fully delegates to `_list_checkpoints_impl(workflow, 
+  json_output=json_output)`. Added two new tests for --json deprecation behavior
+  and schema parity with `conductor list checkpoints --json`.
+what_was_implemented: >
+  Modified the deprecated `checkpoints` command in `src/conductor/cli/app.py` (line
+  988) to accept a `--json` flag
+  (mirroring the new `conductor list checkpoints` command) and pass it through to
+  `_list_checkpoints_impl()`.
+  The deprecation notice continues to print to stderr via `console.print()`, while
+  JSON output goes to stdout.
+  Added two new test cases in `tests/test_cli/test_list.py::TestCheckpointsDeprecated`:
+  - `test_deprecated_with_json`: verifies exit 0, deprecation on stderr, valid JSON
+  array on stdout
+  - `test_deprecated_json_matches_new_json`: verifies schema parity (same keys, same
+  values) between old and new command JSON output, and that only the old command emits
+  deprecation on stderr
+  All 165 existing tests pass, lint clean, typecheck clean.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 165 tests passed in 3.89s
+  - command: uv run ruff check src tests && uv run ruff format --check src tests
+    exit_code: 0
+    observation: All checks passed, 215 files left unchanged
+  - command: uv run ty check src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed
+  interactive_checks:
+  - action: uv run conductor checkpoints (no args)
+    observed: "Exit 0. Stderr: 'Deprecated: use conductor list checkpoints instead'.
+      Stdout: Rich checkpoint table with Version, Workflow, Created, Error, Agent
+      columns."
+  - action: uv run conductor checkpoints examples/simple-qa.yaml
+    observed: 'Exit 0. Stderr: deprecation notice. Stdout: filtered checkpoint table
+      for simple-qa-ds workflow with 9 entries.'
+  - action: uv run conductor checkpoints --json
+    observed: 'Exit 0. Stderr: deprecation notice. Stdout: valid JSON array (41 entries)
+      with keys: version, workflow_path, workflow_hash, created_at, failure, current_agent,
+      run_id, file_path.'
+  - action: uv run conductor checkpoints --help
+    observed: Shows --json option in the help output.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_deprecated_with_json
+    description: Old checkpoints --json prints deprecation to stderr and valid 
+      JSON array to stdout; exit code 0
+  - name: test_deprecated_json_matches_new_json
+    description: Old checkpoints --json output has same keys and values as new 
+      list checkpoints --json; only old command has deprecation on stderr
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '8.1'

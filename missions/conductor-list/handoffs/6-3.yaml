@@ -1,0 +1,66 @@
+salient_summary: Strengthened table/JSON consistency tests for `conductor list 
+  templates` and added `--json --help` precedence test. No implementation 
+  changes were needed — the existing code already produces consistent output.
+what_was_implemented: >
+  Updated two existing tests and added one new test in `tests/test_cli/test_list.py`:
+  1. **`test_json_array_length_matches_table_rows`** — Replaced the weak `>=` assertion
+  with exact equality. Uses short name fragments (part before colon, e.g. "Pipeline
+  template") for matching since Rich narrows column width when stdout is not a TTY
+  (pytest capture mode). Verifies JSON array length equals unique template count in
+  table output.
+  2. **`test_json_and_table_names_same_order`** (new) — Verifies that template names
+  appear in the same order in both JSON and table outputs. Uses the same fragment-matching
+  approach to handle Rich's non-TTY truncation.
+  3. **`test_list_templates_json_help`** (new) — Verifies that `conductor list templates
+  --json --help` shows help text (containing `--json`), not JSON output, and exits
+  with code 0. Typer's built-in help flag already takes precedence over `--json`.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 117 tests passed, including 18 template-related tests with 2 
+      new consistency tests
+  - command: uv run ruff check src tests && uv run ruff format --check src tests
+    exit_code: 0
+    observation: All checks passed, 215 files already formatted
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed, no type errors
+  interactive_checks:
+  - action: uv run conductor list templates --json | python3 -c 'import 
+      sys,json; print(len(json.load(sys.stdin)))'
+    observed: 3 (JSON count)
+  - action: uv run conductor list templates 2>&1 | grep -c 
+      'Fan-out\|Loop\|Pipeline'
+    observed: 3 (table contains all 3 template names)
+  - action: uv run conductor list templates --json --help
+    observed: Help text displayed (not JSON), contains --json in options, exit 
+      code 0
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: TestListTemplatesJson::test_json_array_length_matches_table_rows
+    description: Exact equality check between JSON array length and unique 
+      template names found in table output. Uses short name fragments to handle 
+      Rich non-TTY column truncation.
+  - name: TestListTemplatesJson::test_json_and_table_names_same_order
+    description: Verifies template names appear in identical order in both JSON 
+      and table outputs.
+  - name: TestListHelp::test_list_templates_json_help
+    description: Verifies --json --help shows help text (not JSON) with exit 
+      code 0, and --json flag appears in help output.
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback:
+- step: Step 2 (Test First)
+  what_i_did_instead: Found that the implementation was already correct for 
+    feature 6.3 — both table and JSON use the same sorted list from 
+    `_discover_templates`. Focused on improving existing tests rather than 
+    writing from scratch, since the existing test had a weak `>=` assertion that
+    needed strengthening to exact equality.
+  why: The existing tests already covered basic functionality; the gap was in 
+    assertion rigor and the missing --json --help test.
+feature_id: '6.3'

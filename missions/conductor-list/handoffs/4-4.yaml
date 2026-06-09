@@ -1,0 +1,71 @@
+salient_summary: 'Feature 4.4 (deprecated `conductor checkpoints` wrapper) was already
+  fully implemented by previous workers. Verified: hidden=True decorator, stderr deprecation
+  notice, delegation to shared `_list_checkpoints_impl()`, all 5 deprecation tests
+  pass, stdout matches `conductor list checkpoints`, exit code 0.'
+what_was_implemented: "Previously implemented by workers 1.1, 4.1, 4.2, and 4.3. The
+  deprecated `checkpoints` command in `src/conductor/cli/app.py` (lines 988-1014)
+  is marked `hidden=True`, prints `[dim]Deprecated: use 'conductor list checkpoints'
+  instead[/dim]` to stderr via `console.print()`, and delegates to `_list_checkpoints_impl(workflow)`
+  from `src/conductor/cli/list_cmd.py` (lines 712-773). The shared `_list_checkpoints_impl()`
+  handles both Rich table and JSON output modes, serving both `conductor list checkpoints`
+  and the deprecated alias. 5 tests in `tests/test_cli/test_list.py::TestCheckpointsDeprecated`
+  cover: stderr deprecation notice, functional output, stdout parity with new command,
+  hidden from help, and workflow filter delegation."
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestCheckpointsDeprecated -v
+    exit_code: 0
+    observation: '5 deprecation tests passed: test_deprecation_notice_printed_to_stderr,
+      test_deprecated_command_still_works, test_deprecated_command_stdout_matches_new,
+      test_deprecated_command_hidden_from_help, test_deprecated_with_workflow_filter'
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 109 tests passed in 2.55s
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  interactive_checks:
+  - action: uv run conductor checkpoints 2>/tmp/dep_stderr.txt && cat 
+      /tmp/dep_stderr.txt
+    observed: "Checkpoint table printed to stdout with 27 entries; /tmp/dep_stderr.txt
+      contains exactly 'Deprecated: use conductor list checkpoints instead'; exit
+      code 0"
+  - action: uv run conductor list checkpoints
+    observed: Identical checkpoint table output to stdout as the deprecated 
+      command, without the deprecation notice
+  - action: uv run conductor list checkpoints --json | python -m json.tool
+    observed: Valid JSON array with all expected fields (version, workflow_path,
+      workflow_hash, created_at, failure, current_agent, run_id, file_path)
+  - action: uv run conductor checkpoints 2>/dev/null | wc -l
+    observed: Table output matches 'conductor list checkpoints' line count 
+      (identical)
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_deprecation_notice_printed_to_stderr
+    description: Old command prints 'Deprecated' and 'conductor list 
+      checkpoints' to stderr
+  - name: test_deprecated_command_still_works
+    description: Old command produces correct table output with deprecation on 
+      stderr, exit 0
+  - name: test_deprecated_command_stdout_matches_new
+    description: Old command stdout (table content) is identical to new command 
+      stdout
+  - name: test_deprecated_command_hidden_from_help
+    description: Old checkpoints command hidden=True, does not appear in 
+      conductor --help
+  - name: test_deprecated_with_workflow_filter
+    description: Deprecated command with [WORKFLOW] argument delegates filter 
+      correctly
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '4.4'

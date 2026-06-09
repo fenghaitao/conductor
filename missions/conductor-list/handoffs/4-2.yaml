@@ -1,0 +1,64 @@
+salient_summary: 'Updated `conductor list checkpoints --json` to emit the 8 required
+  fields per VAL-M3LIST-002: version, workflow_path, workflow_hash, created_at, failure,
+  current_agent, run_id, file_path.'
+what_was_implemented: >
+  Changed the JSON output in `_list_checkpoints_impl()` (lines 729-744 of `list_cmd.py`)
+  from the old 5-field
+  schema (workflow, timestamp, failed_agent, error_type, file) to the new 8-field
+  schema required
+  by VAL-M3LIST-002: version, workflow_path, workflow_hash, created_at, failure (full
+  dict),
+  current_agent, run_id, file_path. Each `CheckpointData` field maps directly to its
+  JSON key.
+  Fixed a Rich console output issue where `output_console.print()` inserted line breaks
+  into JSON —
+  switched to plain `print()` for JSON output, consistent with other list subcommands.
+  Updated
+  `TestListCheckpointsJson` tests in `test_list.py`: `test_json_has_expected_fields`
+  now asserts all
+  8 field names and values; `test_json_multiple_entries` validates exact key set on
+  all entries.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 109 tests passed, including 3 TestListCheckpointsJson 
+      tests, 6 TestListCheckpoints table tests, 5 TestCheckpointsDeprecated 
+      tests, and all other list subcommand tests.
+  - command: uv run ty check src/conductor/cli/list_cmd.py
+    exit_code: 0
+    observation: All checks passed — no type errors.
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations.
+  interactive_checks:
+  - action: uv run conductor list checkpoints --json | python3 -c 'import 
+      sys,json; data=json.load(sys.stdin); print(type(data).__name__, 
+      len(data)); [print(set(e.keys())) for e in data[:1]]'
+    observed: "Root is a JSON array. 27 real checkpoint entries from tmp/checkpoints/.
+      Each entry has exactly: {'version', 'workflow_path', 'workflow_hash', 'created_at',
+      'failure', 'current_agent', 'run_id', 'file_path'}. The failure field is a full
+      dict with error_type, message, agent, iteration."
+  - action: uv run conductor list checkpoints --json 2>&1 | python3 -m json.tool
+      > /dev/null
+    observed: JSON parses without errors — valid JSON output.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_empty_json_array (existing, unchanged)
+    description: No checkpoints → empty JSON array [], exit 0. Verifies 
+      json.loads(result.output) returns [].
+  - name: test_json_has_expected_fields (updated)
+    description: Each JSON entry has version, workflow_path, workflow_hash, 
+      created_at, failure (full dict), current_agent, run_id, file_path — all 8 
+      fields with exact values verified.
+  - name: test_json_multiple_entries (updated)
+    description: Multiple checkpoints produce a JSON array. Each entry's exact 
+      key set is validated against the 8 required field names.
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '4.2'

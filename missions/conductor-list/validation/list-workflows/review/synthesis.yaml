@@ -1,0 +1,55 @@
+verdict: pass
+passed_features:
+- "3.1"
+- "3.2"
+- "3.3"
+- "3.4"
+- "3.5"
+failed_features: []
+summary: >-
+  All five features (3.1–3.5) pass review. 92 tests pass, typecheck and lint are clean.
+  The implementation exceeds the original 3.1 scope by also delivering --recursive,
+  --all, --json, and --path flags. No breaking defects found; all recommendations
+  are non-blocking (additional test coverage, state-file bookkeeping, minor cleanup).
+issues: []
+pre_existing_issues:
+- >-
+  Pre-existing: `_heuristic_filter` in `list_cmd.py` only handled `agents:` as a
+  list (isinstance(agents, list)), but Conductor YAML uses dicts for named agent
+  definitions. Fixed in this change by accepting both dict and list forms via
+  isinstance(agents, (dict, list)). Correctly classified as non-blocking since the
+  fix was applied inline.
+shared_state_updates:
+- destination: AGENTS.md
+  path_suffix: AGENTS.md
+  content: |
+    ### `list_cmd.py` YAML Parsing Notes
+
+    - `list_cmd.py` uses `ruamel.yaml` (not `yaml.safe_load` from PyYAML) for YAML
+      parsing in `_heuristic_filter`. This is an existing project dependency.
+    - The heuristic filter only reads the first 2 KB of each file — incomplete YAML
+      at the 2 KB boundary is tolerated by catching `YAMLError` and falling back to
+      basic filename-derived metadata. This 2 KB limit is intentional; do not increase
+      it without benchmarking against the performance NFRs.
+  operation: append
+- destination: library
+  path_suffix: yaml-agent-forms.md
+  content: |
+    # YAML `agents:` Key — Dual Form
+
+    The `agents:` key in Conductor workflow YAML can be either:
+    - A **dict** (named agent definitions): `agents: { researcher: {...}, writer: {...} }`
+    - A **list** (inline agent definitions): `agents: [{...}, {...}]`
+
+    Any code that scans YAML files for agent definitions must handle both forms.
+    The canonical pattern is:
+    ```python
+    agents = top.get("agents")
+    if isinstance(agents, (dict, list)):
+        agent_count = len(agents)
+    ```
+
+    Discovered during `conductor list workflows` implementation (milestone
+    list-workflows, feature 3.1). Previously `_heuristic_filter` only handled the
+    list form, causing dict-form workflows to be incorrectly filtered.
+  operation: create

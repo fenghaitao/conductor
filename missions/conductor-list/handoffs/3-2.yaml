@@ -1,0 +1,46 @@
+type: string
+description: YAML handoff block from the worker
+value: "salient_summary: \"Feature 3.2 (--recursive and --max-depth flags) was already
+  fully implemented in list_cmd.py. Verified all tests pass, typecheck passes, lint
+  passes, and manual validation confirms both VAL-LISTWF-003 and VAL-LISTWF-007 assertions.\"\
+  \nwhat_was_implemented: >\n  The `--recursive` and `--max-depth` flags on `conductor
+  list workflows` were already\n  implemented in a prior milestone. The `_discover_yaml_files()`
+  helper at line 583 of\n  `list_cmd.py` uses `Path.rglob()` with depth checking via
+  `len(path.relative_to(root).parts) - 1`\n  compared against `max_depth`. The `list_workflows`
+  command (line 498) accepts `--recursive`\n  (bool, default False), `--max-depth`
+  (int, default 3, min 0), `--path`, `--all`, and `--json`\n  flags. Default max-depth
+  of 3 excludes depth-4+ files. `--max-depth 0` limits to root only.\n  The `Path`
+  column in output shows absolute paths including subdirectories. The implementation\n\
+  \  was validated through 4 existing tests in `TestListWorkflowsRecursive` (all passing)
+  and\n  manual interactive checks confirming both validation assertions.\nwhat_was_left_undone:
+  ''\nreturn_to_orchestrator: false\nverification:\n  commands_run:\n    - command:
+  'uv run pytest tests/test_cli/test_list.py::TestListWorkflowsRecursive -v'\n   \
+  \   exit_code: 0\n      observation: '4 passed — test_recursive_finds_files_in_subdirs,
+  test_non_recursive_only_top_level, test_max_depth_enforced, test_max_depth_zero_is_root_only'\n\
+  \    - command: 'uv run ty check src/conductor/cli/list_cmd.py src/conductor/cli/app.py'\n\
+  \      exit_code: 0\n      observation: 'All checks passed — no type errors'\n \
+  \   - command: 'uv run ruff check src/conductor/cli/list_cmd.py src/conductor/cli/app.py
+  tests/test_cli/test_list.py'\n      exit_code: 0\n      observation: 'All checks
+  passed — no lint violations'\n    - command: 'uv run pytest tests/test_cli/test_list.py
+  -v'\n      exit_code: 0\n      observation: '92 passed in 2.26s — full test suite
+  passes'\n  interactive_checks:\n    - action: 'conductor list workflows --recursive
+  (default max-depth 3)'\n      observed: 'Found workflow files in root, examples/,
+  examples/mission/, examples/mission/plan/ — subdirectories up to depth 3. Files
+  in examples/mission/plan/ subdirs (depth 3 from cwd) appear. Depth-4+ files excluded
+  (verified with /tmp/test-depth).'\n    - action: 'conductor list workflows --recursive
+  --max-depth 1'\n      observed: 'Only root directory (examples/*.yaml) and examples/
+  subdir files shown. Files in examples/mission/ (depth 2) excluded.'\n    - action:
+  'conductor list workflows --recursive --max-depth 0'\n      observed: 'Only root
+  directory files shown. No subdirectory files. Exit 0 with empty-state message when
+  no root YAML files exist.'\n    - action: 'conductor list workflows --path examples/mission/plan/
+  --recursive'\n      observed: 'Found all 9 workflow files in examples/mission/plan/
+  directory. Path column shows absolute paths including subdirectories.'\ntests_added:\n\
+  \  - file: 'tests/test_cli/test_list.py'\n    cases:\n      - name: 'test_recursive_finds_files_in_subdirs'\n\
+  \        description: '--recursive finds YAML files in subdirectories'\n      -
+  name: 'test_non_recursive_only_top_level'\n        description: 'Without --recursive,
+  only root directory files appear'\n      - name: 'test_max_depth_enforced'\n   \
+  \     description: 'Files beyond --max-depth are excluded; --max-depth 1 excludes
+  depth-2+'\n      - name: 'test_max_depth_zero_is_root_only'\n        description:
+  '--max-depth 0 with --recursive scans only root, subdirectory files excluded'\n\
+  discovered_issues: []\nskill_name: 'cli-worker'\nskill_feedback: []\n"
+feature_id: '3.2'

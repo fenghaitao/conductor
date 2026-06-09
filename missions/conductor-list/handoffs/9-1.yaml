@@ -1,0 +1,75 @@
+salient_summary: Feature 9.1 (VAL-CROSS-001 integration test for running 
+  workflow discovery) was already implemented in tests/test_cli/test_list.py as 
+  class TestValCross001RunningDiscovery with 6 test methods. All tests pass.
+what_was_implemented: >
+  The TestValCross001RunningDiscovery class (lines 3062-3320 in
+  tests/test_cli/test_list.py) was already present and fully implemented
+  before this worker's session. It contains 6 test methods:
+
+  1. test_full_flow_summary_and_detail_with_running_workflows — mocks 2
+     PID entries (ports 8080/8081), runs `conductor list` then `conductor
+     list runs`, asserts summary count 2 + hint text "conductor list runs",
+     asserts runs table columns (Port, PID, Workflow, Dashboard URL,
+     Started), asserts data values (ports, PIDs, workflow stems, dashboard
+     URL prefix http://127.0.0.1:, started date), asserts no empty-state
+     message, asserts stderr is empty. Exit code 0 for both commands.
+
+  2. test_full_flow_empty_state — mocks 0 PID entries, asserts summary
+     shows "Running workflows: 0" with hint, asserts runs table shows "No
+     running workflows found" with no table column headers. Both exit 0.
+
+  3. test_running_count_matches_table_row_count — mocks 3 PID entries,
+     asserts summary count 3, asserts all 3 ports appear in runs table.
+
+  4. test_dashboard_url_format_is_http_localhost_port — mocks 1 PID entry
+     with port 9999, asserts URL starts with http://127.0.0.1: (not
+     localhost or 0.0.0.0), asserts port in output.
+
+  5. test_both_commands_exit_zero_with_running_workflows — 1 PID entry,
+     both `conductor list` and `conductor list runs` exit 0.
+
+  6. test_both_commands_exit_zero_without_running_workflows — 0 PID
+     entries, both commands exit 0.
+
+  All tests use `unittest.mock.patch("conductor.cli.pid.read_pid_files",
+  return_value=...)` to mock PID discovery, and invoke via
+  `typer.testing.CliRunner` through the real `conductor.cli.app.app`.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestValCross001RunningDiscovery -v
+    exit_code: 0
+    observation: 6 passed in 0.58s
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 205 passed in 6.90s (full list test suite)
+  - command: uv run ty check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed!
+  - command: uv run ruff check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed!
+  interactive_checks: []
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_full_flow_summary_and_detail_with_running_workflows
+    description: '2 running workflows: summary shows count 2 + hint; runs table shows
+      both entries with Port, PID, Workflow, Dashboard URL, Started'
+  - name: test_full_flow_empty_state
+    description: '0 running workflows: summary shows 0; runs shows empty-state message
+      with no table columns'
+  - name: test_running_count_matches_table_row_count
+    description: '3 PID entries: summary count 3 matches 3 rows in runs table'
+  - name: test_dashboard_url_format_is_http_localhost_port
+    description: Dashboard URL uses http://127.0.0.1:{port} format
+  - name: test_both_commands_exit_zero_with_running_workflows
+    description: Both commands exit 0 when workflows are running
+  - name: test_both_commands_exit_zero_without_running_workflows
+    description: Both commands exit 0 when no workflows are running
+discovered_issues: []
+skill_name: test-worker
+skill_feedback: []
+feature_id: '9.1'

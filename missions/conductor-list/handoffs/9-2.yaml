@@ -1,0 +1,105 @@
+salient_summary: Feature 9.2 (VAL-CROSS-002) was already fully implemented by 
+  prior work. The TestWorkflowDiscoveryToHistory class in 
+  tests/test_cli/test_list.py contains 8 integration tests covering the full 
+  workflow discovery → dry-run → recent history flow. All 205 tests in the file 
+  pass, lint is clean, typecheck passes, and manual CLI verification confirms 
+  correct behavior across all three phases.
+what_was_implemented: >
+  Feature 9.2 was already implemented in a prior worker's changeset. The integration
+  test class `TestWorkflowDiscoveryToHistory` (lines 1638-1921 in tests/test_cli/test_list.py)
+  provides 8 tests verifying the complete user journey:
+
+  Phase 1 — Workflow discovery (3 tests):
+  - test_discovery_shows_valid_workflow: `conductor list workflows` shows Name (from
+    YAML metadata), Path, Agent count (2), Topology (pipeline)
+  - test_discovery_json_has_correct_metadata: `--json` emits name, path, agent_count,
+    has_parallel, has_for_each, has_pipeline
+  - test_discovery_with_non_workflow_files_mixed: non-workflow YAML (docker-compose,
+    config) excluded by heuristic filter
+
+  Phase 2 — Dry-run execution (2 tests):
+  - test_dry_run_succeeds_on_valid_workflow: `conductor run <path> --dry-run` exits
+  0
+  - test_dry_run_shows_agent_plan: dry-run plan mentions workflow name and agent names
+
+  Phase 3 — Recent history (2 tests):
+  - test_recent_includes_completed_run_with_duration: `conductor list runs --recent
+  5`
+    shows the completed run with status=completed and non-null duration (~37.5s)
+  - test_recent_json_includes_completed_run: JSON output has status=completed,
+    non-null duration_seconds > 0, and stable field keys
+
+  End-to-end (1 test):
+  - test_full_flow_workflow_to_history: canonical VAL-CROSS-002 test covering all
+    three phases in sequence: discover → dry-run → recent history shows completed
+
+  The `_VALID_WORKFLOW_YAML` fixture is a minimal two-agent pipeline workflow
+  (researcher → writer) with `workflow.name: test-wf`. Event log simulation uses
+  `_write_event_log()` which produces realistic JSONL files with workflow_started
+  +
+  workflow_completed events. The `_conductor_run_dir` function is patched to point
+  at tmp_path, and `read_pid_files` is patched to return [].
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestWorkflowDiscoveryToHistory -v
+    exit_code: 0
+    observation: 8 passed in 2.05s — all VAL-CROSS-002 tests pass
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 205 passed in 6.83s — full test suite passes
+  - command: uv run ruff check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  - command: uv run ty check tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  interactive_checks:
+  - action: uv run conductor list workflows --path examples/
+    observed: Rich table with 24 workflow YAML files showing Name, Path, Agents,
+      Topology columns. Exit 0.
+  - action: uv run conductor list workflows --path examples/ --json | python3 -m
+      json.tool
+    observed: Valid JSON array of workflow metadata objects with name, path, 
+      agent_count, has_parallel, has_for_each, has_pipeline fields. Exit 0.
+  - action: uv run conductor list runs --recent 5
+    observed: 'Two Rich tables: Running Workflows (1 entry with Port, PID, Workflow,
+      Dashboard URL, Started columns) + Recent Runs (5 entries with Workflow, Run
+      ID, Started, Ended, Status, Duration columns). Exit 0.'
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: TestWorkflowDiscoveryToHistory::test_discovery_shows_valid_workflow
+    description: '`conductor list workflows` discovers workflow with Name (from YAML
+      metadata), Path, Agent count (2), Topology (pipeline)'
+  - name: 
+      TestWorkflowDiscoveryToHistory::test_discovery_json_has_correct_metadata
+    description: '`conductor list workflows --json` emits correct metadata: name,
+      path, agent_count, has_pipeline, has_parallel, has_for_each'
+  - name: 
+      TestWorkflowDiscoveryToHistory::test_discovery_with_non_workflow_files_mixed
+    description: Only workflow files appear when mixed with non-workflow YAML 
+      (docker-compose, config)
+  - name: 
+      TestWorkflowDiscoveryToHistory::test_dry_run_succeeds_on_valid_workflow
+    description: '`conductor run <path> --dry-run` exits 0 for valid workflow'
+  - name: TestWorkflowDiscoveryToHistory::test_dry_run_shows_agent_plan
+    description: '`conductor run --dry-run` displays workflow name and agent names
+      in execution plan'
+  - name: 
+      TestWorkflowDiscoveryToHistory::test_recent_includes_completed_run_with_duration
+    description: After simulated run, `conductor list runs --recent 5` includes 
+      completed run with status=completed and ~37.5s duration
+  - name: 
+      TestWorkflowDiscoveryToHistory::test_recent_json_includes_completed_run
+    description: '`conductor list runs --recent 5 --json` includes completed run with
+      status=completed, duration_seconds > 0'
+  - name: TestWorkflowDiscoveryToHistory::test_full_flow_workflow_to_history
+    description: 'Canonical VAL-CROSS-002 end-to-end: discover workflows → dry-run
+      → recent history shows completed with duration'
+discovered_issues: []
+skill_name: test-worker
+skill_feedback: []
+feature_id: '9.2'

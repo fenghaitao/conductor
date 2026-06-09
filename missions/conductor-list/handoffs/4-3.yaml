@@ -1,0 +1,83 @@
+salient_summary: Feature 4.3 (workflow filter on `conductor list checkpoints`) 
+  was already fully implemented by milestones 4.1 and 4.2 — no new code needed.
+what_was_implemented: >
+  The `[WORKFLOW]` positional argument on `conductor list checkpoints` was already
+  implemented in `src/conductor/cli/list_cmd.py` as part of milestones 4.1 and 4.2.
+  The `list_checkpoints` command (line 687) accepts `workflow: Path | None` via
+  `typer.Argument`. The shared `_list_checkpoints_impl()` function (line 712)
+  resolves the path to absolute, validates it exists (exits 1 with error on
+  non-existent), passes the resolved path to
+  `CheckpointManager.list_checkpoints(resolved_workflow)` for server-side filtering,
+  and displays a specific empty-state message ("No checkpoints found for workflow:
+  {name}") when filtering yields no results. Both Rich table and `--json` modes
+  work correctly through the shared implementation. The deprecated `conductor
+  checkpoints` alias also forwards the workflow argument via delegation to the
+  shared impl (verified by `test_deprecated_with_workflow_filter`).
+
+  Implementation location:
+  - Command definition: `list_cmd.py` lines 687-709
+  - Shared implementation: `list_cmd.py` lines 712-773
+    * Path resolution + validation: lines 720-725
+    * Filtered list_checkpoints call: line 727
+    * Filtered empty-state message: lines 748-751
+    * Unfiltered empty-state message: line 753
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest 
+      tests/test_cli/test_list.py::TestListCheckpointsFiltering -v
+    exit_code: 0
+    observation: '3 tests passed: test_workflow_filter_passed_to_manager, test_nonexistent_workflow_errors,
+      test_filtered_no_results_message'
+  - command: uv run pytest tests/test_cli/test_list.py -k checkpoint -v
+    exit_code: 0
+    observation: 'All 17 checkpoint-related tests passed (TestListCheckpoints: 6,
+      TestListCheckpointsFiltering: 3, TestListCheckpointsJson: 3, TestCheckpointsDeprecated:
+      5)'
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 109 tests passed including filtering, JSON, and deprecated 
+      alias
+  interactive_checks:
+  - action: uv run conductor list checkpoints examples/simple-qa.yaml
+    observed: Table shows 9 checkpoints, all with Workflow column 'simple-qa-ds'
+      (from simple-qa.yaml). Exit 0.
+  - action: uv run conductor list checkpoints
+    observed: Table shows 27 checkpoints from multiple workflows (simple-qa-ds, 
+      0-implement-feature, run, 1-review, reason-probe, 0-implement). Exit 0.
+  - action: uv run conductor list checkpoints examples/simple-qa.yaml --json | 
+      python -c 'import json,sys; data=json.load(sys.stdin); print(len(data))'
+    observed: JSON array with 9 entries when filtered vs 27 without filter. Exit
+      0.
+  - action: uv run conductor checkpoints examples/simple-qa.yaml
+    observed: 'Deprecated alias works with workflow filter: prints deprecation notice
+      to stderr, delegates to shared impl, shows filtered results. Exit 0.'
+  - action: uv run conductor list checkpoints --help
+    observed: "Shows [WORKFLOW] positional argument with help text: 'Path to a workflow
+      YAML file. Filters checkpoints to this workflow only.'"
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_workflow_filter_passed_to_manager
+    description: Workflow path is resolved to absolute and passed to 
+      CheckpointManager.list_checkpoints()
+  - name: test_nonexistent_workflow_errors
+    description: Non-existent workflow path produces error on stderr, exits 1
+  - name: test_filtered_no_results_message
+    description: When filtering by workflow and no checkpoints match, print 
+      specific 'No checkpoints found for workflow' message, exit 0
+  - name: test_deprecated_with_workflow_filter
+    description: Deprecated 'conductor checkpoints' alias forwards workflow 
+      argument to shared impl
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback:
+- step: 'Step 2: Test First (TDD)'
+  what_i_did_instead: Discovered feature was already fully implemented and 
+    tested — verified existing tests pass and performed manual validation 
+    instead of writing new tests.
+  why: Feature 4.3 was already implemented by milestones 4.1/4.2. All 3 
+    filtering tests already exist and pass. Manual validation confirmed 
+    VAL-M3LIST-003.
+feature_id: '4.3'

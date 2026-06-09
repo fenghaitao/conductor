@@ -1,0 +1,31 @@
+verdict: pass
+passed_features:
+- "7.1"
+- "7.2"
+- "7.3"
+failed_features: []
+summary: >-
+  All three features (list runs --json, list checkpoints/templates --json,
+  list workflows --json) pass review. Validators confirm 168 tests pass,
+  typecheck clean, and lint/formatter clean. No breaking defects found;
+  only minor observations about documentation wording, redundant exception
+  tuple, and an optional description field that could be populated.
+issues: []
+pre_existing_issues: []
+shared_state_updates:
+- destination: AGENTS.md
+  path_suffix: AGENTS.md
+  content: |
+    ### CLI Error-Handling Pattern for Dual-Mode (Table + JSON) Subcommands
+
+    When adding error paths to list/read-only CLI commands, follow the
+    `error_on_inaccessible: bool = False` pattern: default to graceful
+    degradation for table/verbose mode, raise/hard-error for `--json` mode.
+    Always emit valid JSON to stdout before raising `typer.Exit(1)`.
+
+    Example from `list_cmd.py:_scan_event_logs()`: the function accepts an
+    `error_on_inaccessible` flag. In table mode, inaccessible event logs are
+    skipped silently; in `--json` mode, a well-formed JSON error payload is
+    written to stdout before exiting with code 1. This ensures downstream
+    JSON consumers always receive parseable output.
+  operation: append

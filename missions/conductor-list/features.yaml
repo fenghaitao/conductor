@@ -1,0 +1,486 @@
+features:
+- id: "1.1"
+  milestone: foundation
+  description: "Create the `src/conductor/cli/list_cmd.py` module with a Typer `list_app`
+    group (no_args_is_help=False) and register it in `app.py` via `app.add_typer(list_app)`.
+    Set up the skeleton with a callback that prints a placeholder summary and stub
+    commands for runs, workflows, checkpoints, registries, and templates. Import shared
+    primitives: `read_pid_files`, `CheckpointManager.list_checkpoints`, `_conductor_run_dir`,
+    and the existing registry listing helpers."
+  skill_name: cli-worker
+  expected_behavior: "`conductor list` prints a placeholder summary panel. `conductor
+    list --help` shows the group with all subcommands. `conductor --help` includes
+    `list` in the top-level command listing. Existing commands (run, stop, validate)
+    are unaffected."
+  fulfills: []
+- id: "1.2"
+  milestone: foundation
+  description: "Implement the `conductor list` summary dashboard callback in `list_cmd.py`.
+    Collect counts for: running workflows (via `read_pid_files`), recent runs (via
+    JSONL glob in `_conductor_run_dir`), local workflow files (via YAML glob and heuristic),
+    and available templates (via template directory scan). Print a Rich panel with
+    each count and a hint for the corresponding full subcommand (e.g., '3 running
+    — use conductor list runs'). All counts are integers including zero. No Rich table
+    headers or column lines in the summary panel."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list` prints a summary panel with counts
+    for running workflows, recent runs, local workflows, and templates. Each count
+    is accompanied by a subcommand hint like `conductor list runs` or `conductor list
+    workflows`. All counts are integers including zero. Exit code is 0."
+  fulfills:
+  - VAL-LRUNS-005
+- id: "2.1"
+  milestone: list-runs
+  description: "Implement `conductor list runs` command using `read_pid_files()` to
+    display a Rich table of running background workflows. Columns: Port, PID, Workflow
+    (YAML stem), Dashboard URL (`http://127.0.0.1:{port}`), Started (ISO-8601). When
+    no workflows are running, print a dim, human-readable empty-state message to stdout
+    without erroring, without printing a table header row, and exit 0."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list runs` when at least one background workflow
+    is active prints a Rich table with columns Port, PID, Workflow, Dashboard URL,
+    and Started. Running `conductor list runs` when no workflows are running prints
+    a dim empty-state message without table headers or error output. Exit code is
+    0 in both cases."
+  fulfills:
+  - VAL-LRUNS-001
+  - VAL-LRUNS-002
+- id: "2.2"
+  milestone: list-runs
+  description: "Implement `conductor list runs --recent N` by scanning `$TMPDIR/conductor/conductor-*.events.jsonl`
+    files. For each file: parse the first valid JSON line for `started_at`, parse
+    the last valid JSON line for `ended_at` and `status` (completed/failed). Cross-reference
+    active PID files by `run_id` to mark still-running workflows with status 'running'.
+    Sort by `started_at` descending, limit to at most N entries. Display a Rich table
+    with columns: Workflow, Run ID, Started, Ended (or 'running'), Status, Duration.
+    Truncated or invalid JSON lines are silently skipped."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list runs --recent N` prints at most N runs
+    sorted by start time descending. Each row shows workflow name, run ID, start time,
+    end time or running indicator, status, and duration. Active workflows matching
+    PID entries show status 'running'. Exit code is 0."
+  fulfills:
+  - VAL-LRUNS-004
+- id: "2.3"
+  milestone: list-runs
+  description: "Implement `conductor list runs --json` to emit a JSON array to stdout.
+    When workflows are running, each element contains keys: `pid`, `port`, `workflow`,
+    `dashboard_url`, `started_at`. When nothing is running, output is an empty JSON
+    array `[]`. The command exits 0 in both cases. No Rich markup or ANSI escapes
+    appear in the output."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list runs --json` prints a valid, parsable
+    JSON array to stdout. Elements contain `pid`, `port`, `workflow`, `dashboard_url`,
+    and `started_at` keys when workflows are running. Empty array `[]` when nothing
+    is running. Exit code is 0 in both cases."
+  fulfills:
+  - VAL-LRUNS-003
+- id: "2.4"
+  milestone: list-runs
+  description: "Harden `--recent N` event log scanning against malformed data. Wrap
+    each file parse in try/except: skip files with zero valid JSON lines, discard
+    invalid JSON lines line-by-line, and handle truncated last lines gracefully. A
+    single corrupt record must not crash the command, print a stack trace, or cause
+    a non-zero exit. Log skipped/corrupt files at debug level via the standard logging
+    module."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list runs --recent N` when some stored run
+    history is malformed or incomplete completes successfully, printing only the available
+    runs from valid data. The command exits 0 without a traceback or error message
+    due to a single corrupt record."
+  fulfills:
+  - VAL-LRUNS-006
+- id: "3.1"
+  milestone: list-workflows
+  description: "Implement `conductor list workflows` for basic non-recursive discovery.
+    Walk the current directory for `*.yaml` / `*.yml` files. For each file, read the
+    first 2 KB and check for `agents:`, `type: workflow`, or `runtime:` keys. Files
+    matching the heuristic are parsed with `yaml.safe_load` to extract: name (from
+    `workflow.name` or filename stem), path (absolute), agent_count (`len(agents)`),
+    topology tags (`has_parallel`, `has_for_each`, `has_pipeline`). Display a Rich
+    table with columns: Name, Path, Agent count, Topology. Non-workflow YAML files
+    are excluded. When no workflow files match, print an empty-state message and exit
+    0."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list workflows` in a directory with workflow
+    YAML files displays a Rich table with columns Name, Path, Agent count, and Topology.
+    Only files with `agents:` or `type: workflow` appear. In an empty directory or
+    one with no matching YAML, prints an informative empty-state message and exits
+    0 without a traceback."
+  fulfills:
+  - VAL-LISTWF-001
+  - VAL-LISTWF-002
+- id: "3.2"
+  milestone: list-workflows
+  description: "Add `--recursive` and `--max-depth` flags to `conductor list workflows`.
+    When `--recursive` is set, walk subdirectories up to `max_depth` (default 3).
+    Files at depth 4+ are excluded. When `--max-depth 0` is combined with `--recursive`,
+    only the search root is scanned (equivalent to non-recursive behavior). The Path
+    column shows relative or absolute paths including subdirectories."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list workflows --recursive` discovers workflow
+    files in subdirectories up to depth 3. Files at depth 4+ are excluded. `--max-depth
+    1` limits to immediate subdirectories only. `--max-depth 0` scans only the root.
+    Path column includes subdirectory paths. Exit code is 0."
+  fulfills:
+  - VAL-LISTWF-003
+  - VAL-LISTWF-007
+- id: "3.3"
+  milestone: list-workflows
+  description: "Implement the `--all` flag on `conductor list workflows` to bypass
+    heuristic filtering. When `--all` is set, every `*.yaml` / `*.yml` file in the
+    search directory is listed regardless of content. Non-workflow files show whatever
+    metadata could be parsed (agent count 0, topology empty). The table and JSON output
+    formats remain the same; only the filtering is bypassed."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list workflows --all` shows every YAML file
+    including non-workflow config files (CI configs, docker-compose, etc.) with agent
+    count 0 and empty topology. Exit code is 0."
+  fulfills:
+  - VAL-LISTWF-004
+- id: "3.4"
+  milestone: list-workflows
+  description: "Implement the `--path` flag on `conductor list workflows` to start
+    search from an alternate directory instead of `cwd`. The Path column reflects
+    files under the given root. When the specified path does not exist, print a clear
+    error message to stderr and exit with code 1. The flag combines with `--recursive`,
+    `--max-depth`, `--all`, and `--json`."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list workflows --path /tmp/my-workflows`
+    discovers workflow files in the specified directory. Files appear with paths under
+    that root. When `--path` targets a nonexistent directory, a clear error message
+    is printed to stderr and exit code is 1."
+  fulfills:
+  - VAL-LISTWF-006
+- id: "3.5"
+  milestone: list-workflows
+  description: "Implement `conductor list workflows --json` to emit a JSON array to
+    stdout. Each element is an object with keys: `name`, `path`, `agent_count`, `has_parallel`,
+    `has_for_each`, `has_pipeline`. Output is valid JSON parseable by `jq` or `json.loads()`.
+    No Rich table markup or ANSI escapes in the output. When no workflows are found,
+    emit an empty JSON array `[]`."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list workflows --json` writes a valid JSON
+    array to stdout parseable by `jq .` or `python3 -m json.tool`. Each element has
+    `name`, `path`, `agent_count`, `has_parallel`, `has_for_each`, `has_pipeline`
+    fields. Empty results produce `[]`. Exit code is 0."
+  fulfills:
+  - VAL-LISTWF-005
+- id: "4.1"
+  milestone: list-checkpoints
+  description: "Implement `conductor list checkpoints` command by delegating to `CheckpointManager.list_checkpoints()`.
+    Display a Rich table with columns: Version, Workflow, Created, Error, Agent. Handle
+    the empty-state case: when no checkpoints exist, print an informative message
+    (e.g., 'No checkpoints found') to stdout and exit 0 without erroring."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list checkpoints` with saved checkpoints
+    displays a Rich table with columns Version, Workflow, Created, Error, and Agent.
+    Running when no checkpoints exist prints an empty-state message to stdout and
+    exits 0 without error output on stderr."
+  fulfills:
+  - VAL-M3LIST-001
+  - VAL-M3LIST-008
+- id: "4.2"
+  milestone: list-checkpoints
+  description: "Implement `conductor list checkpoints --json` to emit a valid JSON
+    array to stdout. Each element is an object with fields: `version`, `workflow_path`,
+    `workflow_hash`, `created_at`, `failure`, `current_agent`, `run_id`, `file_path`.
+    Output is parseable by `jq` or any JSON parser. When no checkpoints exist, emit
+    an empty JSON array `[]`."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list checkpoints --json` emits a valid JSON
+    array parseable by `jq '.'`. Each element contains `version`, `workflow_path`,
+    `workflow_hash`, `created_at`, `failure`, `current_agent`, `run_id`, and `file_path`.
+    Empty results produce `[]`. Exit code is 0."
+  fulfills:
+  - VAL-M3LIST-002
+- id: "4.3"
+  milestone: list-checkpoints
+  description: "Implement the optional `[WORKFLOW]` positional argument on `conductor
+    list checkpoints` to filter results to a specific workflow file path. Pass the
+    argument to `CheckpointManager.list_checkpoints(workflow_path)` for filtering.
+    When no checkpoints match the given workflow, show the empty-state message and
+    exit 0."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list checkpoints path/to/specific.yaml` when
+    checkpoints exist for multiple workflows shows only checkpoints matching the given
+    workflow path in the output table. Exit code is 0."
+  fulfills:
+  - VAL-M3LIST-003
+- id: "4.4"
+  milestone: list-checkpoints
+  description: "Implement the deprecated `conductor checkpoints` command wrapper.
+    The old top-level `checkpoints` command prints a dim deprecation notice to stderr:
+    'Deprecated: use conductor list checkpoints instead' and then delegates to the
+    shared `_list_checkpoints_impl()` function that also powers `conductor list checkpoints`.
+    Mark the old command `hidden=True` in the Typer decorator. Both table and `--json`
+    modes work through the delegation."
+  skill_name: cli-worker
+  expected_behavior: "Running the old `conductor checkpoints` command prints the deprecation
+    notice to stderr and produces the same checkpoint table on stdout as `conductor
+    list checkpoints`. Exit code is 0."
+  fulfills:
+  - VAL-M3LIST-004
+- id: "5.1"
+  milestone: list-registries
+  description: "Implement `conductor list registries` by delegating to existing registry
+    listing functions from `cli/registry.py`. With no arguments, list all configured
+    registries in a Rich table with columns: Name, URL, Type. With a `<name>` argument,
+    list workflows published in that registry with columns: Name, Description. When
+    the named registry does not exist, print a clear error to stderr mentioning the
+    unknown registry name and exit with code 1."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list registries` lists configured registries
+    in a table with Name, URL, and Type columns. Running `conductor list registries
+    <name>` lists workflows in that registry. Running with an unknown registry name
+    prints an error to stderr and exits 1."
+  fulfills:
+  - VAL-M3LIST-005
+  - VAL-M3LIST-006
+  - VAL-M3LIST-007
+- id: "6.1"
+  milestone: list-templates
+  description: "Implement `conductor list templates` by scanning the built-in template
+    directory at `plugins/conductor-workflow-creator/assets/templates/`. Parse each
+    template YAML file's leading comment block for name (first comment line) and description
+    (second comment line). Display a Rich table with columns: Name, Description, Path
+    (absolute). The table must contain at least 3 rows when built-in templates exist.
+    When no user templates are present, still show built-in templates and exit 0."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list templates` prints a Rich table with
+    columns Name, Description, and Path containing at least 3 built-in template rows.
+    Each row has a non-empty Name and Description plus an absolute Path. When no user
+    templates exist, built-in templates are still shown. Exit code is 0."
+  fulfills:
+  - VAL-M4LIST-001
+  - VAL-M4LIST-006
+- id: "6.2"
+  milestone: list-templates
+  description: "Implement `conductor list templates --json` to emit a JSON array to
+    stdout. Each element is an object with `name`, `description`, and `path` keys,
+    all of type string. The array has at least 3 elements. Every template has a non-empty
+    `name` and non-empty `description` (no blank or null values). Every template `path`
+    is absolute, starts with `/`, and points to an existing `.yaml` or `.yml` file
+    on disk."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list templates --json` prints a valid JSON
+    array of at least 3 elements. `jq '.[0] | keys'` returns `['name','description','path']`.
+    No element has an empty or null name or description. Every path is absolute and
+    points to an existing file. Exit code is 0."
+  fulfills:
+  - VAL-M4LIST-002
+  - VAL-M4LIST-003
+  - VAL-M4LIST-004
+- id: "6.3"
+  milestone: list-templates
+  description: "Ensure table and JSON outputs for `conductor list templates` report
+    the same number of templates with matching names in the same order. Handle the
+    `--json --help` combination correctly: Typer's built-in help flag takes precedence
+    and shows help text (not JSON) with exit code 0."
+  skill_name: cli-worker
+  expected_behavior: "The count of table data rows from `conductor list templates`
+    matches `jq '. | length'` from `conductor list templates --json`. Names match
+    between both outputs in the same order. Running `conductor list templates --json
+    --help` shows help text containing '--json' and exits 0."
+  fulfills:
+  - VAL-M4LIST-005
+  - VAL-M4LIST-007
+- id: "7.1"
+  milestone: json-contract
+  description: "Ensure every `list` subcommand with `--json` emits a syntactically
+    valid JSON array to stdout with no JSON on stderr. Exit code is 0 on successful
+    JSON output. When JSON output cannot be produced due to an error (e.g., inaccessible
+    run history, missing workflow file), exit code is 1 and the error message appears
+    on stderr only — stdout is either empty or contains a valid (possibly empty) JSON
+    array."
+  skill_name: cli-worker
+  expected_behavior: "`conductor list runs --json` emits valid JSON parseable by `jq`
+    or `python -m json.tool` with exit 0. When data is inaccessible, exit code is
+    1 with error on stderr and valid (possibly empty) JSON on stdout. No plain-text
+    errors interleaved with JSON on stdout."
+  fulfills:
+  - VAL-M5JSON-001
+  - VAL-M5JSON-002
+  - VAL-M5JSON-003
+  - VAL-M5JSON-004
+- id: "7.2"
+  milestone: json-contract
+  description: "Ensure empty result sets across all `list` subcommands with `--json`
+    produce exactly `[]` (empty JSON array) on stdout — never `null`, `{}`, or a plain-text
+    message. This applies to: `list runs --json` with no running workflows, `list
+    workflows --json` with no YAML files, `list checkpoints --json` with no saved
+    checkpoints, and `list templates --json` when applicable."
+  skill_name: cli-worker
+  expected_behavior: "Every `list` subcommand with `--json` finding zero results outputs
+    exactly `[]` on stdout. No `null`, `{}`, or plain-text 'No results' message. Exit
+    code is 0."
+  fulfills:
+  - VAL-M5JSON-005
+- id: "7.3"
+  milestone: json-contract
+  description: "Ensure JSON output schema is stable: running the same `list` subcommand
+    with `--json` twice against unchanged data produces identical top-level keys in
+    each object. Adding new data (new workflow file, new running workflow) appends
+    objects with the same schema without changing existing entries. Ensure `--json`
+    output is pipeable: `conductor list runs --json | jq '.[0].port'` and `conductor
+    list workflows --json | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))'`
+    succeed. Ensure `--json` combined with unrecognized arguments exits non-zero with
+    a usage error on stderr — not silently ignoring the unknown flag."
+  skill_name: cli-worker
+  expected_behavior: "Repeated `--json` invocations against unchanged data produce
+    arrays with the same field names and types. JSON output pipes cleanly to `jq`
+    and Python `json.load(stdin)` without extra framing. `conductor list runs --json
+    --unknown-flag` exits non-zero with a usage error on stderr."
+  fulfills:
+  - VAL-M5JSON-006
+  - VAL-M5JSON-007
+  - VAL-M5JSON-008
+- id: "8.1"
+  milestone: deprecation
+  description: "Wrap the old `conductor checkpoints` command with a deprecation notice.
+    The old command prints `[dim]Deprecated: use 'conductor list checkpoints' instead[/dim]`
+    to stderr, then delegates to the shared `_list_checkpoints_impl()` function. This
+    applies to all invocations: no arguments, with a workflow argument, and with `--json`.
+    Mark the old command `hidden=True` in the Typer decorator so it does not appear
+    in `conductor --help` as a visible top-level command."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor checkpoints` (no args) prints the deprecation
+    notice to stderr and the checkpoint table to stdout. Running `conductor checkpoints
+    examples/simple-qa.yaml` prints deprecation to stderr with filtered results to
+    stdout. Running `conductor checkpoints --json` prints deprecation to stderr with
+    valid JSON to stdout. Exit code is 0 in all cases."
+  fulfills:
+  - VAL-M6DEPR-001
+  - VAL-M6DEPR-002
+  - VAL-M6DEPR-003
+- id: "8.2"
+  milestone: deprecation
+  description: "Ensure the new `conductor list checkpoints` command does NOT print
+    any deprecation notice to stderr. Ensure stdout from old `conductor checkpoints`
+    and new `conductor list checkpoints` is identical line-for-line after stripping
+    ANSI escape codes (the only difference is the deprecation notice on stderr from
+    the old command). Ensure the old command remains fully functional: correct timestamps,
+    workflow paths, failure summaries, and agent names matching the new command exactly."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor list checkpoints` writes checkpoint output
+    to stdout with no deprecation message on stderr. Stdout from old and new commands
+    matches line-for-line after stripping ANSI codes. Checkpoint counts, timestamps,
+    error types, and agent names are identical between both outputs. Exit code is
+    0."
+  fulfills:
+  - VAL-M6DEPR-004
+  - VAL-M6DEPR-005
+  - VAL-M6DEPR-008
+- id: "8.3"
+  milestone: deprecation
+  description: "Ensure `conductor registry list` is NOT deprecated and does not print
+    any deprecation notice to stderr. Ensure `conductor --help` shows the `list` command
+    group in the top-level commands listing and hides the deprecated `checkpoints`
+    command (not visible as a top-level command). If `checkpoints` appears at all
+    in help, it must include deprecation language."
+  skill_name: cli-worker
+  expected_behavior: "Running `conductor registry list` produces its normal output
+    with no deprecation notice on stderr. Running `conductor --help` includes `list`
+    as a top-level command group and does NOT show `checkpoints` as a visible top-level
+    command. Exit code is 0."
+  fulfills:
+  - VAL-M6DEPR-006
+  - VAL-M6DEPR-007
+- id: "9.1"
+  milestone: cross-area
+  description: "Write an integration test verifying the running workflow discovery
+    flow: `conductor list` shows a count of running workflows with hint; `conductor
+    list runs` shows the running table with Port, PID, Workflow, Dashboard URL, and
+    Started columns (or empty-state if none); and the dashboard URL is reachable.
+    Uses `CliRunner` to invoke commands and assert output content patterns."
+  skill_name: test-worker
+  expected_behavior: "`conductor list` shows count ≥ 0 with subcommand hint. `conductor
+    list runs` shows table with Port, PID, Workflow columns or empty-state message.
+    Both exit 0."
+  fulfills:
+  - VAL-CROSS-001
+- id: "9.2"
+  milestone: cross-area
+  description: "Write an integration test verifying the workflow file discovery to
+    run to history flow: `conductor list workflows` shows discovered YAML files with
+    Name, Path, Agent count, Topology; picking one and running it with `conductor
+    run <path>` (dry-run mode to avoid LLM calls); then `conductor list runs --recent
+    5` includes the completed run with status 'completed' and a non-null duration.
+    Use temp directories with valid workflow YAML files."
+  skill_name: test-worker
+  expected_behavior: "`conductor list workflows` shows filtered YAML files with correct
+    metadata. After running a workflow, `conductor list runs --recent 5` includes
+    the completed run with status=completed. Both exit 0."
+  fulfills:
+  - VAL-CROSS-002
+- id: "9.3"
+  milestone: cross-area
+  description: "Write an integration test verifying the background workflow lifecycle:
+    start a workflow in background mode (`conductor run <path> --web-bg`), run `conductor
+    list runs` to confirm the entry appears with PID and Dashboard URL, stop it via
+    `conductor stop --port <port>`, then run `conductor list runs` again to confirm
+    the entry is removed from the running table (it may appear in `--recent` with
+    status=failed). Uses actual background process spawning and PID file monitoring."
+  skill_name: test-worker
+  expected_behavior: "After `conductor run --web-bg`, `conductor list runs` shows
+    the new entry. After `conductor stop --port <port>`, `conductor list runs` omits
+    the entry from the running table. Exit code is 0."
+  fulfills:
+  - VAL-CROSS-003
+- id: "9.4"
+  milestone: cross-area
+  description: "Write an integration test verifying checkpoint discovery and resume:
+    create a failing workflow that saves a checkpoint, run `conductor list checkpoints`
+    to confirm it appears with file_path, resume with `conductor resume <path>`, then
+    run `conductor list runs --recent 1` to verify the resumed run shows status 'completed'
+    with the same run_id from the checkpoint listing. Uses `CliRunner` with temp checkpoint
+    directories."
+  skill_name: test-worker
+  expected_behavior: "`conductor list checkpoints` shows at least one entry with file_path
+    after a failed run. `conductor list runs --recent 1` after resume shows completed
+    status with matching run_id. Both exit 0."
+  fulfills:
+  - VAL-CROSS-004
+- id: "9.5"
+  milestone: cross-area
+  description: "Write an integration test verifying JSON export for CI scripting:
+    `conductor list runs --json` emits a valid JSON array of run history objects with
+    `workflow`, `run_id`, `started_at`, `status`, `duration_seconds` fields. `conductor
+    list workflows --json --recursive` emits a JSON array of workflow metadata with
+    `name`, `path`, `agent_count`, and topology tags. Both outputs pipe cleanly to
+    `jq` for filtering. Both exit 0. Uses temp directories with YAML files and mock
+    event logs."
+  skill_name: test-worker
+  expected_behavior: "`conductor list runs --json | jq '.'` is a valid JSON array.
+    `conductor list workflows --json | jq '.[0].name'` extracts a field without error.
+    Both commands exit 0."
+  fulfills:
+  - VAL-CROSS-005
+- id: "9.6"
+  milestone: cross-area
+  description: "Write an integration test verifying template discovery to workflow
+    instantiation: `conductor list templates` shows template names, descriptions,
+    and paths. Pick a template, run `conductor init --template <template-name> <output-path>`,
+    then run `conductor list workflows --path <output-dir>` to confirm the newly created
+    workflow file appears with the expected agent count and topology from the template.
+    Uses `CliRunner` with temp output directories."
+  skill_name: test-worker
+  expected_behavior: "`conductor list templates` shows template names and paths. After
+    `conductor init --template <name> <dir>`, `conductor list workflows --path <dir>`
+    includes the created file with correct metadata from the template. Exit code is
+    0."
+  fulfills:
+  - VAL-CROSS-006
+- id: '9.7'
+  milestone: cross-area
+  description: 'Fix blocked assertion VAL-CROSS-006 (originally in: Write an integration
+    test verifying template discovery to workflow instantiation: `conductor list templates`
+    shows template names, descriptions, and paths. Pick a template, run `conductor
+    init --template <template-name> <output-path>`, then run `conductor list workflows
+    --path <output-dir>` to confirm the newly created workflow file appears with the
+    expected agent count and topology from the template. Uses `CliRunner` with temp
+    output directories.)'
+  skill_name: test-worker
+  expected_behavior: Assertion VAL-CROSS-006 passes user testing
+  fulfills:
+  - VAL-CROSS-006

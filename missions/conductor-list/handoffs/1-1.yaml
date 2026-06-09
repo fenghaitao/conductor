@@ -1,0 +1,79 @@
+salient_summary: Milestone 1.1 scaffold already fully implemented. `list_cmd.py`
+  exists with `list_app` Typer group, summary callback, and all subcommand 
+  stubs. `app.py` registration and deprecated `checkpoints` wrapper are in 
+  place. All 27 tests, typecheck, and lint pass.
+what_was_implemented: >
+  The `src/conductor/cli/list_cmd.py` module already exists with a Typer `list_app`
+  group
+  (no_args_is_help=False), a summary callback (`list_summary`) that prints a Rich
+  panel with
+  running/recent/workflow/template counts, and command stubs for runs, workflows,
+  checkpoints,
+  registries, and templates. The module imports shared primitives:
+  `CheckpointManager.list_checkpoints`, `_conductor_run_dir`, `read_pid_files` (lazy),
+  and
+  the registry listing helpers. In `app.py`, `list_app` is imported and registered
+  via
+  `app.add_typer(list_app)` (lines 43, 47). The deprecated `checkpoints` command in
+  `app.py`
+  prints a dim deprecation notice to stderr and delegates to `_list_checkpoints_impl()`.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 27 tests passed — covers help, templates table/JSON, empty 
+      states, filtering, summary panel, PID resilience
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  interactive_checks:
+  - action: uv run conductor list
+    observed: 'Rich panel with counts: Running workflows: 0, Recent runs: 228, Local
+      workflows: 0, Templates: 3. Each count has dim subcommand hints.'
+  - action: uv run conductor list --help
+    observed: 'Shows all 5 subcommands: runs, workflows, checkpoints, registries,
+      templates'
+  - action: uv run conductor --help
+    observed: "`list` appears in top-level command listing with description 'Discover
+      workflows, runs, checkpoints, and more.'"
+  - action: uv run conductor checkpoints
+    observed: Deprecation notice printed to stderr. Table output matches 
+      `conductor list checkpoints`.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_list_help_shows_subcommands
+    description: conductor list --help lists all subcommands
+  - name: test_list_summary_exit_code_zero
+    description: conductor list exits 0 and prints summary panel
+  - name: test_list_summary_uses_panel_not_table
+    description: Summary uses Rich Panel, not Table
+  - name: test_list_summary_has_running_count
+    description: Summary shows running workflows count
+  - name: test_list_summary_has_recent_count
+    description: Summary shows recent runs count
+  - name: test_list_summary_has_workflow_count
+    description: Summary shows local workflow count
+  - name: test_list_summary_has_template_count
+    description: Summary shows template count
+  - name: test_list_summary_counts_are_integers
+    description: All counts are integers including zero
+  - name: test_list_summary_with_zero_running
+    description: Zero running workflows shows 0 count
+  - name: test_list_summary_with_running_workflows
+    description: Running workflows produce correct count
+  - name: test_list_summary_resilient_to_pid_error
+    description: PID file read errors are handled gracefully
+  - name: test_list_summary_stderr_is_empty
+    description: Summary writes nothing to stderr
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '1.1'

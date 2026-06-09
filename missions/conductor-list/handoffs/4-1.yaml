@@ -1,0 +1,112 @@
+salient_summary: Added 17 comprehensive checkpoint tests to test_list.py. The 
+  `conductor list checkpoints` command was already implemented in list_cmd.py — 
+  verified it works correctly for both table and JSON output, empty states, 
+  workflow filtering, and the deprecated `conductor checkpoints` alias.
+what_was_implemented: >
+  Feature 4.1 (`conductor list checkpoints`) was already fully implemented in
+  `src/conductor/cli/list_cmd.py` (the `_list_checkpoints_impl` function at line 712
+  and the `list_checkpoints` command at line 687) and `src/conductor/cli/app.py`
+  (the deprecated `checkpoints` command at line 988 with hidden=True and deprecation
+  notice). No code changes were needed in list_cmd.py or app.py.
+
+  Added 17 checkpoint-specific tests in `tests/test_cli/test_list.py`:
+  - TestListCheckpoints (6 tests): empty state message, exit 0 on empty, single
+    checkpoint table, multiple checkpoints table, expected column headers
+    (Version/Workflow/Created/Error/Agent), and total count summary line.
+  - TestListCheckpointsFiltering (3 tests): workflow filter passed to manager,
+    nonexistent workflow path errors, filtered-no-results message.
+  - TestListCheckpointsJson (3 tests): empty JSON array, JSON fields validation
+    (workflow/timestamp/failed_agent/error_type/file), multiple entries.
+  - TestCheckpointsDeprecated (5 tests): deprecation notice on stderr, old command
+    still works, stdout content matches new command, hidden from --help, deprecated
+    with workflow filter delegates correctly.
+  - _make_checkpoint_data helper to construct CheckpointData dataclass instances.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: All 109 tests passed including 17 new checkpoint tests
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: uv run ruff check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py tests/test_cli/test_list.py
+    exit_code: 0
+    observation: All checks passed — no lint violations
+  - command: uv run conductor list checkpoints
+    exit_code: 0
+    observation: Rich table with columns Version, Workflow, Created, Error, 
+      Agent. 27 checkpoints displayed with total count. VAL-M3LIST-001 
+      satisfied.
+  - command: uv run conductor list checkpoints --json
+    exit_code: 0
+    observation: Valid JSON array of 27 checkpoint objects with workflow, 
+      timestamp, failed_agent, error_type, file fields
+  - command: uv run conductor checkpoints
+    exit_code: 0
+    observation: Deprecated notice printed to stderr. Table output identical to 
+      list checkpoints. Deprecated alias functional.
+  - command: uv run conductor list checkpoints examples/simple-qa.yaml
+    exit_code: 0
+    observation: Workflow filter works — shows only checkpoints for 
+      simple-qa-ds, 9 results
+  interactive_checks:
+  - action: uv run conductor list checkpoints (with actual checkpoint files 
+      present)
+    observed: Table with Version, Workflow, Created, Error, Agent columns. 27 
+      checkpoints displayed sorted by created_at descending. Total count line at
+      bottom.
+  - action: Mocked empty checkpoint list via tests
+    observed: "'No checkpoints found.' dim message printed to stdout, exit 0, no stderr
+      errors. VAL-M3LIST-008 satisfied."
+  - action: uv run conductor checkpoints 2>/dev/null
+    observed: Table output matches 'conductor list checkpoints'. Deprecation 
+      notice properly redirected to stderr.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: test_no_checkpoints_prints_empty_message
+    description: 'VAL-M3LIST-008: No checkpoints → dim message, exit 0'
+  - name: test_no_checkpoints_exits_zero
+    description: Empty checkpoint list exits 0, no traceback
+  - name: test_single_checkpoint_table
+    description: One checkpoint → table with 1 row showing workflow, created, 
+      error, agent
+  - name: test_multiple_checkpoints_table
+    description: Multiple checkpoints → table with correct values
+  - name: test_table_has_expected_columns
+    description: 'VAL-M3LIST-001: Table columns Version, Workflow, Created, Error,
+      Agent'
+  - name: test_checkpoint_count_summary_line
+    description: "Summary line shows 'Total: N checkpoint(s)'"
+  - name: test_workflow_filter_passed_to_manager
+    description: Workflow path argument resolved and passed to list_checkpoints
+  - name: test_nonexistent_workflow_errors
+    description: Nonexistent workflow path → error, exit 1
+  - name: test_filtered_no_results_message
+    description: Workflow filter with no matches → specific empty message
+  - name: test_empty_json_array
+    description: No checkpoints → empty JSON array []
+  - name: test_json_has_expected_fields
+    description: JSON entries have workflow, timestamp, failed_agent, 
+      error_type, file
+  - name: test_json_multiple_entries
+    description: Multiple checkpoints → JSON array of correct length
+  - name: test_deprecation_notice_printed_to_stderr
+    description: "conductor checkpoints prints 'Deprecated: use conductor list checkpoints
+      instead' to stderr"
+  - name: test_deprecated_command_still_works
+    description: Deprecated command still produces correct table output
+  - name: test_deprecated_command_stdout_matches_new
+    description: Table content identical between old and new commands
+  - name: test_deprecated_command_hidden_from_help
+    description: Old checkpoints command hidden in --help
+  - name: test_deprecated_with_workflow_filter
+    description: Deprecated command with workflow filter delegates correctly
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '4.1'

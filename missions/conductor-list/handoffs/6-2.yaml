@@ -1,0 +1,65 @@
+salient_summary: Feature 6.2 (`conductor list templates --json`) was discovered 
+  to be already fully implemented. Verified all three VAL assertions, all 16 
+  template-related tests pass, exit code 0.
+what_was_implemented: >
+  Already implemented in `src/conductor/cli/list_cmd.py`:
+  - `list_templates()` command (line 842) accepts `--json` flag (line 843-849)
+  - JSON branch (line 866-868) emits `json.dumps(templates)` to stdout
+  - `_discover_templates()` (line 103) returns `list[dict[str, str]]` with `name`,
+  `description`, `path` keys
+  - `_parse_template_headers()` (line 52) extracts name (first comment line) and description
+  (first non-empty, non-separator comment after name) from YAML frontmatter
+  - `_get_template_directories()` (line 829) returns the built-in templates directory
+  at `plugins/conductor-workflow-creator/assets/templates/`
+  - Paths are resolved via `yaml_file.resolve()` producing absolute paths (line 129,
+  140)
+  - Non-template YAML files (lacking 2+ comment lines with non-empty name/description)
+  are excluded (line 98)
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_list.py -v -k template
+    exit_code: 0
+    observation: '16 tests passed — covers: table output, JSON validity, required
+      fields, path existence, comment header names, description content, table/JSON
+      parity, empty dir handling, non-template exclusion, summary template count'
+  - command: uv run conductor list templates --json | python3 -m json.tool
+    exit_code: 0
+    observation: Valid JSON array of 3 objects, each with name/description/path 
+      string keys
+  - command: uv run conductor list templates --json; echo exit_code=$?
+    exit_code: 0
+    observation: Exit code 0
+  interactive_checks:
+  - action: 'VAL-M4LIST-002: JSON array length ≥ 3, keys = [name, description, path]'
+    observed: Length=3, Keys=['name','description','path'] — PASS
+  - action: 'VAL-M4LIST-003: No empty/null names or descriptions'
+    observed: Empty names=0, Empty descriptions=0 — PASS
+  - action: 'VAL-M4LIST-004: All paths absolute, starting with /, pointing to existing
+      .yaml/.yml files'
+    observed: All_abs=True, All_exist=True, All_yaml=True — PASS
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: TestListTemplatesJson::test_json_output_is_valid_array
+    description: '`--json` emits valid JSON array with ≥ 3 elements'
+  - name: TestListTemplatesJson::test_json_each_entry_has_required_fields
+    description: Each entry has name, description, path — all non-empty strings
+  - name: TestListTemplatesJson::test_json_paths_point_to_existing_files
+    description: Every path is absolute and exists on disk
+  - name: TestListTemplatesJson::test_json_names_match_comment_headers_not_stems
+    description: "Names come from YAML comment headers (e.g., 'Pipeline template:
+      ...')"
+  - name: TestListTemplatesJson::test_json_descriptions_contain_use_when
+    description: Descriptions include 'Use when:' content from headers
+  - name: TestListTemplatesJson::test_json_array_length_matches_table_rows
+    description: Table and JSON report same number of templates in same order
+  - name: TestListTemplatesEmpty::test_empty_template_dir_emits_empty_json_array
+    description: Empty/missing template dir → `[]` JSON array, exit 0
+  - name: TestListTemplatesFiltering::test_json_excludes_non_template_files
+    description: Non-template YAML files excluded from JSON output
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '6.2'

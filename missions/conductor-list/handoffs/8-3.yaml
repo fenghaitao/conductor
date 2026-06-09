@@ -1,0 +1,88 @@
+salient_summary: Feature 8.3 was already fully implemented. Verified that 
+  `conductor registry list` has no deprecation notice, `conductor --help` shows 
+  the `list` group and hides deprecated `checkpoints`. All 174 list tests pass, 
+  typecheck and lint are clean.
+what_was_implemented: >
+  This feature was already implemented by prior milestones (8.1, 8.2, and the core
+  CLI scaffold).
+  The `list_app` Typer group is registered in `app.py:47` via `app.add_typer(list_app)`.
+  The
+  deprecated `checkpoints` command at `app.py:988` is marked `hidden=True`, prints
+  a `[dim]`
+  deprecation notice to stderr, and delegates to `_list_checkpoints_impl()` in `list_cmd.py:761`.
+  The `list registries` command at `list_cmd.py:831` delegates to existing registry
+  helpers with
+  no deprecation notice. `conductor --help` correctly shows `list` as a top-level
+  command group
+  and hides the deprecated `checkpoints` command from the visible listing.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run conductor registry list 2>&1
+    exit_code: 0
+    observation: 'Output: No registries configured. No deprecation text in stdout
+      or stderr.'
+  - command: uv run conductor --help
+    exit_code: 0
+    observation: Shows `list` as a top-level command group. `checkpoints` is NOT
+      visible.
+  - command: uv run conductor list --help
+    exit_code: 0
+    observation: 'Shows all five subcommands: runs, workflows, checkpoints, registries,
+      templates.'
+  - command: uv run conductor checkpoints 2>/dev/null | head -3
+    exit_code: 0
+    observation: Stdout contains only checkpoint table. Deprecation on stderr 
+      only.
+  - command: uv run conductor checkpoints 2>&1 1>/dev/null
+    exit_code: 0
+    observation: 'Stderr contains only: Deprecated: use conductor list checkpoints
+      instead'
+  - command: uv run pytest tests/test_cli/test_list.py -v -k deprecation or 
+      registry or help
+    exit_code: 0
+    observation: 9 tests passed covering all deprecation/registry/help 
+      assertions.
+  - command: uv run pytest tests/test_cli/test_list.py -v
+    exit_code: 0
+    observation: 174 tests passed.
+  - command: uv run ty check src/conductor/cli/list_cmd.py 
+      src/conductor/cli/app.py
+    exit_code: 0
+    observation: All checks passed, no type errors.
+  - command: uv run ruff check src tests && uv run ruff format --check src tests
+    exit_code: 0
+    observation: All checks passed, 215 files already formatted.
+  interactive_checks:
+  - action: Ran `uv run conductor registry list`
+    observed: Normal output with no deprecation warning. Exit code 0.
+  - action: Ran `uv run conductor --help`
+    observed: '`list` appears as top-level group. `checkpoints` not visible.'
+  - action: Ran `uv run conductor checkpoints`
+    observed: Deprecation notice on stderr only. Stdout matches `list 
+      checkpoints`.
+tests_added:
+- file: tests/test_cli/test_list.py
+  cases:
+  - name: TestRegistryNotDeprecated::test_registry_list_no_deprecation_notice
+    description: Verifies `conductor list registries` does not emit deprecation 
+      text to stderr.
+  - name: TestCheckpointsDeprecated::test_deprecation_notice_printed_to_stderr
+    description: Verifies `conductor checkpoints` prints deprecation notice to 
+      stderr.
+  - name: TestCheckpointsDeprecated::test_deprecated_command_hidden_from_help
+    description: Verifies `conductor checkpoints` is hidden=True in Typer 
+      decorator.
+  - name: 
+      TestConductorHelpShowsListAndHidesCheckpoints::test_help_shows_list_group
+    description: Verifies `conductor --help` includes `list` as a top-level 
+      command group.
+  - name: 
+      TestConductorHelpShowsListAndHidesCheckpoints::test_help_hides_deprecated_checkpoints
+    description: Verifies `conductor --help` does NOT show `checkpoints` as 
+      visible top-level command.
+discovered_issues: []
+skill_name: cli-worker
+skill_feedback: []
+feature_id: '8.3'
