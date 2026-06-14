@@ -11,6 +11,26 @@ from typing import Any
 from conductor.config.schema import OutputField
 from conductor.exceptions import ValidationError
 
+# JSON-schema metadata keys an LLM may echo instead of returning the bare value.
+# When a dict's keys are entirely within this set, it is a schema-echo wrapper
+# and the real payload should be extracted (see _unwrap_string).
+_SCHEMA_ECHO_KEYS = frozenset(
+    {
+        "type",
+        "description",
+        "title",
+        "default",
+        "example",
+        "examples",
+        "enum",
+        "format",
+        "value",
+        "properties",
+        "items",
+        "required",
+    }
+)
+
 
 def validate_output(
     content: dict[str, Any],
@@ -90,6 +110,18 @@ def _unwrap_string(value: dict[str, Any]) -> str | None:
     # Anthropic content block: {"type": "text", "text": "..."}
     if "text" in value and isinstance(value.get("text"), str):
         return str(value["text"])
+    # Schema-echo dict: some models (e.g. DeepSeek via Anthropic-compatible
+    # endpoints) parrot the output field's JSON schema instead of returning the
+    # bare string, e.g. {"type": "string", "description": "...", "value": "..."}.
+    # When every key is JSON-schema metadata, extract the real payload (commonly
+    # under "value") rather than re-serializing the whole schema as YAML.
+    if value and set(value.keys()) <= _SCHEMA_ECHO_KEYS:
+        for payload_key in ("value", "default", "example"):
+            if isinstance(value.get(payload_key), str):
+                return value[payload_key]
+        # Pure {type, description} echo where the content landed in description.
+        if "type" in value and isinstance(value.get("description"), str):
+            return value["description"]
     # Generic single-string-key dict: {"content": "..."}
     str_vals = {k: v for k, v in value.items() if isinstance(v, str)}
     if len(str_vals) == 1 and len(value) <= 2:
