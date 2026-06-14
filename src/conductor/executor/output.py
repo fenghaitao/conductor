@@ -25,6 +25,7 @@ _SCHEMA_ECHO_KEYS = frozenset(
         "enum",
         "format",
         "value",
+        "content",
         "properties",
         "items",
         "required",
@@ -116,7 +117,7 @@ def _unwrap_string(value: dict[str, Any]) -> str | None:
     # When every key is JSON-schema metadata, extract the real payload (commonly
     # under "value") rather than re-serializing the whole schema as YAML.
     if value and set(value.keys()) <= _SCHEMA_ECHO_KEYS:
-        for payload_key in ("value", "default", "example"):
+        for payload_key in ("value", "content", "default", "example"):
             if isinstance(value.get(payload_key), str):
                 return value[payload_key]
         # Pure {type, description} echo where the content landed in description.

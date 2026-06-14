@@ -37,6 +37,11 @@ class TestUnwrapSchemaEcho:
         }
         assert _unwrap_string(echo) == "## Why\n\nThe real content."
 
+    def test_content_key_schema_echo(self) -> None:
+        """{type, content} -> extract the content payload (skill-writer variant)."""
+        echo = {"type": "string", "content": "# Graph-Worker\n\nThe skill doc."}
+        assert _unwrap_string(echo) == "# Graph-Worker\n\nThe skill doc."
+
     def test_description_only_schema_echo(self) -> None:
         """{type, description} with content under description -> extract it."""
         echo = {"type": "string", "description": "## What we're building\n\nBody."}
