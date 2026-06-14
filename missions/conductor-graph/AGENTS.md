@@ -322,3 +322,8 @@ flowchart TD
   classDef endNode stroke-width:2px
   classDef errorNode stroke:#d63031,stroke-dasharray:5 5
 ```
+
+
+### Graph Fixture Regeneration
+
+When regenerating golden graph fixtures (`tests/fixtures/graph/*.mmd`), run `conductor graph examples/<wf>.yaml --depth N` for each depth and redirect stdout to the fixture file. The `%% Depth:` header comment reflects the remaining recursion depth at that render level — it decrements in nested sub-workflow subgraphs.
