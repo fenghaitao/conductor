@@ -28,6 +28,9 @@ workflow:
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
     default_model: deepseek-v4-pro
+    # Verification agents exercise real surfaces (CLI runs, many assertions) and
+    # can exceed the default 50 tool-use cap; raise to match implement.
+    max_agent_iterations: 200
 
   input:
     mission_dir:

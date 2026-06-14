@@ -254,9 +254,11 @@ agents:
   - name: implement
     # Cap the agentic tool-use loop. Without this, a loop-prone model (observed:
     # Kimi K2 grinding 100+ turns of redundant `git diff` on a single feature)
-    # can burn unbounded tokens. Efficient runs finish in ~20 turns; 50 leaves
-    # generous headroom for verification-heavy features while stopping runaways.
-    max_agent_iterations: 50
+    # can burn unbounded tokens. Efficient runs finish in ~20 turns; 200 leaves
+    # generous headroom for large scaffold / verification-heavy features (a 50
+    # cap was observed to kill the foundation feature mid-implement) while still
+    # stopping runaways.
+    max_agent_iterations: 200
     reasoning:
       effort: high
     # The Copilot SDK already retries ~5x internally (~90s) before surfacing an
