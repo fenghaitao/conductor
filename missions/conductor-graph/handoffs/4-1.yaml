@@ -1,0 +1,67 @@
+salient_summary: Feature 4.1 (recursive sub-workflow inlining) was already fully
+  implemented in graph_cmd.py before this worker was assigned. Verified all 61 
+  tests pass, typecheck and lint clean, and VAL-CORE-005/006 and VAL-CROSS-005 
+  assertions are satisfied. Only fix needed was formatting the test file.
+what_was_implemented: >
+  Pre-existing implementation in src/conductor/cli/graph_cmd.py:
+  render_mermaid() supports --depth N (0-10, default 1) with recursive inlining
+  of type: workflow agents as nested Mermaid subgraph blocks. Depth 0: opaque
+  workflowStep nodes. Depth >=1: expanded into subgraphs with internal nodes,
+  edges, parallel/for-each groups. Cycle detection via canonical Path.resolve()
+  set. Missing-file degradation: error node, never crashes. Node IDs prefixed
+  across levels. Fixed ruff format issue in tests/test_cli/test_graph.py.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_graph.py -v
+    exit_code: 0
+    observation: 61 tests pass (unit, integration, golden fixtures)
+  - command: uv run pytest tests/test_cli/ -v 
+      --ignore=tests/test_cli/test_graph.py -x
+    exit_code: 0
+    observation: 636 CLI tests pass, no regressions
+  - command: make typecheck
+    exit_code: 0
+    observation: All type checks passed
+  - command: make lint
+    exit_code: 0
+    observation: ruff check and ruff format --check both pass
+  interactive_checks:
+  - action: conductor graph examples/mission/plan.yaml --depth 0
+    observed: All workflow agents render as opaque nodes with workflowStep 
+      class; no subgraph blocks; exit 0
+  - action: conductor graph examples/mission/plan.yaml --depth 1
+    observed: Each workflow agent inlined as subgraph block with internal agents
+      and edges; exit 0
+  - action: conductor graph examples/mission/plan.yaml --depth 2
+    observed: 9 subgraph blocks total -- deeper inlining for nested 
+      sub-workflows; exit 0
+tests_added:
+- file: tests/test_cli/test_graph.py
+  cases:
+  - name: test_depth_zero_opaque_node
+    description: 'Depth 0: workflow agent as opaque node, no subgraph'
+  - name: test_depth_one_subworkflow_inlined
+    description: 'Depth 1: inlined as nested subgraph with internal nodes'
+  - name: test_subworkflow_file_missing
+    description: Missing file -> error node, no crash
+  - name: test_subworkflow_cycle_detection
+    description: Cycle -> error node, no infinite recursion
+  - name: test_graph_depth_zero / test_graph_depth_two
+    description: CLI depth flags produce correct output
+  - name: test_missing_subworkflow_file_error_node / 
+      test_cycle_subworkflow_error_node
+    description: CLI gracefully degrades on missing/cyclic sub-workflows
+- file: tests/fixtures/graph/ (16 golden .mmd files)
+  cases:
+  - name: simple-qa-depth0.mmd through wait-step-depth1.mmd
+    description: Golden output for each example workflow at depths 0 and 1
+discovered_issues: []
+skill_name: graph-worker
+skill_feedback:
+- step: Step 2 (TDD) and Step 3 (Implement)
+  what_i_did_instead: Skipped -- implementation and tests already existed.
+  why: Feature 4.1 was pre-existing with full test coverage. Only formatted the 
+    test file.
+feature_id: '4.1'

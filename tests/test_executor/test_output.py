@@ -14,9 +14,59 @@ from conductor.config.schema import OutputField
 from conductor.exceptions import ValidationError
 from conductor.executor.output import (
     _check_type,
+    _unwrap_string,
     parse_json_output,
     validate_output,
 )
+
+
+class TestUnwrapSchemaEcho:
+    """Tests for _unwrap_string handling LLM schema-echo dicts.
+
+    Some models (e.g. DeepSeek via Anthropic-compatible endpoints) parrot the
+    output field's JSON schema instead of returning the bare string, putting the
+    real content under a payload key. See output.py:_unwrap_string.
+    """
+
+    def test_value_key_schema_echo(self) -> None:
+        """{type, description, value} -> extract the value payload."""
+        echo = {
+            "type": "string",
+            "description": "Complete mission proposal markdown",
+            "value": "## Why\n\nThe real content.",
+        }
+        assert _unwrap_string(echo) == "## Why\n\nThe real content."
+
+    def test_content_key_schema_echo(self) -> None:
+        """{type, content} -> extract the content payload (skill-writer variant)."""
+        echo = {"type": "string", "content": "# Graph-Worker\n\nThe skill doc."}
+        assert _unwrap_string(echo) == "# Graph-Worker\n\nThe skill doc."
+
+    def test_description_only_schema_echo(self) -> None:
+        """{type, description} with content under description -> extract it."""
+        echo = {"type": "string", "description": "## What we're building\n\nBody."}
+        assert _unwrap_string(echo) == "## What we're building\n\nBody."
+
+    def test_validate_output_unwraps_schema_echo(self) -> None:
+        """validate_output rewrites a schema-echo dict to the plain string."""
+        schema = {"proposal": OutputField(type="string")}
+        content = {
+            "proposal": {
+                "type": "string",
+                "description": "Complete mission proposal markdown",
+                "value": "## Why\n\nThe real content.",
+            }
+        }
+        validate_output(content, schema)
+        assert content["proposal"] == "## Why\n\nThe real content."
+
+    def test_anthropic_text_block_still_unwrapped(self) -> None:
+        """Regression: {type: text, text: ...} content block still works."""
+        assert _unwrap_string({"type": "text", "text": "hello"}) == "hello"
+
+    def test_single_string_key_still_unwrapped(self) -> None:
+        """Regression: generic single-string-key dict still works."""
+        assert _unwrap_string({"content": "hello"}) == "hello"
 
 
 class TestCheckType:

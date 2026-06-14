@@ -1,0 +1,104 @@
+salient_summary: 'Verified existing `conductor graph` feature fully satisfies milestone
+  2.1 — all step types render with distinct Mermaid node shapes (agent: rect, human_gate:
+  rhombus, script: hexagon, set: stadium, wait: cylinder, terminate: rounded rect
+  with distinct classes, workflow: rounded rect, $end: stadium double border). All
+  59 graph tests pass, typecheck/lint clean, full suite has 1 pre-existing unrelated
+  failure.'
+what_was_implemented: 'Feature was already implemented prior to this worker run. The
+  `conductor graph` command in `src/conductor/cli/graph_cmd.py` (~534 lines) with
+  `render_mermaid()` pure function renders all step types with distinct Mermaid node
+  shapes per the specification: agents as ["label"] rectangles, human_gates as {label}
+  rhombuses with `humanGate` class, scripts as {{"label"}} hexagons with `scriptStep`
+  class, set steps as (["label"]) stadiums with `setStep` class, wait steps as [("label")]
+  cylinders with `waitStep` class, terminate-success/failed as ("label") rounded rects
+  with `terminateSuccess`/`terminateFailed` classes, workflow agents as ("label")
+  rounded rects with `workflowStep` class (dashed border), and `$end` as (["$end"])
+  stadium with `endNode` class. Entry point gets bold border via `entryPoint` class.
+  Parallel/for-each groups render as `subgraph` blocks. Registered in `src/conductor/cli/app.py`
+  (lines 50, 52). Tests in `tests/test_cli/test_graph.py` (59 cases covering unit
+  + integration + golden fixtures). Golden fixtures in `tests/fixtures/graph/` (16
+  files across 8 example workflows at depths 0 and 1).'
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_graph.py -v
+    exit_code: 0
+    observation: All 59 graph tests passed — unit tests for render_mermaid() 
+      shapes/routes/groups/subworkflows/determinism + CliRunner integration 
+      tests + golden fixture comparisons
+  - command: make typecheck
+    exit_code: 0
+    observation: All checks passed — no type errors
+  - command: make lint
+    exit_code: 0
+    observation: All checks passed — ruff check and ruff format --check both 
+      clean
+  - command: make test
+    exit_code: 2
+    observation: 3603 passed, 23 skipped, 1 failed. The single failure is in 
+      test_engine/test_subworkflow_skill_directories.py 
+      (test_restored_after_subworkflow_failure) — a pre-existing provider 
+      simulation issue completely unrelated to graph
+  interactive_checks:
+  - action: 'Ran `conductor graph examples/test.yaml --depth 0` (workflow with all
+      step types: agent, script, set, human_gate, parallel, for-each)'
+    observed: 'Output shows: agent rects (`planner["..."]`), script hexagons (`check_env{{"..."}}`),
+      human_gate rhombus (`human_review{...}`), set stadiums (`end(["$end"])`), parallel/for-each
+      subgraphs, classDef terminateSuccess/Failed, entryPoint bold border'
+  - action: Ran `conductor graph examples/wait-step.yaml --depth 0`
+    observed: 'Wait step renders as cylinder: `cool_down[("cool_down")]` with waitStep
+      class, loop-back dotted edge present'
+  - action: Ran `conductor graph examples/terminate.yaml --depth 0`
+    observed: 'Terminate steps: `abort_unsafe(...)` with terminateFailed class, `noop_exit(...)`
+      with terminateSuccess class'
+  - action: Ran `conductor graph examples/parallel-research.yaml --depth 0`
+    observed: Parallel group rendered as subgraph with sorted member nodes, 
+      outbound edge from subgraph, loop-back edge dotted
+  - action: Ran same command twice, diffed outputs
+    observed: Byte-identical (deterministic ordering)
+tests_added:
+- file: tests/test_cli/test_graph.py
+  cases:
+  - name: TestRenderMermaidShapes::test_agent_shape_rectangle
+    description: Agent renders as rectangle with bare ["label"] syntax
+  - name: TestRenderMermaidShapes::test_human_gate_shape_rhombus
+    description: Human gate renders as rhombus with {label} syntax
+  - name: TestRenderMermaidShapes::test_script_shape_hexagon
+    description: Script renders as hexagon with {{"label"}} syntax
+  - name: TestRenderMermaidShapes::test_set_shape_stadium
+    description: Set renders as stadium with (["label"]) syntax
+  - name: TestRenderMermaidShapes::test_wait_shape_cylinder
+    description: Wait renders as cylinder with [("label")] syntax
+  - name: TestRenderMermaidShapes::test_terminate_success_shape
+    description: Terminate success renders as rounded rect with terminateSuccess
+      class
+  - name: TestRenderMermaidShapes::test_terminate_failed_shape
+    description: Terminate failed renders as rounded rect with terminateFailed 
+      class
+  - name: TestRenderMermaidShapes::test_workflow_opaque_shape
+    description: Workflow agent renders as rounded rect with workflowStep class
+- file: tests/fixtures/graph/
+  cases:
+  - name: terminate-depth0.mmd
+    description: Golden output verifying terminate success/failed shapes and 
+      classes
+  - name: script-step-depth0.mmd
+    description: Golden output verifying script hexagon shapes
+  - name: set-step-depth0.mmd
+    description: Golden output verifying set stadium shapes
+  - name: wait-step-depth0.mmd
+    description: Golden output verifying wait cylinder shapes
+  - name: simple-qa-depth0.mmd
+    description: Golden output verifying agent rectangle and $end stadium shapes
+  - name: parallel-research-depth0.mmd
+    description: Golden output verifying parallel group subgraph
+  - name: for-each-simple-depth0.mmd
+    description: Golden output verifying for-each group subgraph
+discovered_issues:
+- severity: non_blocking
+  description: "Pre-existing: test_restored_after_subworkflow_failure in tests/test_engine/test_subworkflow_skill_directories.py
+    fails with ProviderError 'Simulated failure' — unrelated to graph feature"
+skill_name: graph-worker
+skill_feedback: []
+feature_id: '2.1'

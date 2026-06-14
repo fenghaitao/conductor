@@ -1,0 +1,12 @@
+verdict: pass
+passed_features:
+- "2.1"
+failed_features: []
+summary: "Milestone 'step-shapes' passes review. All validators (59 tests, typecheck,
+  lint) are green. Feature 2.1 (workflow graph CLI) is complete with golden-fixture
+  tests covering all step types at multiple depths, no regressions, and no new issues."
+issues: []
+pre_existing_issues:
+- "Pre-existing: test_restored_after_subworkflow_failure in tests/test_engine/test_subworkflow_skill_directories.py
+  fails with ProviderError 'Simulated failure' — unrelated to graph feature"
+shared_state_updates: []

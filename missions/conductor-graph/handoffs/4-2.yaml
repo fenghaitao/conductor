@@ -1,0 +1,46 @@
+raw: "salient_summary: >\n  Feature 4.2 (graceful sub-workflow error handling) was
+  already implemented\n  in the existing codebase. The `render_mermaid()` function
+  in `graph_cmd.py`\n  handles both missing sub-workflow files and cycle detection
+  via a `_visited`\n  canonical-path set. Missing files produce `⚠️ Missing: <path>`
+  error nodes;\n  cycles produce `⚠️ Cycle: <path>` error nodes. Both are rendered
+  with the\n  `errorNode` CSS class. The rest of the workflow diagram renders correctly,\n\
+  \  exit code is 0, no tracebacks on stderr.\nwhat_was_implemented: >\n  Pre-existing
+  implementation in `src/conductor/cli/graph_cmd.py`:\n  - Lines 228-274: Top-level
+  sub-workflow inlining with cycle detection\n    (`resolved in _visited`) and missing-file
+  check (`not resolved.exists()`),\n    both emitting error nodes with `errorNode`
+  class.\n  - Lines 395-442: Same logic in `_render_subworkflow_subgraph()` for nested\n\
+  \    sub-workflow inlining within subgraphs.\n  - Error nodes use `⚠️ Missing: <path>`
+  or `⚠️ Cycle: <path>` labels.\n  - Graceful `try/except` around `load_config()`
+  for any other loading errors.\n  - All error paths remove the `workflowStep` class
+  assignment and add\n    `errorNode` instead.\n\n  Tests in `tests/test_cli/test_graph.py`:\n\
+  \  - `test_subworkflow_file_missing` (line 481): unit test for `render_mermaid()`\n\
+  \  - `test_subworkflow_cycle_detection` (line 497): unit test for cycle detection\n\
+  \  - `test_missing_subworkflow_file_error_node` (line 681): CliRunner integration\n\
+  \    test verifying exit 0, error node, other nodes present, no traceback\n  - `test_cycle_subworkflow_error_node`
+  (line 712): CliRunner integration test\n    verifying exit 0, cycle error node,
+  other nodes present, no traceback\n\n  Fulfills: VAL-CORE-007\nwhat_was_left_undone:
+  ''\nreturn_to_orchestrator: false\nverification:\n  commands_run:\n    - command:
+  uv run pytest tests/test_cli/test_graph.py -v\n      exit_code: 0\n      observation:
+  All 61 graph tests pass including 6 sub-workflow-related tests\n    - command: uv
+  run pytest tests/test_cli/test_graph.py tests/test_config/ -v\n      exit_code:
+  0\n      observation: All 768 tests pass (graph + config), 2 skipped\n    - command:
+  uv run ruff check src/conductor/cli/graph_cmd.py src/conductor/cli/app.py tests/test_cli/test_graph.py\n\
+  \      exit_code: 0\n      observation: All checks passed, no lint violations\n\
+  \    - command: make typecheck\n      exit_code: 0\n      observation: All checks
+  passed, no type errors\n  interactive_checks:\n    - action: Ran `conductor graph`
+  on workflow with missing sub-workflow file at --depth 1\n      observed: Exit 0,
+  error node `⚠️ Missing: nonexistent-sub.yaml` with errorNode class, main and $end
+  nodes present, no stderr\n    - action: Ran `conductor graph` on workflow with cyclic
+  self-reference at --depth 5\n      observed: Exit 0, nested subgraph with error
+  node `⚠️ Cycle: /tmp/test-cycle-sub.yaml`, main and $end nodes present, no stderr\n\
+  tests_added:\n  - file: tests/test_cli/test_graph.py\n    cases:\n      - name:
+  test_subworkflow_file_missing\n        description: Unit test — missing sub-workflow
+  file produces ⚠️ Missing error node with errorNode class, no crash\n      - name:
+  test_subworkflow_cycle_detection\n        description: Unit test — cyclic self-reference
+  produces ⚠️ Cycle error node, no infinite recursion\n      - name: test_missing_subworkflow_file_error_node\n\
+  \        description: CliRunner integration — missing sub-workflow exits 0, error
+  node present, other nodes present, no traceback\n      - name: test_cycle_subworkflow_error_node\n\
+  \        description: CliRunner integration — cycle exits 0, error node present,
+  other nodes present, no traceback\ndiscovered_issues: []\nskill_name: graph-worker\n\
+  skill_feedback: []\n"
+feature_id: '4.2'

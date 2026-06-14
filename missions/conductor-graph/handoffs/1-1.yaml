@@ -1,0 +1,112 @@
+return_to_orchestrator: true
+what_was_implemented: |
+  The `conductor graph` CLI command was already fully implemented in
+  `src/conductor/cli/graph_cmd.py` (~691 lines) with registration in `app.py`
+  (lines 49-52). My work filled the testing gaps:
+
+  - Created `tests/test_cli/test_graph.py` (59 tests):
+    - Unit tests for `render_mermaid()` covering node shapes, conditional/loop-back
+      routes, parallel/for-each subgraphs, sub-workflow inlining, determinism
+    - CliRunner integration tests for CLI invocation, error handling, --depth, --output
+    - Golden fixture comparison tests for all 7 example workflows at depths 0 and 1
+
+  - Created `tests/fixtures/graph/` (14 golden .mmd files):
+    simple-qa-depth{0,1}.mmd, parallel-research-depth{0,1}.mmd,
+    for-each-simple-depth{0,1}.mmd, terminate-depth{0,1}.mmd,
+    script-step-depth{0,1}.mmd, set-step-depth{0,1}.mmd, wait-step-depth{0,1}.mmd
+
+  - Fixed 2 minor lint issues in existing graph_cmd.py:
+    - Converted typer.Option() defaults to Annotated[...] pattern (B008)
+    - Fixed f-string without placeholders
+
+tests_added:
+- tests/test_cli/test_graph.py — 59 tests (all passing)
+- tests/fixtures/graph/ — 14 golden .mmd fixture files
+
+changes_made:
+- src/conductor/cli/graph_cmd.py — fixed B008 lint (Annotated pattern), f-string
+  fix
+- src/conductor/cli/app.py — already has graph registration (lines 49-52, 
+  pre-existing)
+
+verification:
+- 'make lint: ALL PASS (217 files already formatted, ruff check clean)'
+- 'make typecheck: graph_cmd.py clean; pre-existing errors only in pydantic_deep.py'
+- 'make test: 695 passed, 3 skipped (CLI suite); 59/59 graph tests pass'
+
+all_assertions_verified:
+  VAL-CORE-001:
+    status: passing
+    evidence: conductor graph examples/simple-qa.yaml exits 0, stdout begins 
+      with 'flowchart TD'
+  VAL-CORE-002:
+    status: passing
+    evidence: conductor graph nonexistent.yaml exits 1, stderr contains 
+      'Workflow file not found', no traceback
+  VAL-CORE-003:
+    status: passing
+    evidence: invalid YAML/schema exits 1, descriptive error on stderr, no 
+      traceback, no partial Mermaid
+  VAL-CORE-004:
+    status: passing
+    evidence: --output writes file, stdout has no Mermaid, file begins with 
+      'flowchart TD'
+  VAL-CORE-005:
+    status: passing
+    evidence: --depth 0 renders sub-workflow agents as single opaque nodes with 
+      workflowStep class
+  VAL-CORE-006:
+    status: passing
+    evidence: --depth 1 inlines sub-workflows as nested subgraph blocks with 
+      internal agent nodes
+  VAL-CORE-007:
+    status: passing
+    evidence: missing sub-workflow file produces error node, exits 0, rest of 
+      diagram renders, no traceback
+  VAL-CORE-008:
+    status: passing
+    evidence: two runs against same file produce byte-for-byte identical output
+  VAL-CORE-009:
+    status: passing
+    evidence: --depth -1 and --depth 11 both exit 1 with range error on stderr, 
+      no Mermaid on stdout
+  VAL-CORE-010:
+    status: passing
+    evidence: --output to nonexistent dir exits 1 with path error on stderr, no 
+      file created
+  VAL-CROSS-001:
+    status: passing
+    evidence: simple-qa.yaml produces flowchart TD with answerer node, $end, 
+      entryPoint class, solid edge
+  VAL-CROSS-002:
+    status: passing
+    evidence: --output writes deterministic file, stdout has no Mermaid, file 
+      matches expected content
+  VAL-CROSS-003:
+    status: passing
+    evidence: all 8 step types (agent, script, set, wait, human_gate, terminate 
+      success/failed, workflow) get distinct shapes
+  VAL-CROSS-004:
+    status: passing
+    evidence: conditional edges have labeled |condition| syntax, loop-back edges
+      are dotted -.->
+  VAL-CROSS-005:
+    status: passing
+    evidence: --depth 2 inlines 2 levels of sub-workflows, deeper ones are 
+      opaque nodes with workflowStep class
+  VAL-CROSS-006:
+    status: passing
+    evidence: parallel-research.yaml produces subgraph for parallel_researchers,
+      labeled conditional edges, dotted loop-back
+
+discovered_issues: []
+
+notes: |
+  - graph_cmd.py was already implemented (691 lines) and registered in app.py before
+    this mission started. Only tests and lint fixes were added.
+  - All 59 new tests pass. Full CLI suite (695 tests) shows zero regressions.
+  - The typecheck errors in `make typecheck` are all pre-existing in pydantic_deep.py
+    and are unrelated to the graph feature.
+  - The mission directory files (examples/mission/run/milestone/*.yaml) were modified
+    by the orchestrator before my work; those are not my changes.
+feature_id: '1.1'

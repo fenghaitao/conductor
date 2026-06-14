@@ -1,0 +1,12 @@
+has_blockers: false
+blockers: []
+warnings:
+- "Typecheck (ty) reports 27 pre-existing unresolved-import diagnostics in pydantic_deep.py
+  — unrelated to this mission. make check exits non-zero because of these."
+- "mypy is not installed; project uses ty (Red Knot) for type checking."
+resource_assessment:
+  available_memory_mb: 8526
+  cpu_count: 8
+  dev_server_startup_seconds:
+  recommended_max_concurrent: 4
+  rationale: "CLI/API validations only (no browser); min(8/2, 4) = 4 with ample RAM."

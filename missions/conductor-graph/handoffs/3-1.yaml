@@ -1,0 +1,80 @@
+salient_summary: Feature 3.1 (conditional route edges with labeled syntax and 
+  loop-back dotted edges) was already fully implemented in the existing 
+  graph_cmd.py. All 59 graph tests pass, golden fixtures match, and the 
+  VAL-CROSS-004 assertion is satisfied.
+what_was_implemented: 'Pre-existing implementation in src/conductor/cli/graph_cmd.py.
+  The _topological_order() function (L74-117) walks the DAG from entry_point via BFS
+  to compute topological depth. The _is_loopback() function (L120-130) classifies
+  an edge as loop-back when target depth <= source depth. The _render_edge() function
+  (L133-139) renders: unconditional forward edges as solid arrows (-->), conditional
+  forward edges as labeled solid arrows (-->|condition|), unconditional loop-backs
+  as dotted arrows (-.->), and conditional loop-backs as dotted labeled arrows (-.->|condition|).
+  Verified against examples/parallel-research.yaml which has quality_checker -->|output.quality_score
+  >= 7| end (conditional forward), quality_checker -.->|context.iteration < 3| planner
+  (loop-back dotted), and planner --> parallel_researchers (unconditional). Tests
+  covering this: test_conditional_route_labeled_edge, test_loop_back_detection_dotted_edge,
+  test_loop_back_with_condition_dotted_labeled, test_unconditional_route_solid_edge
+  in TestRenderMermaidRoutes class (L259-347 of test_graph.py), plus golden fixture
+  parallel-research-depth0.mmd.'
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_graph.py -v
+    exit_code: 0
+    observation: All 59 tests passed, including TestRenderMermaidRoutes 
+      (test_conditional_route_labeled_edge, 
+      test_loop_back_detection_dotted_edge, 
+      test_loop_back_with_condition_dotted_labeled, 
+      test_unconditional_route_solid_edge) and all golden fixture tests.
+  - command: uv run conductor graph examples/parallel-research.yaml --depth 0
+    exit_code: 0
+    observation: Output contains quality_checker -->|output.quality_score >= 7| 
+      end (conditional labeled edge), quality_checker -.->|context.iteration < 
+      3| planner (loop-back dotted edge), planner --> parallel_researchers 
+      (unconditional solid edge). Matches golden fixture byte-for-byte.
+  - command: uv run pytest tests/test_cli/ -v
+    exit_code: 0
+    observation: 695 passed, 3 skipped, 0 failures in 10.04s. No regressions.
+  - command: uv run ruff check src/conductor/cli/graph_cmd.py 
+      tests/test_cli/test_graph.py
+    exit_code: 0
+    observation: All checks passed - no lint violations.
+  - command: make typecheck
+    exit_code: 0
+    observation: uv run ty check src - All checks passed! No type errors.
+  interactive_checks:
+  - action: Ran conductor graph examples/parallel-research.yaml --depth 0 and 
+      verified output has -->| (conditional labeled edges), -.-> (dotted 
+      loop-back edges), and unconditional --> edges
+    observed: 'All three edge types present: quality_checker --> end (unconditional),
+      quality_checker -->|output.quality_score >= 7| end (conditional labeled), quality_checker
+      -.->|context.iteration < 3| planner (loop-back dotted labeled). VAL-CROSS-004
+      fully satisfied.'
+  - action: Compared live output against 
+      tests/fixtures/graph/parallel-research-depth0.mmd golden file
+    observed: Byte-for-byte identical output. Deterministic rendering confirmed.
+tests_added:
+- file: tests/test_cli/test_graph.py
+  cases:
+  - name: test_conditional_route_labeled_edge
+    description: 'Edge with when condition gets labeled arrow syntax: A -->|condition|
+      B'
+  - name: test_unconditional_route_solid_edge
+    description: 'Edge without when gets plain arrow: A --> B'
+  - name: test_multiple_conditional_routes
+    description: Agent with multiple conditional + one fallback route, all 
+      rendered correctly
+  - name: test_loop_back_detection_dotted_edge
+    description: 'A -> B -> A loop: return edge rendered as dotted -.->'
+  - name: test_loop_back_with_condition_dotted_labeled
+    description: 'Loop-back with condition: -.->|condition| syntax'
+- file: tests/fixtures/graph/parallel-research-depth0.mmd
+  cases:
+  - name: parallel-research-depth0
+    description: Golden output verifying conditional edges, loop-back dotted 
+      edges, and unconditional edges in parallel-research workflow
+discovered_issues: []
+skill_name: graph-worker
+skill_feedback: []
+feature_id: '3.1'

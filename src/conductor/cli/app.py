@@ -46,6 +46,11 @@ from conductor.cli.registry import registry_app  # noqa: E402
 app.add_typer(registry_app)
 app.add_typer(list_app)
 
+# Register standalone commands
+from conductor.cli.graph_cmd import graph  # noqa: E402
+
+app.command()(graph)
+
 # Rich console for formatted output
 console = Console(stderr=True)
 output_console = Console()

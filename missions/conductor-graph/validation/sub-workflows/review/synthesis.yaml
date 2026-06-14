@@ -1,0 +1,37 @@
+verdict: pass
+passed_features:
+- "4.1"
+- "4.2"
+failed_features: []
+summary: "Both sub-workflow graph features pass review. 4.1 (recursive inlining) and
+  4.2 (missing-file / cycle error nodes) satisfy all validator assertions — tests
+  pass, typecheck clean, lint clean. No blocking issues found; only non-blocking recommendations
+  around validation-state file hygiene, bare-except narrowing, and a minor Path.resolve()
+  edge case with broken symlinks."
+issues: []
+pre_existing_issues: []
+shared_state_updates:
+- destination: AGENTS.md
+  path_suffix: AGENTS.md
+  content: "After a feature handoff verifies validation assertions, the orchestrator
+    should update missions/*/validation-state.yaml to reflect the new status (pending
+    → passed). The handoff for 4.1 confirms VAL-CORE-005, VAL-CORE-006, VAL-CROSS-005
+    are satisfied but validation-state.yaml still shows them as pending. This is a
+    process gap — the validation state is the source of truth for which assertions
+    have been verified."
+  operation: append
+- destination: library
+  path_suffix: graph-path-resolve-quirks.md
+  content: "# graph_cmd.py Path.resolve() quirks\n\n## _visited cycle detection\n\n\
+    Python Path objects hash by resolved string, so `Path('a/b/../c').resolve() ==
+    Path('c').resolve()` works correctly for cycle detection.\n\n## Broken symlink
+    edge case\n\n`Path.resolve()` raises `OSError` on broken symlinks. In `graph_cmd.py`,
+    `resolved = sub_path.resolve()` at ~line 399 occurs outside the `except Exception`
+    block that wraps sub-workflow processing. If a sub-workflow path contains a broken
+    symlink, this raises before the exists/cycle check, causing an unhandled exception
+    not caught by the bare `except Exception` at line 434.\n\n## Bare except Exception\n\
+    \n`graph_cmd.py` uses bare `except Exception` at lines 266 and 434 for 'never
+    crash' semantics. This is correct per the feature spec but could silently swallow
+    unexpected Python errors (e.g., KeyboardInterrupt). A future refinement could
+    log a warning for non-ConductorError exceptions before rendering the error node."
+  operation: create

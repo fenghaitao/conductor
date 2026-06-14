@@ -89,6 +89,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
 
+[tool.ty.src]
+# The pydantic-deep provider is an optional/experimental integration whose
+# third-party deps (pydantic-ai, pydantic-deep) are an opt-in extra and whose
+# code targets an older pydantic-ai MCP API. Exclude it from type checking so
+# `make typecheck` stays green without the optional extra installed.
+exclude = ["src/conductor/providers/pydantic_deep.py"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

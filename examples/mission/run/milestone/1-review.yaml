@@ -25,6 +25,9 @@ workflow:
       api_key: ${DEEPSEEK_API_KEY}
       type: anthropic
     default_model: deepseek-v4-pro
+    # Review subagents (lint/test triage + per-feature code review) can exceed
+    # the default 50 tool-use cap on large milestones; raise to match implement.
+    max_agent_iterations: 200
 
   input:
     mission_dir:

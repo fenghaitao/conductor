@@ -1,0 +1,87 @@
+salient_summary: Feature 3.2 (parallel groups and for-each groups as Mermaid 
+  subgraphs) was already implemented as part of the existing graph_cmd.py. All 
+  59 tests pass, VAL-CROSS-006 assertion fully satisfied.
+what_was_implemented: >
+  The `render_mermaid()` function in `src/conductor/cli/graph_cmd.py` already renders
+  parallel
+  groups and for-each groups as Mermaid `subgraph` blocks. Parallel groups show a
+  subgraph with
+  `direction LR`, internal member nodes (using the same shape and CSS class conventions
+  as
+  top-level agents), and outbound edges drawn from the subgraph name. For-each groups
+  similarly
+  render as subgraphs with the inline agent node annotated with `(×N)` and the source
+  field shown
+  in the subgraph label. The `parallel-research.yaml` example produces: a `subgraph
+  parallel_researchers` block containing `academic_researcher`, `web_researcher`,
+  and
+  `technical_researcher` nodes; labeled conditional edges from `quality_checker` with
+  `|` syntax;
+  and a dotted loop-back edge (`-.->`) from `quality_checker` to `planner`. All edges
+  connect to
+  defined nodes — no dangling references. Golden fixtures exist for both `parallel-research`
+  and
+  `for-each-simple` at depth 0 and depth 1.
+what_was_left_undone: ''
+return_to_orchestrator: false
+verification:
+  commands_run:
+  - command: uv run pytest tests/test_cli/test_graph.py -v
+    exit_code: 0
+    observation: All 59 tests pass, including TestRenderMermaidGroups, 
+      TestGraphCLI, and all golden fixture tests.
+  - command: make lint
+    exit_code: 0
+    observation: All checks passed; 217 files already formatted.
+  - command: make typecheck
+    exit_code: 0
+    observation: All checks passed — 70/70 files type-checked successfully.
+  interactive_checks:
+  - action: uv run conductor graph examples/parallel-research.yaml
+    observed: Mermaid flowchart TD with subgraph parallel_researchers containing
+      academic_researcher, web_researcher, technical_researcher; labeled 
+      conditional edges from quality_checker; dotted loop-back edge (-.->) from 
+      quality_checker to planner; all edges connected, no dangling references.
+  - action: uv run conductor graph examples/for-each-simple.yaml
+    observed: Mermaid flowchart TD with subgraph item_processors containing 
+      item_processor (×N); source annotation; outbound edge from subgraph to 
+      aggregator.
+  - action: cat tests/fixtures/graph/parallel-research-depth0.mmd
+    observed: Golden fixture matches actual output exactly — contains subgraph, 
+      all member nodes, labeled conditional edges, dotted loop-back, class 
+      definitions, entryPoint.
+tests_added:
+- file: tests/test_cli/test_graph.py
+  cases:
+  - name: test_parallel_group_subgraph
+    description: Parallel group renders as subgraph with member nodes and 
+      outbound edges — fulfills VAL-CROSS-006
+  - name: test_for_each_group_subgraph
+    description: For-each group renders as subgraph with inline agent and source
+      annotation
+  - name: test_graph_parallel_research
+    description: 'CLI integration: parallel-research.yaml produces subgraph with all
+      members'
+  - name: test_graph_for_each_simple
+    description: 'CLI integration: for-each-simple.yaml produces subgraph with source
+      and ×N'
+- file: tests/fixtures/graph/parallel-research-depth0.mmd
+  cases:
+  - name: parallel-research-depth0
+    description: Golden output for parallel-research.yaml at depth 0
+- file: tests/fixtures/graph/parallel-research-depth1.mmd
+  cases:
+  - name: parallel-research-depth1
+    description: Golden output for parallel-research.yaml at depth 1
+- file: tests/fixtures/graph/for-each-simple-depth0.mmd
+  cases:
+  - name: for-each-simple-depth0
+    description: Golden output for for-each-simple.yaml at depth 0
+- file: tests/fixtures/graph/for-each-simple-depth1.mmd
+  cases:
+  - name: for-each-simple-depth1
+    description: Golden output for for-each-simple.yaml at depth 1
+discovered_issues: []
+skill_name: graph-worker
+skill_feedback: []
+feature_id: '3.2'

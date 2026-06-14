@@ -1,0 +1,43 @@
+raw: "salient_summary: \"Verified existing milestone 1.2 implementation — --output
+  FILE flag, --depth range validation (0-10), output-path validation for non-existent
+  directories, and deterministic output. All 59 graph tests pass, all 695 CLI tests
+  pass, lint and typecheck (on graph files) pass. Zero code changes needed.\"\nwhat_was_implemented:
+  \"The `graph` CLI command in `src/conductor/cli/graph_cmd.py` (~620 lines) already
+  includes: (a) `--output FILE` flag that writes diagram to file with no stdout Mermaid
+  content and validates parent directory exists, (b) `--depth` flag with Typer's `min=0,
+  max=10` enforcing valid range, (c) deterministic output via sorted iteration across
+  all collections. The command is registered in `src/conductor/cli/app.py` (lines
+  50, 52). Tests in `tests/test_cli/test_graph.py` (~789 lines, 59 test cases) cover
+  all VAL-* assertions including integration tests via CliRunner and golden-file comparisons
+  against `tests/fixtures/graph/*.mmd`.\"\nwhat_was_left_undone: ''\nreturn_to_orchestrator:
+  false\nverification:\n  commands_run:\n  - command: uv run pytest tests/test_cli/test_graph.py
+  -v\n    exit_code: 0\n    observation: 59 passed — all unit and integration tests
+  pass\n  - command: uv run pytest tests/test_cli/ -v\n    exit_code: 0\n    observation:
+  695 passed, 3 skipped — no regressions in CLI tests\n  - command: make lint\n  \
+  \  exit_code: 0\n    observation: ruff check and ruff format --check both pass\n\
+  \  - command: uv run ty check src/conductor/cli/graph_cmd.py src/conductor/cli/app.py\n\
+  \    exit_code: 0\n    observation: All checks passed — no type errors in graph-related
+  files\n  interactive_checks:\n  - action: 'VAL-CORE-004: --output flag writes to
+  file, no stdout'\n    observed: Exit 0, stdout empty (0 bytes), /tmp/test-graph-out.mmd
+  created with flowchart TD\n  - action: 'VAL-CORE-008: two runs produce identical
+  output'\n    observed: diff confirms byte-for-byte identical stdout\n  - action:
+  'VAL-CORE-009: --depth -1 and --depth 11'\n    observed: Exit 2 with Typer range
+  error 'is not in the range 0<=x<=10'\n  - action: 'VAL-CORE-010: --output /nonexistent/path/out.mmd'\n\
+  \    observed: Exit 1 with 'Output directory does not exist: /nonexistent/path',
+  no file created\n  - action: 'VAL-CROSS-002: --output file + deterministic two runs'\n\
+  \    observed: File contains flowchart TD, two runs produce identical content, stdout
+  has no Mermaid\n  - action: uv run conductor graph --help\n    observed: Help text
+  includes --output and --depth flags\n  - action: uv run conductor graph examples/simple-qa.yaml
+  | head -1\n    observed: flowchart TD\n  - action: uv run conductor graph examples/parallel-research.yaml
+  | grep subgraph\n    observed: subgraph parallel_researchers is present\n  - action:
+  uv run conductor graph nonexistent.yaml\n    observed: Exit 1 with 'Workflow file
+  not found' error, no traceback\ntests_added:\n- file: tests/test_cli/test_graph.py\n\
+  \  cases:\n  - name: test_graph_output_file\n    description: 'VAL-CORE-004: --output
+  writes to file, no stdout'\n  - name: test_deterministic_output\n    description:
+  'VAL-CORE-008: same input produces identical output'\n  - name: test_multiple_routes_sorted\n\
+  \    description: 'VAL-CORE-008: edges sorted deterministically'\n  - name: test_depth_out_of_range_high\n\
+  \    description: 'VAL-CORE-009: depth 11 rejected'\n  - name: test_depth_out_of_range_negative\n\
+  \    description: 'VAL-CORE-009: depth -1 rejected'\n  - name: test_output_to_nonexistent_dir\n\
+  \    description: 'VAL-CORE-010: non-existent parent dir exits 1'\ndiscovered_issues:
+  []\nskill_name: graph-worker\nskill_feedback: []\nfeature_id: '1.2'\n"
+feature_id: '1.2'

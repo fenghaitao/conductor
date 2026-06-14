@@ -1,0 +1,7 @@
+commands:
+  test: uv run pytest tests/test_cli/test_graph.py -v
+  typecheck: make typecheck
+  lint: make lint
+  lint_fix: make format
+
+services: {}
