@@ -1,16 +1,17 @@
 # Mission Planning — Understand Phase
 #
 # Iterative Q&A + codebase investigation. Produces a planning_summary
-# consumed by 1-propose.yaml.
+# consumed by 1-propose.yaml, and writes missions/<name>/exploration.md.
 #
 # Steps:
 #   0. check_existing     — skip if mission.md already written (idempotent)
 #   1. inspect_codebase   — script: directory listing, README, package files
 #   2. clarify            — LLM asks user clarifying questions about requirements,
 #                           infrastructure, tech choices, validation approach
-#  2b. clarify_answers    — human gate: user answers the clarifying questions
-#   3. investigate        — LLM deep-dives into codebase, researches tech if needed
-#   4. summarize_plan     — LLM produces a structured planning_summary
+#  2b. clarify_answers    — human gate: user answers (empty under --skip-gates)
+#   3. investigate        — LLM deep-dives into the codebase, anchored on the
+#                           mission idea, and emits the planning_summary as Markdown
+#   4. write_explore      — script: sanitises + writes missions/<name>/exploration.md
 
 workflow:
   name: mission-explore
@@ -56,6 +57,7 @@ agents:
         import json, pathlib, sys
 
         mission_name = sys.argv[1]
+        wd_input = sys.argv[2].strip() if len(sys.argv) > 2 and sys.argv[2].strip() else str(pathlib.Path.cwd())
         mission_dir = pathlib.Path("missions") / mission_name
         mission_md = mission_dir / "mission.md"
 
@@ -63,11 +65,12 @@ agents:
             print(json.dumps({
                 "state": "done",
                 "working_directory": (mission_dir / "working_directory.txt").read_text().strip()
-                    if (mission_dir / "working_directory.txt").exists() else str(pathlib.Path.cwd()),
+                    if (mission_dir / "working_directory.txt").exists() else wd_input,
             }))
         else:
-            print(json.dumps({"state": "ready"}))
+            print(json.dumps({"state": "ready", "working_directory": wd_input}))
       - "{{ workflow.input.mission_name }}"
+      - "{{ workflow.input.working_directory | default('') }}"
     output:
       state:             { type: string }
       working_directory: { type: string }
@@ -232,10 +235,16 @@ agents:
       Produces a thorough understanding of the implementation landscape.
     tools: null
     prompt: |
+      You are planning EXACTLY this mission — stay anchored to it. Do not
+      substitute a different feature you find interesting while exploring.
+
+      MISSION IDEA (authoritative — everything below must serve this):
+      {{ workflow.input.idea | default('(no idea provided)') }}
+
       You now have the user's answers from the clarification above.
 
       USER ANSWERS:
-      {{ clarify_answers.output.response }}
+      {{ clarify_answers.output.additional_input.response if clarify_answers.output.additional_input.response is defined else '(Running autonomously with no manual answers — rely on the MISSION IDEA above and your own codebase investigation.)' }}
 
       Investigate the codebase and any technologies as needed to answer:
       - Where does complexity concentrate?
@@ -249,22 +258,100 @@ agents:
       Use your tools to read files, check running services, research technologies.
       Investigate until nothing important is ambiguous.
 
-      After investigation, output a comprehensive planning summary with these sections:
-      - **What we're building**: precise feature list with user flows
-      - **Technology decisions**: explicit package/tool choices (binding)
-      - **Architecture approach**: how the system is structured
-      - **Infrastructure**: services needed, ports, external APIs
-      - **Milestones**: logical groupings of features in build order
-      - **Worker types**: distinct skill domains (e.g. backend-worker, frontend-worker)
-      - **Testing surfaces**: how each area will be validated
-      - **Open risks**: anything that needs special attention
+      After investigation, output a comprehensive planning summary with exactly
+      these sections, each as a level-2 Markdown heading:
+
+      ## What we're building
+      Precise feature list with user flows.
+
+      ## Technology decisions
+      Explicit package/tool choices (binding).
+
+      ## Architecture approach
+      How the system is structured.
+
+      ## Infrastructure
+      Services needed, ports, external APIs.
+
+      ## Milestones
+      Logical groupings of features in build order.
+
+      ## Worker types
+      Distinct skill domains (e.g. backend-worker, frontend-worker).
+
+      ## Testing surfaces
+      How each area will be validated.
+
+      ## Open risks
+      Anything that needs special attention.
+
+      OUTPUT FORMAT (strict): the `planning_summary` field MUST contain only
+      clean GitHub-flavored Markdown — the `##` sections above with real line
+      breaks. Do NOT wrap it in YAML or JSON, do NOT emit `type:` or
+      `description:` keys, do NOT add code fences around the whole document, and
+      do NOT escape newlines as the literal characters backslash-n. Start the
+      value directly with `## What we're building`.
     output:
       planning_summary:
         type: string
-        description: Structured planning summary for the propose phase
+        description: |
+          The planning summary as raw GitHub-flavored Markdown (## headings,
+          real newlines). No YAML/JSON envelope, no escaped newlines.
+    routes:
+      - to: write_explore
+
+  # ── Step 4 ──────────────────────────────────────────────────────────────────
+  - name: write_explore
+    type: script
+    description: |
+      Persist the planning summary to missions/<name>/exploration.md as the
+      explore-phase artifact (created before the missionDir exists). Sanitises
+      any stray output-schema envelope or escaped newlines so the file is always
+      clean Markdown, regardless of model quirks.
+    command: python3
+    args:
+      - "-c"
+      - |
+        import json, pathlib, re, sys
+
+        mission_name = sys.argv[1]
+        raw = sys.argv[2]
+
+        def clean(text):
+            text = text.strip()
+            # Strip code fences wrapping the whole document.
+            fence = re.match(r"^```(?:markdown|md)?\s*\n(.*?)\n```$", text, re.S)
+            if fence:
+                text = fence.group(1).strip()
+            # Strip a stray "type: ...\ndescription: <value>" output-schema
+            # envelope some models echo; keep only the description value.
+            if text.lstrip().lower().startswith(("type:", "description:")):
+                m = re.search(r"(?:^|\n)description:[ \t]*(.*)$", text, re.S)
+                if m:
+                    val = m.group(1).strip()
+                    if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
+                        val = val[1:-1]
+                    text = val
+            # Unescape literal escape sequences if the model emitted them.
+            if "\\n" in text:
+                text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
+            text = text.replace('\\"', '"').replace("\\t", "\t")
+            return text.strip()
+
+        summary = clean(raw)
+        mission_dir = pathlib.Path("missions") / mission_name
+        mission_dir.mkdir(parents=True, exist_ok=True)
+        out = mission_dir / "exploration.md"
+        out.write_text(f"# Exploration: {mission_name}\n\n{summary}\n")
+        print(json.dumps({"exploration_path": str(out)}))
+      - "{{ workflow.input.mission_name }}"
+      - "{{ investigate.output.planning_summary }}"
+    output:
+      exploration_path: { type: string }
     routes:
       - to: $end
 
 output:
   planning_summary: "{{ investigate.output.planning_summary if investigate is defined else '' }}"
   working_directory: "{{ check_existing.output.working_directory if check_existing is defined else inspect_codebase.output.working_directory }}"
+  exploration_path: "{{ write_explore.output.exploration_path if write_explore is defined else '' }}"
