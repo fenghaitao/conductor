@@ -1,0 +1,65 @@
+features:
+  - id: "1.1"
+    milestone: foundation
+    description: "Implement `conductor graph` CLI command with basic Mermaid flowchart TD rendering. Parse workflow YAML via existing config loader, render entry-point node with entryPoint class, $end node, and solid edges for unconditional routes. Handle missing-file and invalid-YAML errors with human-readable messages and no Python tracebacks."
+    skill_name: graph-worker
+    expected_behavior: "Running `conductor graph <workflow.yaml>` exits 0 with valid Mermaid flowchart TD on stdout. Missing/invalid files exit 1 with descriptive stderr errors, no tracebacks, no partial Mermaid output."
+    fulfills:
+      - VAL-CORE-001
+      - VAL-CORE-002
+      - VAL-CORE-003
+      - VAL-CROSS-001
+
+  - id: "1.2"
+    milestone: foundation
+    description: "Add `--output FILE` flag for writing diagram to file instead of stdout, `--depth` range validation (0-10), and output-path validation for non-existent parent directories. Ensure deterministic output — same input always produces byte-for-byte identical output."
+    skill_name: graph-worker
+    expected_behavior: "`--output out.mmd` writes diagram to file with no stdout Mermaid content. `--depth -1` or `--depth 11` exits 1 with range error. Non-existent output directory exits 1 with path error. Two runs against same file produce identical output."
+    fulfills:
+      - VAL-CORE-004
+      - VAL-CORE-008
+      - VAL-CORE-009
+      - VAL-CORE-010
+      - VAL-CROSS-002
+
+  - id: "2.1"
+    milestone: step-shapes
+    description: "Render each step type with its distinct Mermaid node shape: agents as rectangles, scripts as hexagons ({{}}), set steps as stadiums (([ ])), wait steps as cylinders ([( )]), human gates as rhombuses ({}), terminate-success/failed as rounded rectangles with distinct classes, workflow agents as rounded rectangles with workflowStep class, and $end with endNode class."
+    skill_name: graph-worker
+    expected_behavior: "A workflow containing all step types produces a Mermaid diagram where each type has a visually distinct node shape and CSS class assignment, all in a single deterministic output."
+    fulfills:
+      - VAL-CROSS-003
+
+  - id: "3.1"
+    milestone: routing-and-groups
+    description: "Render conditional route edges with labeled `|condition|` syntax and loop-back edges as dotted arrows (`-.->`). Detect loop-backs by walking the DAG from entry_point — an edge A→B where B appears at or before A in topological order gets dotted style. Unconditional forward edges remain solid arrows without labels."
+    skill_name: graph-worker
+    expected_behavior: "Conditional edges show the route condition as a label. Loop-back edges (e.g., quality_checker → planner) are dotted. Forward edges are solid with no label."
+    fulfills:
+      - VAL-CROSS-004
+
+  - id: "3.2"
+    milestone: routing-and-groups
+    description: "Render parallel groups and for-each groups as Mermaid subgraph blocks with internal member nodes. Outbound edges are drawn from the subgraph name. Member nodes within groups use the same shape and class conventions as top-level agents."
+    skill_name: graph-worker
+    expected_behavior: "`parallel-research.yaml` produces a subgraph block for `parallel_researchers` containing member nodes, labeled conditional edges from quality_checker, and dotted loop-back edges — all nodes and edges properly connected with no dangling references."
+    fulfills:
+      - VAL-CROSS-006
+
+  - id: "4.1"
+    milestone: sub-workflows
+    description: "Implement recursive sub-workflow inlining controlled by `--depth N`. At depth 0, `type: workflow` agents render as opaque rounded-rectangle nodes with workflowStep class. At depth ≥ 1, they expand into nested subgraph blocks containing the sub-workflow's internal steps and edges. Depth decrements per recursion level."
+    skill_name: graph-worker
+    expected_behavior: "`--depth 0` shows sub-workflow agents as single opaque nodes. `--depth 1` (default) inlines them as nested subgraphs with internal agent nodes. `--depth 2` inlines two levels deep with deeper sub-workflows as opaque nodes."
+    fulfills:
+      - VAL-CORE-005
+      - VAL-CORE-006
+      - VAL-CROSS-005
+
+  - id: "4.2"
+    milestone: sub-workflows
+    description: "Gracefully handle missing sub-workflow files and cycles during recursive inlining. When a referenced sub-workflow file does not exist or a cycle is detected via the resolved-path recursion stack, render an opaque error node with a warning indicator and the missing or cyclic path. The rest of the workflow diagram renders correctly — never crash, no tracebacks."
+    skill_name: graph-worker
+    expected_behavior: "Missing sub-workflow file produces an error node labeled with the missing path; other workflow nodes render normally. Exit code is 0, no stderr output, no tracebacks."
+    fulfills:
+      - VAL-CORE-007
