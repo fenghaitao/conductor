@@ -207,13 +207,17 @@ def _apply_provider_override(
     endpoint, credentials, and type carry over. For all other combinations
     the override is a full replacement (original behavior).
     """
+    from typing import Any, cast
+
     from conductor.config.schema import ProviderSettings as _PS
 
     if config_provider.has_custom_routing() and provider_override in _STRUCTURED_ROUTING_PROVIDERS:
         data = config_provider.model_dump(mode="python")
         data["name"] = provider_override
         return _PS(**data)
-    return _PS(name=provider_override)
+    # provider_override is a validated CLI choice; cast the runtime str so the
+    # static checker accepts it against the `name` Literal.
+    return _PS(name=cast(Any, provider_override))
 
 
 def _looks_like_provider_file(value: str) -> bool:

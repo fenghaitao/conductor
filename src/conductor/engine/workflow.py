@@ -16,7 +16,7 @@ import time as _time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from conductor.duration import parse_duration
 from conductor.engine.checkpoint import CheckpointManager
@@ -404,7 +404,7 @@ class WorkflowEngine:
         # Inject the listener into the single provider if it supports it
         # (same injection that _get_executor_for_agent does for registry providers)
         if provider is not None and hasattr(provider, "set_keyboard_listener"):
-            provider.set_keyboard_listener(keyboard_listener)
+            cast(Any, provider).set_keyboard_listener(keyboard_listener)
 
         # Event emitter for workflow observability
         self._event_emitter = event_emitter
@@ -809,7 +809,7 @@ class WorkflowEngine:
             # suspend cbreak mode before reading from stdin (same root cause
             # as the interrupt fix in commit 8db9adf).
             if hasattr(provider, "set_keyboard_listener"):
-                provider.set_keyboard_listener(self._keyboard_listener)
+                cast(Any, provider).set_keyboard_listener(self._keyboard_listener)
             return AgentExecutor(
                 provider,
                 workflow_tools=self.config.tools,
