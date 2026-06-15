@@ -88,6 +88,7 @@ If you encounter a bug in existing code (e.g., a crash in `load_config`, a resol
 ---
 
 ## Known Pre-Existing Issues
+- Pre-existing: test_restored_after_subworkflow_failure in tests/test_engine/test_subworkflow_skill_directories.py fails with ProviderError 'Simulated failure' — unrelated to graph feature
 
 *(None documented yet — orchestrator fills this in during the run.)*
 
@@ -327,3 +328,9 @@ flowchart TD
 ### Graph Fixture Regeneration
 
 When regenerating golden graph fixtures (`tests/fixtures/graph/*.mmd`), run `conductor graph examples/<wf>.yaml --depth N` for each depth and redirect stdout to the fixture file. The `%% Depth:` header comment reflects the remaining recursion depth at that render level — it decrements in nested sub-workflow subgraphs.
+
+
+When a feature's implementation pre-exists (was already in the codebase before the feature was assigned), the worker should still add targeted tests and golden fixtures to lock in the behavior. The handoff should clearly state that the implementation was pre-existing so reviewers don't expect TDD-first ordering.
+
+
+After a feature handoff verifies validation assertions, the orchestrator should update missions/*/validation-state.yaml to reflect the new status (pending → passed). The handoff for 4.1 confirms VAL-CORE-005, VAL-CORE-006, VAL-CROSS-005 are satisfied but validation-state.yaml still shows them as pending. This is a process gap — the validation state is the source of truth for which assertions have been verified.
