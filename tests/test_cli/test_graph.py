@@ -678,6 +678,68 @@ class TestGraphCLIErrors:
         assert "Traceback" not in result.output
         assert "flowchart TD" not in result.output
 
+    def test_missing_subworkflow_file_error_node(self, tmp_path: Path) -> None:
+        """VAL-CORE-007: Missing sub-workflow file → exit 0, error node, no traceback."""
+        wf = tmp_path / "parent.yaml"
+        wf.write_text(
+            textwrap.dedent("""\
+            workflow:
+              name: parent
+              entry_point: main
+            agents:
+              - name: main
+                prompt: "hello"
+                routes:
+                  - to: sub
+              - name: sub
+                type: workflow
+                workflow: nonexistent-sub.yaml
+                routes:
+                  - to: $end
+            output:
+              result: "{{ sub.output }}"
+        """)
+        )
+        result = runner.invoke(app, ["graph", str(wf), "--depth", "1"])
+        assert result.exit_code == 0
+        assert "Traceback" not in result.output
+        assert "⚠️ Missing: nonexistent-sub.yaml" in result.stdout
+        assert "class sub errorNode" in result.stdout
+        assert "main" in result.stdout
+        assert "$end" in result.stdout
+        assert "flowchart TD" in result.stdout
+
+    def test_cycle_subworkflow_error_node(self, tmp_path: Path) -> None:
+        """VAL-CORE-007: Cyclic sub-workflow → exit 0, error node, no traceback."""
+        wf = tmp_path / "self-ref.yaml"
+        wf.write_text(
+            textwrap.dedent(f"""\
+            workflow:
+              name: self-ref
+              entry_point: main
+            agents:
+              - name: main
+                prompt: "hello"
+                routes:
+                  - to: sub
+              - name: sub
+                type: workflow
+                workflow: {wf}
+                routes:
+                  - to: $end
+            output:
+              result: "{{ sub.output }}"
+        """)
+        )
+        result = runner.invoke(app, ["graph", str(wf), "--depth", "5"])
+        assert result.exit_code == 0
+        assert "Traceback" not in result.output
+        assert "⚠️ Cycle:" in result.stdout
+        assert "errorNode" in result.stdout
+        assert "main" in result.stdout
+        assert "$end" in result.stdout
+        assert "flowchart TD" in result.stdout
+
     def test_depth_out_of_range_high(self) -> None:
         """Depth > 10 is rejected by Typer."""
         result = runner.invoke(app, ["graph", "examples/simple-qa.yaml", "--depth", "11"])
