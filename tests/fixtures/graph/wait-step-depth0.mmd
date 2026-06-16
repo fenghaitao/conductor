@@ -17,14 +17,14 @@ flowchart TD
   check_status{{"Poll the (simulated) external system for readiness."}}
   cool_down[("cool_down")]
   summarize["Summarize the polling result."]
-  end(["$end"])
+  __end__(["$end"])
 
   check_status --> cool_down
   check_status -->|"status == 'ready'"| summarize
   cool_down -.-> check_status
-  summarize --> end
+  summarize --> __end__
 
+  class __end__ endNode
   class check_status scriptStep
   class cool_down waitStep
-  class end endNode
   class check_status entryPoint

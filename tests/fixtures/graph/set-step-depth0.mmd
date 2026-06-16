@@ -18,17 +18,17 @@ flowchart TD
   compute_slug(["Combine org + repo into a single string accessible as compute_slug.output"])
   derive_flags(["Derive a boolean flag, default branch, and default model"])
   safe_path{{"Handler for non-breaking changes"}}
-  end(["$end"])
+  __end__(["$end"])
 
-  breaking_path --> end
+  breaking_path --> __end__
   compute_slug --> derive_flags
   derive_flags --> safe_path
   derive_flags -->|"{{ output.is_breaking }}"| breaking_path
-  safe_path --> end
+  safe_path --> __end__
 
+  class __end__ endNode
   class breaking_path scriptStep
   class compute_slug setStep
   class derive_flags setStep
-  class end endNode
   class safe_path scriptStep
   class compute_slug entryPoint

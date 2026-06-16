@@ -17,13 +17,13 @@ flowchart TD
   analyze_version["Analyze the Python version output"]
   check_python{{"Check the installed Python version"}}
   handle_error["Handle the case where Python is not found"]
-  end(["$end"])
+  __end__(["$end"])
 
-  analyze_version --> end
+  analyze_version --> __end__
   check_python --> handle_error
   check_python -->|"exit_code == 0"| analyze_version
-  handle_error --> end
+  handle_error --> __end__
 
+  class __end__ endNode
   class check_python scriptStep
-  class end endNode
   class check_python entryPoint

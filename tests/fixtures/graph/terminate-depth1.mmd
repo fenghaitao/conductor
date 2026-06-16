@@ -18,15 +18,15 @@ flowchart TD
   noop_exit("No work needed; document already current")
   precheck{{"Classify the upstream document state and route accordingly"}}
   refresh["Refresh the stale document (simulated)"]
-  end(["$end"])
+  __end__(["$end"])
 
   precheck --> refresh
   precheck -->|"action == 'abort'"| abort_unsafe
   precheck -->|"action == 'noop'"| noop_exit
-  refresh --> end
+  refresh --> __end__
 
+  class __end__ endNode
   class abort_unsafe terminateFailed
-  class end endNode
   class noop_exit terminateSuccess
   class precheck scriptStep
   class precheck entryPoint

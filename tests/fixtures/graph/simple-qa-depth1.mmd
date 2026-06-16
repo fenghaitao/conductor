@@ -15,9 +15,9 @@ flowchart TD
   classDef errorNode stroke:#c62828,stroke-dasharray:5 5
 
   answerer["Answers the user's question clearly and concisely"]
-  end(["$end"])
+  __end__(["$end"])
 
-  answerer --> end
+  answerer --> __end__
 
-  class end endNode
+  class __end__ endNode
   class answerer entryPoint

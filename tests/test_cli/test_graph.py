@@ -133,8 +133,8 @@ class TestRenderMermaidMinimal:
         out = render_mermaid(config)
         assert "flowchart TD" in out
         assert 'a1["a1"]' in out
-        assert 'end(["$end"])' in out
-        assert "a1 --> end" in out
+        assert '__end__(["$end"])' in out
+        assert "a1 --> __end__" in out
 
     def test_entry_point_highlighted(self) -> None:
         """Entry point node gets ``entryPoint`` CSS class."""
@@ -151,8 +151,36 @@ class TestRenderMermaidMinimal:
             agents=[_agent("a1", routes=[])],
         )
         out = render_mermaid(config)
-        assert 'end(["$end"])' in out
-        assert "class end endNode" in out
+        assert '__end__(["$end"])' in out
+        assert "class __end__ endNode" in out
+
+    def test_end_node_id_avoids_mermaid_reserved_keyword(self) -> None:
+        """``$end`` must not be the bare id ``end`` — it collides with Mermaid's
+        reserved ``end`` keyword that closes ``subgraph`` blocks, breaking the
+        parser on any diagram that also contains a subgraph."""
+        config = _make_workflow_config(
+            entry_point="a1",
+            agents=[
+                _agent("a1", routes=[_route("pg")]),
+                _agent("worker1"),
+                _agent("worker2"),
+            ],
+            parallel=[
+                ParallelGroup(
+                    name="pg", agents=["worker1", "worker2"], routes=[RouteDef(to="$end")]
+                ),
+            ],
+        )
+        out = render_mermaid(config)
+        # The only bare ``end`` tokens may be subgraph closers (a line that, once
+        # stripped, equals exactly "end"). No node definition or edge may use it.
+        assert 'end(["$end"])' not in out
+        assert "--> end\n" not in out and "| end\n" not in out
+        assert "class end endNode" not in out
+        # Every "end" line is a subgraph closer.
+        for line in out.splitlines():
+            if line.strip() == "end":
+                assert line.lstrip() == "end"
 
     def test_header_and_class_defs(self) -> None:
         """Output starts with ``flowchart TD`` and includes all classDef lines."""
@@ -266,7 +294,7 @@ class TestRenderMermaidRoutes:
             ],
         )
         out = render_mermaid(config)
-        assert "a1 --> end" in out
+        assert "a1 --> __end__" in out
 
     def test_conditional_route_labeled_edge(self) -> None:
         config = _make_workflow_config(
@@ -275,7 +303,7 @@ class TestRenderMermaidRoutes:
             ],
         )
         out = render_mermaid(config)
-        assert 'a1 -->|"score > 5"| end' in out
+        assert 'a1 -->|"score > 5"| __end__' in out
 
     def test_multiple_conditional_routes(self) -> None:
         config = _make_workflow_config(
@@ -296,7 +324,7 @@ class TestRenderMermaidRoutes:
         out = render_mermaid(config)
         assert 'a1 -->|"x == 1"| a2' in out
         assert 'a1 -->|"x == 2"| a3' in out
-        assert "a1 --> end" in out
+        assert "a1 --> __end__" in out
 
     def test_loop_back_detection_dotted_edge(self) -> None:
         """A → B → A: the return edge should be dotted."""
@@ -321,7 +349,7 @@ class TestRenderMermaidRoutes:
         out = render_mermaid(config)
         assert "fix -.-> check" in out
         assert 'check -->|"bad"| fix' in out or 'check -->|"bad"| fix' in out
-        assert 'check -->|"good"| end' in out
+        assert 'check -->|"good"| __end__' in out
 
     def test_loop_back_with_condition_dotted_labeled(self) -> None:
         """Loop-back with a condition should still be dotted."""
@@ -365,8 +393,9 @@ class TestRenderMermaidRoutes:
         # Edges should appear sorted by source, then target
         idx_a1_a2 = out.index("a1 --> a2")
         idx_a1_a3 = out.index("a1 --> a3")
-        idx_a1_end = out.index("a1 --> end")
-        assert idx_a1_a2 < idx_a1_a3 < idx_a1_end
+        idx_a1_end = out.index("a1 --> __end__")
+        # ``__end__`` sorts before ``a2``/``a3`` ("_" < "a") lexicographically
+        assert idx_a1_end < idx_a1_a2 < idx_a1_a3
 
     def test_no_orphan_edges(self) -> None:
         """Every edge target must exist as a node or $end."""
@@ -380,10 +409,10 @@ class TestRenderMermaidRoutes:
         # All targets exist
         assert 'a1["a1"]' in out or "a1" in out
         assert 'a2["a2"]' in out or "a2" in out
-        assert 'end(["$end"])' in out
+        assert '__end__(["$end"])' in out
         assert "a1 --> a2" in out
-        assert "a1 --> end" in out
-        assert "a2 --> end" in out
+        assert "a1 --> __end__" in out
+        assert "a2 --> __end__" in out
 
 
 class TestRenderMermaidGroups:
@@ -410,7 +439,7 @@ class TestRenderMermaidGroups:
         assert "m1" in out
         assert "m2" in out
         assert "  end" in out
-        assert "pg --> end" in out
+        assert "pg --> __end__" in out
 
     def test_for_each_group_subgraph(self) -> None:
         config = _make_workflow_config(
@@ -433,7 +462,7 @@ class TestRenderMermaidGroups:
         assert '(source: finder.output.items)"]' in out
         assert "direction LR" in out
         assert 'worker["worker (×N)"]' in out
-        assert "fe --> end" in out
+        assert "fe --> __end__" in out
 
 
 class TestRenderMermaidSubWorkflows:
@@ -549,9 +578,10 @@ class TestRenderMermaidDeterminism:
         )
         out = render_mermaid(config)
         idx_a = out.index("a1 --> a_target")
-        idx_end = out.index("a1 --> end")
+        idx_end = out.index("a1 --> __end__")
         idx_z = out.index("a1 --> z_target")
-        assert idx_a < idx_end < idx_z
+        # ``__end__`` sorts before ``a_target`` ("_" < "a") lexicographically
+        assert idx_end < idx_a < idx_z
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +607,7 @@ class TestGraphCLI:
         assert "answerer" in result.stdout
         assert "$end" in result.stdout
         assert "classDef entryPoint" in result.stdout
-        assert "answerer --> end" in result.stdout
+        assert "answerer --> __end__" in result.stdout
 
     def test_graph_parallel_research(self) -> None:
         """Parallel groups render as subgraphs."""

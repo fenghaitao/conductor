@@ -24,14 +24,14 @@ flowchart TD
     web_researcher["Searches web sources and news"]
   end
 
-  end(["$end"])
+  __end__(["$end"])
 
   parallel_researchers --> synthesizer
   planner --> parallel_researchers
-  quality_checker --> end
-  quality_checker -->|"{{ output.quality_score >= 7 }}"| end
+  quality_checker --> __end__
+  quality_checker -->|"{{ output.quality_score >= 7 }}"| __end__
   quality_checker -.->|"{{ context.iteration < 3 }}"| planner
   synthesizer --> quality_checker
 
-  class end endNode
+  class __end__ endNode
   class planner entryPoint

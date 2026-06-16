@@ -22,6 +22,12 @@ if TYPE_CHECKING:
         WorkflowConfig,
     )
 
+# Mermaid id for the terminal ``$end`` sentinel.  Must NOT be the bare word
+# ``end`` — that is a reserved keyword in Mermaid flowchart syntax (it closes
+# ``subgraph`` blocks), so using it as a node id breaks the parser whenever the
+# diagram also contains a subgraph (parallel / for-each / sub-workflow).
+_END_NODE_ID = "__end__"
+
 # ---------------------------------------------------------------------------
 # Node shape templates by step type (index 0 = mermaid id, index 1 = label)
 # ---------------------------------------------------------------------------
@@ -132,7 +138,7 @@ def _is_loopback(source: str, target: str, order: dict[str, int]) -> bool:
 
 def _render_edge(source: str, route: RouteDef, order: dict[str, int]) -> str:
     """Render a single route as a Mermaid edge line."""
-    target = "end" if route.to == "$end" else route.to
+    target = _END_NODE_ID if route.to == "$end" else route.to
     arrow = "-.->" if _is_loopback(source, route.to, order) else "-->"
     if route.when:
         return f'{source} {arrow}|"{route.when}"| {target}'
@@ -308,8 +314,8 @@ def render_mermaid(
         lines.append("")
 
     # ---- $end node --------------------------------------------------------
-    lines.append('  end(["$end"])')
-    class_assignments.append("  class end endNode")
+    lines.append(f'  {_END_NODE_ID}(["$end"])')
+    class_assignments.append(f"  class {_END_NODE_ID} endNode")
     lines.append("")
 
     # ---- edges ------------------------------------------------------------

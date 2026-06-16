@@ -21,11 +21,11 @@ flowchart TD
     item_processor["item_processor (×N)"]
   end
 
-  end(["$end"])
+  __end__(["$end"])
 
-  aggregator --> end
+  aggregator --> __end__
   item_finder --> item_processors
   item_processors --> aggregator
 
-  class end endNode
+  class __end__ endNode
   class item_finder entryPoint
