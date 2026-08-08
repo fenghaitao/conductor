@@ -3269,6 +3269,7 @@ class WorkflowEngine:
                                 "context_window_max": await self._get_context_window_for_agent(
                                     agent, output
                                 ),
+                                "session_id": output.session_id,
                             },
                         )
 
@@ -4295,6 +4296,7 @@ class WorkflowEngine:
                         "context_window_max": await self._get_context_window_for_agent(
                             agent, output
                         ),
+                        "session_id": output.session_id,
                     },
                 )
 
@@ -4756,6 +4758,7 @@ class WorkflowEngine:
                         "tokens": output.tokens_used,
                         "cost_usd": usage.cost_usd,
                         "output": output.content,
+                        "session_id": output.session_id,
                     },
                 )
 

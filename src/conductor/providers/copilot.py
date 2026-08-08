@@ -197,6 +197,10 @@ class SDKResponse:
         cache_read_tokens: Tokens read from cache (if available).
         cache_write_tokens: Tokens written to cache (if available).
         partial: Whether this response is partial (from a mid-agent interrupt).
+        session_id: The Copilot SDK session id this response came from. Read
+            once, in ``_send_and_wait`` (the only place the ``session`` object
+            is in hand), then copied through every ``SDKResponse``/
+            ``AgentOutput`` built downstream — see ``AgentOutput.session_id``.
     """
 
     content: str
@@ -205,6 +209,7 @@ class SDKResponse:
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     partial: bool = False
+    session_id: str | None = None
 
 
 class CopilotProvider(AgentProvider):
@@ -685,6 +690,7 @@ class CopilotProvider(AgentProvider):
                     cache_write_tokens=cache_write,
                     model=agent.model or self._default_model,
                     partial=is_partial,
+                    session_id=sdk_response.session_id if sdk_response else None,
                 )
             except ProviderError as e:
                 last_error = e
@@ -996,6 +1002,7 @@ class CopilotProvider(AgentProvider):
                         cache_read_tokens=sdk_response.cache_read_tokens,
                         cache_write_tokens=sdk_response.cache_write_tokens,
                         partial=True,
+                        session_id=sdk_response.session_id,
                     )
                     return partial_content, partial_usage
 
@@ -1013,6 +1020,7 @@ class CopilotProvider(AgentProvider):
                         output_tokens=total_output_tokens,
                         cache_read_tokens=cache_read_tokens,
                         cache_write_tokens=cache_write_tokens,
+                        session_id=sdk_response.session_id,
                     )
                     return {"result": response_content}, final_usage
 
@@ -1029,6 +1037,10 @@ class CopilotProvider(AgentProvider):
                             output_tokens=total_output_tokens,
                             cache_read_tokens=cache_read_tokens,
                             cache_write_tokens=cache_write_tokens,
+                            # Recovery re-prompts reuse the same `session`, so
+                            # the original sdk_response's id still applies —
+                            # it is never reassigned across recovery attempts.
+                            session_id=sdk_response.session_id,
                         )
                         return parsed_content, final_usage
                     except (json.JSONDecodeError, ValueError) as e:
@@ -1245,6 +1257,11 @@ class CopilotProvider(AgentProvider):
             interrupt_signal=interrupt_signal,
             agent_name=agent_name,
         )
+        # Read once here — this is the only method with the actual `session`
+        # object in hand. Every SDKResponse/AgentOutput built downstream
+        # copies this field rather than re-deriving it.
+        session_id = getattr(session, "session_id", None)
+
         if was_interrupted:
             # Return partial content (don't check error_message for partial)
             return SDKResponse(
@@ -1254,6 +1271,7 @@ class CopilotProvider(AgentProvider):
                 cache_read_tokens=usage_ref[2],
                 cache_write_tokens=usage_ref[3],
                 partial=True,
+                session_id=session_id,
             )
 
         if error_message:
@@ -1268,6 +1286,7 @@ class CopilotProvider(AgentProvider):
             output_tokens=usage_ref[1],
             cache_read_tokens=usage_ref[2],
             cache_write_tokens=usage_ref[3],
+            session_id=session_id,
         )
 
     async def _abort_session(self, session: Any, done: asyncio.Event) -> None:
@@ -1378,6 +1397,7 @@ class CopilotProvider(AgentProvider):
                 cache_read_tokens=sdk_response.cache_read_tokens,
                 cache_write_tokens=sdk_response.cache_write_tokens,
                 model=self._default_model,
+                session_id=sdk_response.session_id,
             )
         finally:
             await session.disconnect()

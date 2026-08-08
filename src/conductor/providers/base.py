@@ -107,6 +107,15 @@ class AgentOutput:
     partial: bool = False
     """Whether this output is partial (from a mid-agent interrupt)."""
 
+    session_id: str | None = None
+    """Provider-native session/conversation ID for this execution, when the
+    provider exposes one (e.g. a Copilot CLI session id). ``None`` for
+    providers that don't have a session concept, or when the SDK didn't
+    return one. Distinct from ``content`` (the agent's own structured
+    reply): this is provider bookkeeping, surfaced so a workflow can
+    checkpoint or cross-reference the exact backing session without
+    resorting to filesystem heuristics."""
+
 
 class AgentProvider(ABC):
     """Abstract base class for SDK providers.
