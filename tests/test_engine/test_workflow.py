@@ -204,25 +204,40 @@ class TestWorkflowEngineBasic:
     def test_engine_populates_workflow_metadata(
         self, tmp_path, simple_workflow_config: WorkflowConfig
     ) -> None:
-        """``WorkflowEngine.__init__`` wires ``workflow_path`` into context fields.
+        """``WorkflowEngine.__init__`` wires ``workflow_path``/``run_context``
+        into context fields.
 
         Guards against a regression where someone refactors ``__init__`` and
         reverts to a bare ``WorkflowContext()``, silently dropping
-        ``workflow.dir``/``workflow.file``/``workflow.name`` from templates.
+        ``workflow.dir``/``workflow.file``/``workflow.name``/``workflow.run_id``/
+        ``workflow.event_log`` from templates. The latter two are what let a
+        `script` step locate this run's own JSONL event log deterministically
+        instead of globbing ``tmp/conductor-*.events.jsonl`` for the newest
+        file and hoping no other run is concurrently writing one.
         """
+        from conductor.engine.workflow import RunContext
+
         wf_file = tmp_path / "wf.yaml"
         wf_file.write_text("name: test\n")
+        log_file = tmp_path / "conductor-test-abc12345.events.jsonl"
 
-        engine = WorkflowEngine(simple_workflow_config, workflow_path=wf_file)
+        engine = WorkflowEngine(
+            simple_workflow_config,
+            workflow_path=wf_file,
+            run_context=RunContext(run_id="abc12345", log_file=str(log_file)),
+        )
 
         assert engine.context.workflow_dir == str(tmp_path.resolve())
         assert engine.context.workflow_file == str(wf_file.resolve())
         assert engine.context.workflow_name == simple_workflow_config.workflow.name
+        assert engine.context.workflow_run_id == "abc12345"
+        assert engine.context.workflow_event_log == str(log_file)
 
     def test_engine_workflow_metadata_empty_without_path(
         self, simple_workflow_config: WorkflowConfig
     ) -> None:
-        """Without ``workflow_path``, path-derived fields stay empty.
+        """Without ``workflow_path`` or ``run_context``, derived fields stay
+        empty.
 
         Empty strings are omitted from the rendered context (see
         ``WorkflowContext.build_for_agent``), so this preserves the existing
@@ -233,6 +248,8 @@ class TestWorkflowEngineBasic:
         assert engine.context.workflow_dir == ""
         assert engine.context.workflow_file == ""
         assert engine.context.workflow_name == simple_workflow_config.workflow.name
+        assert engine.context.workflow_run_id == ""
+        assert engine.context.workflow_event_log == ""
 
 
 class TestWorkflowEngineContextModes:

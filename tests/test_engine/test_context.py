@@ -33,6 +33,8 @@ class TestWorkflowContextBasic:
         assert ctx.workflow_dir == ""
         assert ctx.workflow_file == ""
         assert ctx.workflow_name == ""
+        assert ctx.workflow_run_id == ""
+        assert ctx.workflow_event_log == ""
 
     def test_set_workflow_inputs(self) -> None:
         """Test setting workflow inputs."""
@@ -155,7 +157,7 @@ class TestWorkflowContextLastOnlyMode:
 
 
 class TestWorkflowContextMetadata:
-    """Tests for workflow metadata (dir, file, name) in context."""
+    """Tests for workflow metadata (dir, file, name, run_id, event_log) in context."""
 
     def test_workflow_dir_file_name_in_accumulate_context(self) -> None:
         """Test workflow.dir, workflow.file, workflow.name available in accumulate mode."""
@@ -196,6 +198,38 @@ class TestWorkflowContextMetadata:
         assert "dir" not in agent_ctx["workflow"]
         assert "file" not in agent_ctx["workflow"]
         assert "name" not in agent_ctx["workflow"]
+        assert "run_id" not in agent_ctx["workflow"]
+        assert "event_log" not in agent_ctx["workflow"]
+
+    def test_run_id_and_event_log_in_accumulate_context(self) -> None:
+        """A script step can read back this run's own event log path and run
+        id — e.g. to find an agent_completed event this same run already
+        emitted, without guessing which tmp/conductor-*.events.jsonl on disk
+        belongs to the currently executing run."""
+        ctx = WorkflowContext(
+            workflow_run_id="a1b2c3d4",
+            workflow_event_log="/repo/tmp/conductor-myflow-20260101-120000-a1b2c3d4.events.jsonl",
+        )
+
+        agent_ctx = ctx.build_for_agent("agent", [], mode="accumulate")
+
+        assert agent_ctx["workflow"]["run_id"] == "a1b2c3d4"
+        assert (
+            agent_ctx["workflow"]["event_log"]
+            == "/repo/tmp/conductor-myflow-20260101-120000-a1b2c3d4.events.jsonl"
+        )
+
+    def test_run_id_and_event_log_in_explicit_mode(self) -> None:
+        """Not filtered out in explicit mode, same as dir/file/name."""
+        ctx = WorkflowContext(
+            workflow_run_id="deadbeef",
+            workflow_event_log="/repo/tmp/conductor-x-deadbeef.events.jsonl",
+        )
+
+        agent_ctx = ctx.build_for_agent("agent", [], mode="explicit")
+
+        assert agent_ctx["workflow"]["run_id"] == "deadbeef"
+        assert agent_ctx["workflow"]["event_log"] == "/repo/tmp/conductor-x-deadbeef.events.jsonl"
 
 
 class TestWorkflowContextExplicitMode:

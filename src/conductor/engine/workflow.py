@@ -359,6 +359,8 @@ class WorkflowEngine:
             workflow_dir=str(Path(workflow_path).resolve().parent) if workflow_path else "",
             workflow_file=str(Path(workflow_path).resolve()) if workflow_path else "",
             workflow_name=config.workflow.name,
+            workflow_run_id=self._run_id,
+            workflow_event_log=self._log_file,
         )
         self.renderer = TemplateRenderer()
         self.router = Router()
@@ -1767,13 +1769,16 @@ class WorkflowEngine:
         Used by the CLI resume path to inject context reconstructed from
         a checkpoint file.
 
-        Workflow metadata (``workflow_dir``, ``workflow_file``, ``workflow_name``)
-        is repopulated from the engine's ``workflow_path`` and ``config`` rather
-        than the restored context. Restored contexts come from
+        Workflow metadata (``workflow_dir``, ``workflow_file``, ``workflow_name``,
+        ``workflow_run_id``, ``workflow_event_log``) is repopulated from the
+        engine's ``workflow_path``/``config``/``run_context`` rather than the
+        restored context. Restored contexts come from
         ``WorkflowContext.from_dict()``, which intentionally omits absolute path
         metadata to keep checkpoint files portable across machines and
         relocatable when workflows move. The engine, which knows the current
-        path, is the source of truth.
+        path — and, for a resume, the CONTINUED run's id and event log, per
+        ``AGENTS.md``'s resume-parity note that a multi-resume session keeps one
+        ``run_id`` and appends to one JSONL file — is the source of truth.
 
         Args:
             context: A WorkflowContext restored via ``WorkflowContext.from_dict()``.
@@ -1783,6 +1788,8 @@ class WorkflowEngine:
             self.context.workflow_dir = str(Path(self.workflow_path).resolve().parent)
             self.context.workflow_file = str(Path(self.workflow_path).resolve())
         self.context.workflow_name = self.config.workflow.name
+        self.context.workflow_run_id = self._run_id
+        self.context.workflow_event_log = self._log_file
 
     def set_limits(self, limits: LimitEnforcer) -> None:
         """Replace the engine's limit enforcer with a restored one.

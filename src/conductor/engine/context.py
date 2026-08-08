@@ -103,6 +103,23 @@ class WorkflowContext:
     """Name of the workflow from the YAML config.
     Available in templates as ``{{ workflow.name }}``."""
 
+    workflow_run_id: str = ""
+    """This run's 8-char hex run id (``RunContext.run_id``), the same id
+    stamped into the ``.events.jsonl`` filename and every emitted event.
+    Available in templates as ``{{ workflow.run_id }}``. Empty when the
+    engine was constructed with no ``run_context`` (e.g. a bare programmatic
+    ``WorkflowEngine(...)`` in a test)."""
+
+    workflow_event_log: str = ""
+    """Absolute path to this run's own JSONL event log
+    (``RunContext.log_file``), when one is being written. Available in
+    templates as ``{{ workflow.event_log }}``. This is what lets a `script`
+    step read back an event this same run already emitted — e.g. the
+    ``session_id`` an ``agent_completed`` event carries for a Copilot-backed
+    step — without guessing which of possibly several ``tmp/conductor-*
+    .events.jsonl`` files on disk belongs to the run currently executing.
+    Empty under the same conditions as ``workflow_run_id``."""
+
     agent_outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Outputs from executed agents, keyed by agent name."""
 
@@ -204,6 +221,10 @@ class WorkflowContext:
             workflow_meta["file"] = self.workflow_file
         if self.workflow_name:
             workflow_meta["name"] = self.workflow_name
+        if self.workflow_run_id:
+            workflow_meta["run_id"] = self.workflow_run_id
+        if self.workflow_event_log:
+            workflow_meta["event_log"] = self.workflow_event_log
 
         # For explicit mode, start with empty workflow inputs
         # For other modes, include all workflow inputs

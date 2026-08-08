@@ -527,20 +527,31 @@ class TestSetContextAndLimits:
         assert engine.limits.timeout_seconds == 120
 
     def test_set_context_repopulates_workflow_metadata(self, tmp_path: Path) -> None:
-        """Resume must not drop workflow_dir/file/name from the context.
+        """Resume must not drop workflow_dir/file/name/run_id/event_log from
+        the context.
 
         ``WorkflowContext.from_dict()`` intentionally omits absolute path
         metadata so checkpoint files stay portable. The engine, which knows
-        the current ``workflow_path`` and ``config``, must repopulate those
-        fields when ``set_context()`` swaps in the restored context.
+        the current ``workflow_path``/``config``/``run_context``, must
+        repopulate those fields when ``set_context()`` swaps in the restored
+        context.
 
         Regression test for the resume path: without this, ``{{ workflow.dir }}``
-        silently disappears from templates after resume — exactly the
-        registry-based script-path scenario this feature exists for.
+        (and, per the same mechanism, ``{{ workflow.run_id }}`` /
+        ``{{ workflow.event_log }}``) silently disappears from templates after
+        resume — exactly the registry-based script-path scenario this feature
+        exists for.
         """
+        from conductor.engine.workflow import RunContext
+
         wf_path = _write_workflow(tmp_path)
         config = _multi_agent_config()
-        engine = WorkflowEngine(config, workflow_path=wf_path)
+        log_file = tmp_path / "conductor-x-cafef00d.events.jsonl"
+        engine = WorkflowEngine(
+            config,
+            workflow_path=wf_path,
+            run_context=RunContext(run_id="cafef00d", log_file=str(log_file)),
+        )
 
         # Simulate a context restored from checkpoint: round-trip through
         # to_dict/from_dict, which strips the metadata.
@@ -548,12 +559,16 @@ class TestSetContextAndLimits:
         assert restored.workflow_dir == ""
         assert restored.workflow_file == ""
         assert restored.workflow_name == ""
+        assert restored.workflow_run_id == ""
+        assert restored.workflow_event_log == ""
 
         engine.set_context(restored)
 
         assert engine.context.workflow_dir == str(tmp_path.resolve())
         assert engine.context.workflow_file == str(wf_path.resolve())
         assert engine.context.workflow_name == config.workflow.name
+        assert engine.context.workflow_run_id == "cafef00d"
+        assert engine.context.workflow_event_log == str(log_file)
 
         # End-to-end: the restored context must render workflow metadata
         # in templates via build_for_agent.
@@ -561,15 +576,18 @@ class TestSetContextAndLimits:
         assert agent_ctx["workflow"]["dir"] == str(tmp_path.resolve())
         assert agent_ctx["workflow"]["file"] == str(wf_path.resolve())
         assert agent_ctx["workflow"]["name"] == config.workflow.name
+        assert agent_ctx["workflow"]["run_id"] == "cafef00d"
+        assert agent_ctx["workflow"]["event_log"] == str(log_file)
 
     def test_set_context_without_workflow_path_still_sets_name(self) -> None:
-        """When the engine has no workflow_path, only name is repopulated.
+        """When the engine has no workflow_path or run_context, only name is
+        repopulated.
 
-        Path-derived fields stay empty (and are omitted from rendered context
-        per ``build_for_agent`` semantics).
+        Path- and run-derived fields stay empty (and are omitted from
+        rendered context per ``build_for_agent`` semantics).
         """
         config = _multi_agent_config()
-        engine = WorkflowEngine(config)  # no workflow_path
+        engine = WorkflowEngine(config)  # no workflow_path, no run_context
 
         restored = WorkflowContext()
         engine.set_context(restored)
@@ -577,6 +595,8 @@ class TestSetContextAndLimits:
         assert engine.context.workflow_dir == ""
         assert engine.context.workflow_file == ""
         assert engine.context.workflow_name == config.workflow.name
+        assert engine.context.workflow_run_id == ""
+        assert engine.context.workflow_event_log == ""
 
 
 # ---------------------------------------------------------------------------

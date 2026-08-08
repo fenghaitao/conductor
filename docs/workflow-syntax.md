@@ -878,8 +878,10 @@ In addition to `workflow.input.*`, every agent has access to:
 | `workflow.description` | Workflow description from the YAML |
 | `workflow.dir` | Absolute path to the directory containing the workflow YAML |
 | `workflow.file` | Absolute path to the workflow YAML file |
+| `workflow.run_id` | This run's 8-char hex run id — the same id stamped into the `.events.jsonl` filename and every emitted event |
+| `workflow.event_log` | Absolute path to this run's own JSONL event log, when one is being written |
 
-These are available in **all** context modes (they're metadata, not inputs). `workflow.dir` is particularly useful for registry-hosted workflows that need to reference co-located scripts or assets without depending on the caller's working directory:
+These are available in **all** context modes (they're metadata, not inputs); `run_id`/`event_log` are empty when the engine was constructed with no `run_context` (e.g. a bare programmatic `WorkflowEngine(...)` outside the CLI). `workflow.dir` is particularly useful for registry-hosted workflows that need to reference co-located scripts or assets without depending on the caller's working directory:
 
 ```yaml
 agents:
@@ -1191,7 +1193,7 @@ workflow:
 ### Available Hook Contexts
 
 **`on_start`**:
-- `workflow.name`, `workflow.description`, `workflow.dir`, `workflow.file`
+- `workflow.name`, `workflow.description`, `workflow.dir`, `workflow.file`, `workflow.run_id`, `workflow.event_log`
 - `workflow.input.*` (all input values)
 
 **`on_complete`**:
