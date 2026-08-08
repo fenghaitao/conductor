@@ -232,6 +232,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
         total_input_tokens = 0
         total_output_tokens = 0
         result_model: str | None = model
+        session_id: str | None = None
         turn_count = 0
         # Track pending tool_use IDs so we can pair them with ToolResultBlocks
         pending_tools: dict[str, str] = {}
@@ -249,6 +250,26 @@ class ClaudeAgentSdkProvider(AgentProvider):
                 )
 
             async for message in query(prompt=rendered_prompt, options=options):
+                # Opportunistically capture the session id from whichever
+                # message exposes it first. AssistantMessage, ResultMessage,
+                # and Task*Message all promote it to a top-level
+                # ``session_id`` attribute. The bare ``SystemMessage
+                # (subtype="init", ...)`` has no such attribute; per the
+                # CLI's documented init-payload convention it should carry
+                # the id inside its raw ``data`` dict instead, so check
+                # there too as a best effort (unverified against the SDK's
+                # internal message parser — if the key isn't present this
+                # is simply a no-op and the AssistantMessage capture below
+                # still applies on the next message). Done before the
+                # interrupt check so an interrupt landing on the very first
+                # message still reports whatever id that message carried.
+                if getattr(message, "session_id", None):
+                    session_id = message.session_id
+                else:
+                    msg_data = getattr(message, "data", None)
+                    if isinstance(msg_data, dict) and msg_data.get("session_id"):
+                        session_id = msg_data["session_id"]
+
                 if interrupt_signal is not None and interrupt_signal.is_set():
                     return self._build_output(
                         content_parts,
@@ -258,6 +279,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
                         total_input_tokens,
                         total_output_tokens,
                         partial=True,
+                        session_id=session_id,
                     )
 
                 # Wall-clock session timeout. The SDK does not expose a per-call
@@ -375,6 +397,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
             result_model,
             total_input_tokens,
             total_output_tokens,
+            session_id=session_id,
         )
 
     async def validate_connection(self) -> bool:
@@ -619,6 +642,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
         input_tokens: int,
         output_tokens: int,
         partial: bool = False,
+        session_id: str | None = None,
     ) -> AgentOutput:
         """Assemble the final ``AgentOutput`` from accumulated execution state.
 
@@ -642,6 +666,8 @@ class ClaudeAgentSdkProvider(AgentProvider):
             partial: True when the output is from a mid-stream interrupt.
                 Disables strict schema enforcement so partial best-effort
                 output is preferred over hard failure.
+            session_id: The SDK-reported session id for this execution, or
+                ``None`` if no message carrying one arrived yet.
 
         Returns:
             Populated ``AgentOutput`` ready to return from :meth:`execute`.
@@ -725,6 +751,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
             output_tokens=output_tokens or None,
             model=model,
             partial=partial,
+            session_id=session_id,
         )
 
 

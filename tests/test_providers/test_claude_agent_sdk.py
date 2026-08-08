@@ -16,6 +16,7 @@ pytest.importorskip(
 from claude_agent_sdk import (  # noqa: E402
     AssistantMessage,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -32,8 +33,9 @@ def _assistant(
     content: list,
     model: str = "claude-sonnet-4-5",
     usage: dict | None = None,
+    session_id: str | None = None,
 ) -> AssistantMessage:
-    return AssistantMessage(content=content, model=model, usage=usage)
+    return AssistantMessage(content=content, model=model, usage=usage, session_id=session_id)
 
 
 def _result(
@@ -41,6 +43,7 @@ def _result(
     structured_output: object | None = None,
     usage: dict | None = None,
     is_error: bool = False,
+    session_id: str = "test-session",
 ) -> ResultMessage:
     return ResultMessage(
         subtype="result",
@@ -48,7 +51,7 @@ def _result(
         duration_api_ms=900,
         is_error=is_error,
         num_turns=1,
-        session_id="test-session",
+        session_id=session_id,
         usage=usage,
         result=result,
         structured_output=structured_output,
@@ -1503,3 +1506,129 @@ class TestSafeCallbackSwallowing:
                 event_callback=boom,
             )
         assert output.content == {"response": "hi"}
+
+
+class TestSessionId:
+    """``AgentOutput.session_id`` propagation, mirroring the Copilot provider's
+    contract (see ``test_copilot_session_id_output.py``). The SDK exposes the
+    session id on both ``AssistantMessage`` (optional, per-message) and
+    ``ResultMessage`` (required, final) — the provider must capture it as
+    early as possible so an interrupt occurring before ``ResultMessage``
+    arrives still reports a real id when one was already seen."""
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_normal_completion_carries_session_id_from_result_message(self) -> None:
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="hi")])
+            yield _result(result="hi", session_id="sess-result-001")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            output = await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"), context={}, rendered_prompt="hi"
+            )
+
+        assert output.session_id == "sess-result-001"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_session_id_captured_from_bare_system_init_message(self) -> None:
+        """The real CLI stream's very first message is a bare
+        ``SystemMessage(subtype="init", data={...})`` — unlike AssistantMessage
+        / ResultMessage, it has no promoted top-level ``session_id`` attribute;
+        the id only lives inside its raw ``data`` payload. An interrupt firing
+        right after this message (before any AssistantMessage) must still
+        report it."""
+        interrupt = asyncio.Event()
+
+        async def fake_query(**kwargs):
+            yield SystemMessage(subtype="init", data={"session_id": "sess-init-005"})
+            interrupt.set()
+            yield _assistant(content=[TextBlock(text="never processed")])
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            output = await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+                interrupt_signal=interrupt,
+            )
+
+        assert output.partial is True
+        assert output.session_id == "sess-init-005"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_mid_stream_interrupt_reports_session_id_seen_before_it_fired(self) -> None:
+        """The interrupt check runs at the top of the loop, before the message
+        that would set the interrupt is itself processed — so the id reported
+        must come from an EARLIER message already dispatched, not the one
+        that triggered the interrupt."""
+        interrupt = asyncio.Event()
+
+        async def fake_query(**kwargs):
+            yield _assistant(
+                content=[TextBlock(text="first chunk")],
+                session_id="sess-seen-before-interrupt-003",
+            )
+            interrupt.set()
+            yield _assistant(content=[TextBlock(text="second chunk")])
+            yield _result(result="never reached")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            output = await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+                interrupt_signal=interrupt,
+            )
+
+        assert output.partial is True
+        assert output.session_id == "sess-seen-before-interrupt-003"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_message_without_any_session_id_leaves_none(self) -> None:
+        """A message exposing neither a top-level ``session_id`` attribute
+        nor a ``data["session_id"]`` entry (e.g. an AssistantMessage built
+        without one) must not crash the capture logic or fabricate a value —
+        it simply leaves the running total at ``None``."""
+        interrupt = asyncio.Event()
+        interrupt.set()
+
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="partial")])
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            output = await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+                interrupt_signal=interrupt,
+            )
+
+        assert output.partial is True
+        assert output.session_id is None
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_result_message_session_id_overrides_a_stale_assistant_value(self) -> None:
+        """ResultMessage.session_id is required (unlike AssistantMessage's
+        optional field) and authoritative — it must win even if an earlier
+        AssistantMessage reported a different value."""
+
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="hi")], session_id="sess-stale-004")
+            yield _result(result="hi", session_id="sess-authoritative-004")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            output = await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"), context={}, rendered_prompt="hi"
+            )
+
+        assert output.session_id == "sess-authoritative-004"

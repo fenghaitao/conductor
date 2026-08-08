@@ -1422,7 +1422,12 @@ class WorkflowEngine:
                 else:
                     child_preamble = _wrap_preamble(sub_inner)
 
-        # Create child engine inheriting provider/registry but with deeper depth
+        # Create child engine inheriting provider/registry but with deeper depth.
+        # run_context is the parent's, not omitted: a sub-workflow's events land
+        # in the SAME .events.jsonl via the shared event_emitter (subscribed
+        # once, by the CLI, to the outermost emitter) — so the child's own
+        # {{ workflow.run_id }}/{{ workflow.event_log }} must resolve to that
+        # same file, not the empty defaults a bare RunContext() would give it.
         child_engine = WorkflowEngine(
             config=sub_config,
             provider=self._single_provider,
@@ -1433,6 +1438,7 @@ class WorkflowEngine:
             event_emitter=self._event_emitter,
             keyboard_listener=self._keyboard_listener,
             web_dashboard=self._web_dashboard,
+            run_context=self._run_context,
             _subworkflow_depth=self._subworkflow_depth + 1,
             _dashboard_context_path=[
                 *self._dashboard_context_path,
@@ -1519,6 +1525,10 @@ class WorkflowEngine:
                 suggestion="Check the sub-workflow YAML for syntax or validation errors.",
             ) from exc
 
+        # run_context is the parent's — see _execute_subworkflow's identical
+        # assignment for why: the child's events land in the same .events.jsonl
+        # via the shared event_emitter, so its own workflow.run_id/event_log
+        # must resolve to that file too, not an empty default.
         child_engine_kwargs: dict[str, Any] = {
             "config": sub_config,
             "provider": self._single_provider,
@@ -1529,6 +1539,7 @@ class WorkflowEngine:
             "event_emitter": self._event_emitter,
             "keyboard_listener": self._keyboard_listener,
             "web_dashboard": self._web_dashboard,
+            "run_context": self._run_context,
             "_subworkflow_depth": self._subworkflow_depth + 1,
         }
         # Thread the dashboard context path into the child engine when the
