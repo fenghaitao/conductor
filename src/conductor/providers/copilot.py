@@ -1236,9 +1236,20 @@ class CopilotProvider(AgentProvider):
         session.on(on_event)
 
         # Signal that we're about to call the SDK — this marks the start
-        # of the "dead zone" where we're waiting for the model's response
+        # of the "dead zone" where we're waiting for the model's response.
+        # `session.session_id` is already populated at this point (set by
+        # `create_session`/`resume_session` before `_send_and_wait` is ever
+        # called — see the `sid = getattr(session, "session_id", None)`
+        # capture in `_execute_sdk_call`), so this is the earliest an event
+        # can name the session, not just its own `agent_completed` at the
+        # end: a step killed mid-turn (`conductor stop`, a crash) still has
+        # this event on disk with the session id that incurred whatever cost
+        # it ran up before dying.
         if event_callback is not None:
-            event_callback("agent_turn_start", {"turn": "awaiting_model"})
+            event_callback(
+                "agent_turn_start",
+                {"turn": "awaiting_model", "session_id": getattr(session, "session_id", None)},
+            )
 
         await session.send(prompt)
 

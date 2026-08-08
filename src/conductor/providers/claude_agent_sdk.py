@@ -306,10 +306,19 @@ class ClaudeAgentSdkProvider(AgentProvider):
                     # turn marker bounds the iteration's content events.
                     turn_count += 1
                     if event_callback:
+                        # `session_id` may already be captured (from an
+                        # earlier SystemMessage/init in this same `async for`)
+                        # by the time the first turn's AssistantMessage
+                        # arrives — attach it opportunistically so a step
+                        # interrupted mid-turn still has a session id on
+                        # disk, not just on the final AgentOutput. `None`
+                        # when not yet known (e.g. the SDK didn't expose it
+                        # on the init message) — same best-effort contract
+                        # as the final `session_id` capture above.
                         _safe_callback(
                             event_callback,
                             "agent_turn_start",
-                            {"turn": turn_count},
+                            {"turn": turn_count, "session_id": session_id},
                         )
 
                     blocks = getattr(msg, "content", None)

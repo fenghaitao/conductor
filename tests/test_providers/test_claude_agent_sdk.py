@@ -1591,6 +1591,58 @@ class TestSessionId:
 
     @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
     @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_turn_1_event_carries_session_id_seen_from_earlier_init_message(self) -> None:
+        """Mirrors the Copilot provider's `awaiting_model` fix: a step
+        interrupted mid-turn never reaches ResultMessage, so `agent_turn_start`
+        is the earliest EVENT (not just the final AgentOutput) that can name
+        the session. The bare SystemMessage(subtype="init") arrives before the
+        first AssistantMessage and is captured into the loop-local `session_id`
+        before turn 1's `agent_turn_start` fires, so it should already be
+        attached there — not just on AgentOutput at the very end."""
+        events: list[tuple[str, dict]] = []
+
+        async def fake_query(**kwargs):
+            yield SystemMessage(subtype="init", data={"session_id": "sess-turn-event-010"})
+            yield _assistant(content=[TextBlock(text="hi")])
+            yield _result(result="hi")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+                event_callback=lambda t, d: events.append((t, d)),
+            )
+
+        turn_1 = next(d for (t, d) in events if t == "agent_turn_start" and d.get("turn") == 1)
+        assert turn_1["session_id"] == "sess-turn-event-010"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_turn_1_event_session_id_none_when_not_yet_known(self) -> None:
+        """No SystemMessage/prior AssistantMessage carried a session_id before
+        turn 1 — must be None, not a missing key or a fabricated value."""
+        events: list[tuple[str, dict]] = []
+
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="hi")])
+            yield _result(result="hi")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            await provider.execute(
+                agent=AgentDef(name="t", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+                event_callback=lambda t, d: events.append((t, d)),
+            )
+
+        turn_1 = next(d for (t, d) in events if t == "agent_turn_start" and d.get("turn") == 1)
+        assert turn_1["session_id"] is None
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
     async def test_message_without_any_session_id_leaves_none(self) -> None:
         """A message exposing neither a top-level ``session_id`` attribute
         nor a ``data["session_id"]`` entry (e.g. an AssistantMessage built

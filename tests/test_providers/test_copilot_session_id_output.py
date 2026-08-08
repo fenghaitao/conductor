@@ -287,6 +287,66 @@ class TestParseRecoveryLoopPreservesSessionId:
         assert output.session_id == "sess-recovers-007"
 
 
+class TestAwaitingModelEventCarriesSessionId:
+    """The `agent_turn_start` / `{"turn": "awaiting_model"}` event fires right
+    after `create_session`/`resume_session` returns, before the first prompt
+    is even sent — the earliest point `session.session_id` is known. A step
+    killed mid-turn (`conductor stop`, a crash) never reaches
+    `session.idle`/`agent_completed`, so this is the earliest event on disk
+    that can still name which session incurred whatever cost it ran up
+    before dying, instead of that cost being unattributable after the fact."""
+
+    @pytest.mark.asyncio
+    async def test_awaiting_model_event_carries_session_id(self) -> None:
+        provider = CopilotProvider(mock_handler=lambda a, p, c: {})
+        session = FakeSession(response_content="normal response")
+        session.session_id = "sess-awaiting-009"
+        _deliver_idle_after_send(session)
+
+        events: list[tuple[str, dict[str, Any]]] = []
+        await provider._send_and_wait(
+            session,
+            "prompt",
+            False,
+            False,
+            event_callback=lambda etype, data: events.append((etype, data)),
+        )
+
+        awaiting = [
+            data
+            for etype, data in events
+            if etype == "agent_turn_start" and data.get("turn") == "awaiting_model"
+        ]
+        assert awaiting, "no 'awaiting_model' agent_turn_start event was emitted"
+        assert awaiting[0]["session_id"] == "sess-awaiting-009"
+
+    @pytest.mark.asyncio
+    async def test_awaiting_model_event_session_id_none_when_session_has_no_id(self) -> None:
+        """A session object with no `session_id` attribute at all must not
+        raise — same getattr-default safety as the final read in
+        _send_and_wait."""
+        provider = CopilotProvider(mock_handler=lambda a, p, c: {})
+        session = FakeSession(response_content="normal response")
+        del session.session_id
+        _deliver_idle_after_send(session)
+
+        events: list[tuple[str, dict[str, Any]]] = []
+        await provider._send_and_wait(
+            session,
+            "prompt",
+            False,
+            False,
+            event_callback=lambda etype, data: events.append((etype, data)),
+        )
+
+        awaiting = [
+            data
+            for etype, data in events
+            if etype == "agent_turn_start" and data.get("turn") == "awaiting_model"
+        ]
+        assert awaiting[0]["session_id"] is None
+
+
 class TestSendFollowupCarriesSessionId:
     @pytest.mark.asyncio
     async def test_send_followup_reports_the_session_it_used(self) -> None:
