@@ -22,7 +22,8 @@ Two layers, because Volcengine splits credentials:
 Usage:
     python3 ark_usage.py check        # works with API key alone
     python3 ark_usage.py ledger       # show locally tracked token totals
-    python3 ark_usage.py dashboard    # needs AK/SK; real plan quota
+    python3 ark_usage.py dashboard    # needs AK/SK; Coding Plan quota
+    python3 ark_usage.py afp          # needs AK/SK; Agent Plan AFP usage
 """
 
 from __future__ import annotations
@@ -182,19 +183,20 @@ def _signing_key(secret_key: str, date: str) -> bytes:
     return _sign(k, "request")
 
 
-def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
-    """Signed GET against Volcengine OpenAPI (Volcengine signature v4)."""
+def _openapi_request(
+    action: str, version: str, method: str = "GET", body: bytes = b""
+) -> dict:
+    """Signed request against Volcengine OpenAPI (Volcengine signature v4)."""
     ak = os.environ.get("VOLC_ACCESSKEY")
     sk = os.environ.get("VOLC_SECRETKEY")
     if not (ak and sk):
         sys.exit(
-            "ERROR: dashboard needs VOLC_ACCESSKEY and VOLC_SECRETKEY.\n"
+            "ERROR: dashboard/afp needs VOLC_ACCESSKEY and VOLC_SECRETKEY.\n"
             "Create them at https://console.volcengine.com/iam/keymanage/ and:\n"
             "  export VOLC_ACCESSKEY=...\n  export VOLC_SECRETKEY=..."
         )
 
     q = {"Action": action, "Version": version}
-    q.update(query or {})
     canonical_query = "&".join(
         f"{urllib.parse.quote(k, safe='')}={urllib.parse.quote(str(v), safe='')}"
         for k, v in sorted(q.items())
@@ -203,7 +205,7 @@ def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
     now = _dt.datetime.now(_dt.timezone.utc)
     x_date = now.strftime("%Y%m%dT%H%M%SZ")
     short_date = x_date[:8]
-    payload_hash = hashlib.sha256(b"").hexdigest()
+    payload_hash = hashlib.sha256(body).hexdigest()
 
     canonical_headers = (
         f"host:{OPENAPI_HOST}\n"
@@ -212,7 +214,7 @@ def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
     )
     signed_headers = "host;x-content-sha256;x-date"
     canonical_request = "\n".join(
-        ["GET", "/", canonical_query, canonical_headers, signed_headers, payload_hash]
+        [method, "/", canonical_query, canonical_headers, signed_headers, payload_hash]
     )
 
     scope = f"{short_date}/{OPENAPI_REGION}/{OPENAPI_SERVICE}/request"
@@ -235,7 +237,8 @@ def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
 
     req = urllib.request.Request(
         f"https://{OPENAPI_HOST}/?{canonical_query}",
-        method="GET",
+        data=body if method == "POST" else None,
+        method=method,
         headers={
             "Host": OPENAPI_HOST,
             "X-Date": x_date,
@@ -250,6 +253,11 @@ def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
         return json.loads(e.read() or b"{}")
 
 
+def openapi_get(action: str, version: str, query: dict | None = None) -> dict:
+    """Signed GET against Volcengine OpenAPI (Volcengine signature v4)."""
+    return _openapi_request(action, version, "GET")
+
+
 def _fmt_ts(ts: int) -> str:
     return _dt.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -260,7 +268,8 @@ def _bar(pct: float, width: int = 24) -> str:
 
 
 def dashboard() -> None:
-    """Fetch and print the Coding-Plan usage (the console 'subscribe' numbers)."""
+    """Fetch and print Coding-Plan and Agent Plan AFP usage."""
+    # --- Coding Plan ---
     result = openapi_get(OPENAPI_ACTION, OPENAPI_VERSION)
     meta = result.get("ResponseMetadata", {})
     err = meta.get("Error")
@@ -280,6 +289,69 @@ def dashboard() -> None:
         used = f"{pct:.2f}%"
         print(f"{q.get('Level', '?'):<9} {used:>8}  {_bar(pct):<26}  {reset}")
 
+    # --- Agent Plan AFP ---
+    afp_result = _openapi_request("GetAFPUsage", OPENAPI_VERSION, "POST", b"{}")
+    afp_meta = afp_result.get("ResponseMetadata", {})
+    afp_err = afp_meta.get("Error")
+    if afp_err:
+        print(f"\nAFP OpenAPI error: {afp_err.get('Code')}: {afp_err.get('Message')}")
+    else:
+        afp_res = afp_result.get("Result", {})
+        print()
+        print(f"Agent Plan status  : {afp_res.get('PlanType', '?')}")
+        print()
+        print(f"{'Window':<9} {'Used':>8}  {'Usage':<26}  {'Quota':<17}  {'Resets at'}")
+        print("-" * 86)
+        for label, key in [("5h", "AFPFiveHour"), ("Daily", "AFPDaily"), ("Weekly", "AFPWeekly"), ("Monthly", "AFPMonthly")]:
+            w = afp_res.get(key, {})
+            used = float(w.get("Used", 0))
+            quota = float(w.get("Quota", 0))
+            reset_ts = int(w.get("ResetTime", 0))
+            reset = _fmt_ts(reset_ts // 1000) if reset_ts > 0 else "-"
+            if quota > 0:
+                pct = (used / quota) * 100
+                print(f"{label:<9} {pct:>7.2f}%  {_bar(pct):<26}  {used:>6.0f} / {quota:<6.0f}  {reset}")
+            else:
+                print(f"{label:<9} {'--':>8}  {'N/A':<26}  {used:>6.0f} / {quota:<6.0f}  {reset}")
+
+    if "--json" in sys.argv:
+        print("\n" + json.dumps({"coding": res, "afp": afp_result.get("Result", {})}, indent=2, ensure_ascii=False))
+
+
+def afp() -> None:
+    """Fetch and print the Agent Plan AFP (Agent Foundation Package) usage."""
+    result = _openapi_request("GetAFPUsage", OPENAPI_VERSION, "POST", b"{}")
+    meta = result.get("ResponseMetadata", {})
+    err = meta.get("Error")
+    if err:
+        sys.exit(f"OpenAPI error: {err.get('Code')}: {err.get('Message')}")
+
+    res = result.get("Result", {})
+    print(f"Agent Plan status  : {res.get('Status', '?')}")
+    if res.get("UpdateTimestamp"):
+        print(f"As of              : {_fmt_ts(res['UpdateTimestamp'])}")
+    print()
+
+    windows = [
+        ("5h", res.get("AFPFiveHour", {})),
+        ("Daily", res.get("AFPDaily", {})),
+        ("Weekly", res.get("AFPWeekly", {})),
+        ("Monthly", res.get("AFPMonthly", {})),
+    ]
+
+    print(f"{'Window':<9} {'Used':>8}  {'Usage':<26}  {'Quota':<17}  {'Resets at'}")
+    print("-" * 86)
+    for label, w in windows:
+        used = float(w.get("Used", 0))
+        quota = float(w.get("Quota", 0))
+        reset_ts = int(w.get("ResetTime", 0))
+        reset = _fmt_ts(reset_ts // 1000) if reset_ts > 0 else "-"
+        if quota > 0:
+            pct = (used / quota) * 100
+            print(f"{label:<9} {pct:>7.2f}%  {_bar(pct):<26}  {used:>6.0f} / {quota:<6.0f}  {reset}")
+        else:
+            print(f"{label:<9} {'--':>8}  {'N/A':<26}  {used:>6.0f} / {quota:<6.0f}  {reset}")
+
     if "--json" in sys.argv:
         print("\n" + json.dumps(res, indent=2, ensure_ascii=False))
 
@@ -287,7 +359,7 @@ def dashboard() -> None:
 # --------------------------------------------------------------------------- #
 import urllib.parse  # noqa: E402  (kept near use for clarity)
 
-COMMANDS = {"check": check, "ledger": ledger, "dashboard": dashboard}
+COMMANDS = {"check": check, "ledger": ledger, "dashboard": dashboard, "afp": afp}
 
 if __name__ == "__main__":
     cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "dashboard")

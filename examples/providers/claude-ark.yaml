@@ -8,12 +8,11 @@
 # detects the Ark endpoint and automatically sends the api_key as a Bearer
 # token instead of x-api-key. No special env vars required.
 #
-# If your Ark endpoint is OpenAI-compatible (not anthropic-wire), use the
-# copilot profile (ark.yaml) with type: openai + wire_api: completions instead;
-# the claude provider only speaks the anthropic wire.
+# The Agent Plan anthropic-compatible endpoint lives under /api/plan (the client
+# appends /v1/messages). The OpenAI-compatible equivalent is /api/plan/v3.
 provider:
   name: claude
   type: anthropic
-  base_url: https://ark.cn-beijing.volces.com/api/coding
+  base_url: https://ark.cn-beijing.volces.com/api/plan
   api_key: ${VOLCES_ARK_API_KEY:-your-api-key-here}
 default_model: deepseek-v4-pro
