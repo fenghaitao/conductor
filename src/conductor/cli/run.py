@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape as escape_markup
 from rich.panel import Panel
 from rich.table import Table
 
@@ -181,16 +182,27 @@ def resolve_mcp_env_vars(env: dict[str, str]) -> dict[str, str]:
 def verbose_log(message: str, style: str = "dim") -> None:
     """Log a message if verbose mode is enabled.
 
+    ``message`` commonly carries a script step's own stdout/stderr verbatim
+    (see ``executor/script.py``'s "Script stderr: ..." logging), which may
+    contain arbitrary text from an external tool -- including literal
+    ``[...]`` sequences that collide with Rich's own console markup syntax
+    (e.g. a subprocess emitting a bracketed log prefix around an absolute
+    path). Escaping it before interpolation keeps that untrusted content
+    literal instead of letting it be parsed as markup, which otherwise
+    raises ``rich.errors.MarkupError`` for a stray/mismatched tag and takes
+    the whole workflow down over what should be inert log text.
+
     Args:
         message: The message to log.
         style: Rich style for the message.
     """
     from conductor.cli.app import is_verbose
 
+    escaped = escape_markup(message)
     if is_verbose():
-        _verbose_console.print(f"[{style}]{message}[/{style}]")
+        _verbose_console.print(f"[{style}]{escaped}[/{style}]")
     if _file_console is not None:
-        _file_console.print(message)
+        _file_console.print(escaped)
 
 
 _STRUCTURED_ROUTING_PROVIDERS = frozenset({"copilot", "claude", "claude-subscription"})

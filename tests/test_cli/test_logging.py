@@ -431,6 +431,37 @@ class TestVerboseLogging:
         finally:
             verbose_mode.reset(token)
 
+    def test_verbose_log_escapes_bracketed_content(self) -> None:
+        """A message containing bracket text (e.g. a subprocess's own log
+        prefix around an absolute path, or an unbalanced closing tag) must
+        not be parsed as Rich markup and blow up the whole workflow run.
+
+        Regression test: script steps forward a subprocess's raw stdout/
+        stderr verbatim through this function (see executor/script.py's
+        "Script stderr: ..." logging), and some CLI tools legitimately emit
+        bracketed prefixes like ``[/path/to/binary] message``. Rich
+        previously raised ``MarkupError`` on the stray/mismatched
+        ``[/path/to/binary]`` closing-tag-shaped text.
+        """
+        from io import StringIO
+
+        from rich.console import Console
+
+        from conductor.cli.run import verbose_log
+
+        output = StringIO()
+        token = verbose_mode.set(True)
+        try:
+            with patch(
+                "conductor.cli.run._verbose_console",
+                Console(file=output, force_terminal=True, highlight=False),
+            ):
+                # Must not raise rich.errors.MarkupError.
+                verbose_log("[/p/hdk/cad/nodejs/latest/bin/node] some tool output")
+            assert "[/p/hdk/cad/nodejs/latest/bin/node] some tool output" in output.getvalue()
+        finally:
+            verbose_mode.reset(token)
+
     def test_verbose_log_timing(self) -> None:
         """Test verbose_log_timing function."""
         import re
