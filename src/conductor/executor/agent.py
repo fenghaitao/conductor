@@ -38,11 +38,20 @@ if TYPE_CHECKING:
 def resolve_agent_tools(
     agent_tools: list[str] | None,
     workflow_tools: list[str],
-) -> list[str]:
+) -> list[str] | None:
     """Resolve which tools an agent should have access to.
 
     The resolution follows these rules:
-    - agent_tools=None (omitted): Agent gets ALL workflow tools
+    - agent_tools=None (omitted) and the workflow declares tools: Agent gets ALL
+      workflow tools.
+    - agent_tools=None (omitted) and the workflow declares NO tools: resolves to
+      None rather than []. An agent that never opted into a restriction is
+      distinct from one that explicitly asked for zero tools -- collapsing both
+      to [] silently strips providers whose "no allowlist" default differs from
+      their "explicit empty allowlist" default (e.g. claude-agent-sdk grants its
+      full `claude_code` preset only for tools=None, and disables all tools for
+      tools=[]). Providers that ignore the distinction (e.g. Copilot, which
+      never reads this list) are unaffected either way.
     - agent_tools=[] (empty list): Agent gets NO tools
     - agent_tools=[list]: Agent gets only specified tools (must be subset of workflow)
 
@@ -51,13 +60,15 @@ def resolve_agent_tools(
         workflow_tools: Tools defined at workflow level
 
     Returns:
-        List of tool names for this agent
+        List of tool names for this agent, or None if the agent declared no
+        allowlist and the workflow declares no tools either.
 
     Raises:
         ValidationError: If agent specifies tools not in workflow tools
     """
     if agent_tools is None:
-        # None means all workflow tools
+        if not workflow_tools:
+            return None
         return workflow_tools.copy()
 
     if not agent_tools:

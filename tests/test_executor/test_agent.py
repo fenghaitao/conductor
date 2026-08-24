@@ -406,8 +406,11 @@ class TestAgentExecutorWithTools:
         await executor.execute(agent, {})
 
         call_history = provider.get_call_history()
-        # Agent should get empty list when workflow has no tools
-        assert call_history[0]["tools"] == []
+        # Agent declared no allowlist and the workflow declares no tools either:
+        # resolves to None (distinct from an agent that explicitly asked for
+        # zero tools), so providers with a "no allowlist" default (e.g.
+        # claude-agent-sdk's claude_code preset) aren't silently starved.
+        assert call_history[0]["tools"] is None
 
     @pytest.mark.asyncio
     async def test_execute_with_unknown_tools_raises_error(self) -> None:
@@ -501,10 +504,10 @@ class TestResolveAgentTools:
         assert "web_search" in exc_info.value.suggestion
 
     def test_empty_workflow_tools_with_none_agent_tools(self) -> None:
-        """Test that empty workflow tools with None agent tools returns empty."""
+        """Test that no allowlist + no workflow tools resolves to None, not []."""
         workflow_tools: list[str] = []
         result = resolve_agent_tools(None, workflow_tools)
-        assert result == []
+        assert result is None
 
     def test_empty_workflow_tools_with_agent_tools_raises(self) -> None:
         """Test that agent tools with empty workflow tools raises error."""
