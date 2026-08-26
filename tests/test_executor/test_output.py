@@ -252,6 +252,95 @@ class TestValidateOutputNested:
             validate_output(content, schema)
 
 
+class TestValidateOutputConstraints:
+    """Tests for enum/pattern/range/length/optional/nullable field constraints."""
+
+    def test_enum_accepts_member(self) -> None:
+        schema = {"action": OutputField(type="string", enum=["normalize", "materialize"])}
+        validate_output({"action": "normalize"}, schema)
+
+    def test_enum_rejects_non_member(self) -> None:
+        schema = {"action": OutputField(type="string", enum=["normalize", "materialize"])}
+        with pytest.raises(ValidationError, match="not one of the allowed values"):
+            validate_output({"action": "bogus"}, schema)
+
+    def test_pattern_accepts_match(self) -> None:
+        schema = {"id": OutputField(type="string", pattern=r"^SF-\d+$")}
+        validate_output({"id": "SF-42"}, schema)
+
+    def test_pattern_rejects_non_match(self) -> None:
+        schema = {"id": OutputField(type="string", pattern=r"^SF-\d+$")}
+        with pytest.raises(ValidationError, match="does not match pattern"):
+            validate_output({"id": "AC-42"}, schema)
+
+    def test_minimum_maximum_accept_in_range(self) -> None:
+        schema = {"score": OutputField(type="number", minimum=0, maximum=1)}
+        validate_output({"score": 0.5}, schema)
+        validate_output({"score": 0}, schema)
+        validate_output({"score": 1}, schema)
+
+    def test_minimum_rejects_below(self) -> None:
+        schema = {"score": OutputField(type="number", minimum=0)}
+        with pytest.raises(ValidationError, match="below the minimum"):
+            validate_output({"score": -1}, schema)
+
+    def test_maximum_rejects_above(self) -> None:
+        schema = {"score": OutputField(type="number", maximum=1)}
+        with pytest.raises(ValidationError, match="above the maximum"):
+            validate_output({"score": 2}, schema)
+
+    def test_string_length_bounds(self) -> None:
+        schema = {"code": OutputField(type="string", min_length=2, max_length=4)}
+        validate_output({"code": "abc"}, schema)
+        with pytest.raises(ValidationError, match="below the minimum"):
+            validate_output({"code": "a"}, schema)
+        with pytest.raises(ValidationError, match="above the maximum"):
+            validate_output({"code": "abcde"}, schema)
+
+    def test_array_length_bounds(self) -> None:
+        schema = {"tags": OutputField(type="array", items=OutputField(type="string"), min_length=1)}
+        validate_output({"tags": ["a"]}, schema)
+        with pytest.raises(ValidationError, match="below the minimum"):
+            validate_output({"tags": []}, schema)
+
+    def test_optional_field_may_be_absent(self) -> None:
+        schema = {
+            "required_field": OutputField(type="string"),
+            "note": OutputField(type="string", optional=True),
+        }
+        validate_output({"required_field": "x"}, schema)
+
+    def test_non_optional_field_still_required(self) -> None:
+        schema = {"note": OutputField(type="string")}
+        with pytest.raises(ValidationError, match="Missing required output field"):
+            validate_output({}, schema)
+
+    def test_nullable_field_accepts_null(self) -> None:
+        schema = {"reason": OutputField(type="string", nullable=True)}
+        validate_output({"reason": None}, schema)
+
+    def test_non_nullable_field_rejects_null(self) -> None:
+        schema = {"reason": OutputField(type="string")}
+        with pytest.raises(ValidationError, match="is null but is not marked 'nullable'"):
+            validate_output({"reason": None}, schema)
+
+    def test_nullable_array_item_accepts_null(self) -> None:
+        schema = {
+            "notes": OutputField(type="array", items=OutputField(type="string", nullable=True))
+        }
+        validate_output({"notes": ["a", None, "b"]}, schema)
+
+    def test_non_nullable_array_item_rejects_null(self) -> None:
+        schema = {"notes": OutputField(type="array", items=OutputField(type="string"))}
+        with pytest.raises(ValidationError, match="is null but items are not marked 'nullable'"):
+            validate_output({"notes": ["a", None]}, schema)
+
+    def test_optional_field_still_validated_when_present(self) -> None:
+        schema = {"score": OutputField(type="number", minimum=0, maximum=1, optional=True)}
+        with pytest.raises(ValidationError, match="above the maximum"):
+            validate_output({"score": 5}, schema)
+
+
 class TestParseJsonOutput:
     """Tests for parse_json_output function."""
 

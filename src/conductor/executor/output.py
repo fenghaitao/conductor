@@ -39,14 +39,20 @@ def validate_output(
 ) -> None:
     """Validate agent output against declared schema.
 
-    Checks that all required fields are present and have the correct types.
+    Checks that all required fields are present, have the correct type, and
+    satisfy any declared constraints (``enum``, ``pattern``, ``minimum``/
+    ``maximum``, ``min_length``/``max_length``). A field marked ``optional``
+    may be absent; a field marked ``nullable`` may be JSON ``null``. Only
+    fields present in ``content`` are mutated (e.g. string-unwrapping);
+    undeclared keys are left untouched.
 
     Args:
         content: Agent's output content as a dictionary.
         schema: Expected output schema with field definitions.
 
     Raises:
-        ValidationError: If output doesn't match schema (missing fields or wrong types).
+        ValidationError: If output doesn't match schema (missing fields,
+            wrong types, or a violated constraint).
 
     Example:
         >>> from conductor.config.schema import OutputField
@@ -56,12 +62,23 @@ def validate_output(
     """
     for field_name, field_def in schema.items():
         if field_name not in content:
+            if field_def.optional:
+                continue
             raise ValidationError(
                 f"Missing required output field: {field_name}",
                 suggestion=f"Ensure agent returns '{field_name}' in output",
             )
 
         value = content[field_name]
+
+        if value is None:
+            if field_def.nullable:
+                continue
+            raise ValidationError(
+                f"Output field '{field_name}' is null but is not marked 'nullable'",
+                suggestion=f"Ensure agent returns a non-null '{field_name}', or set nullable: true",
+            )
+
         expected_type = field_def.type
 
         # Unwrap dict-wrapped strings: some LLMs (e.g. DeepSeek via
@@ -81,18 +98,94 @@ def validate_output(
                 suggestion=f"Ensure agent returns correct type for '{field_name}'",
             )
 
+        _check_constraints(field_name, value, field_def)
+
         # Recursively validate nested structures
         if expected_type == "object" and field_def.properties and isinstance(value, dict):
             validate_output(value, field_def.properties)
 
         if expected_type == "array" and field_def.items and isinstance(value, list):
+            item_def = field_def.items
             for i, item in enumerate(value):
-                if not _check_type(item, field_def.items.type):
+                item_label = f"Array item {i} in '{field_name}'"
+                if item is None:
+                    if item_def.nullable:
+                        continue
                     raise ValidationError(
-                        f"Array item {i} in '{field_name}' has wrong type: "
-                        f"expected {field_def.items.type}, got {type(item).__name__}",
+                        f"{item_label} is null but items are not marked 'nullable'",
+                        suggestion=f"Ensure every item in '{field_name}' is non-null, "
+                        "or set items.nullable: true",
+                    )
+                if not _check_type(item, item_def.type):
+                    raise ValidationError(
+                        f"{item_label} has wrong type: "
+                        f"expected {item_def.type}, got {type(item).__name__}",
                         suggestion=f"Ensure all items in '{field_name}' have correct type",
                     )
+                _check_constraints(item_label, item, item_def)
+                if item_def.type == "object" and item_def.properties and isinstance(item, dict):
+                    validate_output(item, item_def.properties)
+
+
+def _check_constraints(label: str, value: Any, field_def: OutputField) -> None:
+    """Enforce enum/pattern/range/length constraints on an already type-checked value.
+
+    Args:
+        label: Human-readable field label for error messages (e.g. the field
+            name, or ``"Array item 2 in 'foo'"``).
+        value: The already type-checked value.
+        field_def: The field's schema, carrying the optional constraints.
+
+    Raises:
+        ValidationError: If a declared constraint is violated.
+    """
+    if field_def.enum is not None and value not in field_def.enum:
+        raise ValidationError(
+            f"Output field '{label}' has value {value!r}, "
+            f"which is not one of the allowed values: {field_def.enum!r}",
+            suggestion=f"Ensure '{label}' is one of {field_def.enum!r}",
+        )
+
+    if field_def.pattern is not None and isinstance(value, str):
+        import re
+
+        if not re.search(field_def.pattern, value):
+            raise ValidationError(
+                f"Output field '{label}' with value {value!r} does not match "
+                f"pattern {field_def.pattern!r}",
+                suggestion=f"Ensure '{label}' matches the pattern {field_def.pattern!r}",
+            )
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if field_def.minimum is not None and value < field_def.minimum:
+            raise ValidationError(
+                f"Output field '{label}' with value {value!r} is below the "
+                f"minimum of {field_def.minimum!r}",
+                suggestion=f"Ensure '{label}' is >= {field_def.minimum!r}",
+            )
+        if field_def.maximum is not None and value > field_def.maximum:
+            raise ValidationError(
+                f"Output field '{label}' with value {value!r} is above the "
+                f"maximum of {field_def.maximum!r}",
+                suggestion=f"Ensure '{label}' is <= {field_def.maximum!r}",
+            )
+
+    if isinstance(value, (str, list)):
+        length = len(value)
+        if field_def.min_length is not None and length < field_def.min_length:
+            raise ValidationError(
+                f"Output field '{label}' has length {length}, "
+                f"below the minimum of {field_def.min_length}",
+                suggestion=f"Ensure '{label}' has at least {field_def.min_length} "
+                f"{'characters' if isinstance(value, str) else 'items'}",
+            )
+        if field_def.max_length is not None and length > field_def.max_length:
+            raise ValidationError(
+                f"Output field '{label}' has length {length}, "
+                f"above the maximum of {field_def.max_length}",
+                suggestion=f"Ensure '{label}' has at most {field_def.max_length} "
+                f"{'characters' if isinstance(value, str) else 'items'}",
+            )
 
 
 def _unwrap_string(value: dict[str, Any]) -> str | None:

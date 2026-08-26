@@ -106,6 +106,54 @@ class TestOutputField:
         assert "name" in output.properties
         assert output.properties["name"].type == "string"
 
+    def test_enum_valid_on_string(self) -> None:
+        output = OutputField(type="string", enum=["a", "b"])
+        assert output.enum == ["a", "b"]
+
+    def test_enum_rejected_on_boolean(self) -> None:
+        with pytest.raises(ValidationError, match="'enum' is only valid on"):
+            OutputField(type="boolean", enum=[True])
+
+    def test_pattern_rejected_on_number(self) -> None:
+        with pytest.raises(ValidationError, match="'pattern' is only valid on"):
+            OutputField(type="number", pattern=r"\d+")
+
+    def test_pattern_invalid_regex_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="invalid 'pattern'"):
+            OutputField(type="string", pattern="(unclosed")
+
+    def test_minimum_maximum_rejected_on_string(self) -> None:
+        with pytest.raises(ValidationError, match="'minimum'/'maximum' are only valid on"):
+            OutputField(type="string", minimum=0)
+
+    def test_minimum_exceeds_maximum_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="exceeds 'maximum'"):
+            OutputField(type="number", minimum=5, maximum=1)
+
+    def test_min_length_max_length_valid_on_array(self) -> None:
+        output = OutputField(
+            type="array", items=OutputField(type="string"), min_length=1, max_length=5
+        )
+        assert output.min_length == 1
+        assert output.max_length == 5
+
+    def test_min_length_rejected_on_number(self) -> None:
+        with pytest.raises(ValidationError, match="'min_length'/'max_length' are only valid on"):
+            OutputField(type="number", min_length=1)
+
+    def test_min_length_exceeds_max_length_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="exceeds 'max_length'"):
+            OutputField(type="string", min_length=5, max_length=1)
+
+    def test_optional_and_nullable_default_false(self) -> None:
+        output = OutputField(type="string")
+        assert output.optional is False
+        assert output.nullable is False
+
+    def test_unknown_constraint_key_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            OutputField(type="string", regex="typo-for-pattern")  # type: ignore[call-arg]
+
 
 class TestRouteDef:
     """Tests for RouteDef model."""
@@ -279,6 +327,32 @@ class TestAgentDef:
         assert agent.type == "agent"
         assert len(agent.tools) == 1
         assert agent.system_prompt == "You are helpful."
+
+    def test_root_output_field_optional_rejected(self) -> None:
+        """A top-level output field is always expected; 'optional' only makes
+        sense on a nested 'properties' entry."""
+        with pytest.raises(ValidationError, match="not valid on a top-level output field"):
+            AgentDef(
+                name="agent1",
+                model="gpt-4",
+                prompt="Hello",
+                output={"note": OutputField(type="string", optional=True)},
+            )
+
+    def test_nested_output_field_optional_allowed(self) -> None:
+        """'optional' on a nested properties entry is fine."""
+        agent = AgentDef(
+            name="agent1",
+            model="gpt-4",
+            prompt="Hello",
+            output={
+                "result": OutputField(
+                    type="object",
+                    properties={"note": OutputField(type="string", optional=True)},
+                )
+            },
+        )
+        assert agent.output["result"].properties["note"].optional is True
 
     def test_human_gate_with_options(self) -> None:
         """Test human_gate agent with options."""

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased](https://github.com/microsoft/conductor/compare/v0.1.18...HEAD)
 
+### Added
+
+- Output field constraints: `enum`, `pattern`, `minimum`/`maximum`,
+  `min_length`/`max_length`, `optional`, and `nullable` on `output:` fields.
+  Enforced provider-agnostically in `executor.output.validate_output`;
+  surfaced to the model by every provider's schema builder (Copilot's
+  prompt-facing description, Claude's tool `input_schema`, the Claude Agent
+  SDK's `output_format`, and pydantic-ai's dynamic model via `Field`/
+  `Literal`). `optional` is rejected at the root of an agent's `output:`
+  mapping — a top-level field is always expected; only a nested `properties`
+  entry may be optional. Unknown keys on an output field are rejected at
+  load time. See docs/workflow-syntax.md#output-field-constraints.
+
 ### Fixed
 
 - `human_gate` agents: the dict returned by `prompt_for` text-collection fields

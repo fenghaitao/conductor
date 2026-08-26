@@ -148,6 +148,50 @@ agents:
 
 Why this matters: when an `output:` schema is declared, the model is asked to wrap its response in JSON. Large or prose-heavy responses tend to come back inside Markdown code fences, and any triple-backticks in the content can confuse the JSON-extraction step. Omitting `output:` for these agents avoids that whole class of failure and lets the model write naturally.
 
+### Output Field Constraints
+
+Beyond `type`, an output field may declare a constraint the value must satisfy. Conductor enforces every constraint after the model responds (`ValidationError` if violated); providers that build a model-facing schema description also surface the constraint to the model, improving first-try compliance.
+
+```yaml
+agents:
+  - name: classify_source
+    prompt: "Classify the input."
+    output:
+      action:
+        type: string
+        enum: [normalize, materialize]        # must be one of these
+      id:
+        type: string
+        pattern: "^SF-\\d+$"                  # must contain a match (re.search)
+      score:
+        type: number
+        minimum: 0
+        maximum: 1
+      tags:
+        type: array
+        items:
+          type: string
+        min_length: 1                          # at least one item
+        max_length: 5
+      note:
+        type: string
+        optional: true                         # may be absent from the output
+      reason:
+        type: string
+        nullable: true                         # may be JSON null
+```
+
+| Field | Applies to | Meaning |
+|-------|-----------|---------|
+| `enum` | `string`, `number` | Value must be one of the listed literals. |
+| `pattern` | `string` | Value must contain a regex match (`re.search` semantics, matching JSON Schema's `pattern`). |
+| `minimum` / `maximum` | `number` | Inclusive bounds. |
+| `min_length` / `max_length` | `string`, `array` | Length bounds (characters for strings, item count for arrays). |
+| `optional` | any | The field may be absent from the agent's output entirely. **Rejected at the root of an agent's `output:` mapping** — a top-level field is always expected; only a nested `properties` entry may be optional. |
+| `nullable` | any | The field may be JSON `null` in addition to its declared `type`. |
+
+Constraints compose with nesting: an `object` field's `properties` and an `array` field's `items` may each declare their own constraints, checked recursively. An unknown key on an output field (e.g. a typo like `regex` for `pattern`) is rejected at workflow-load time rather than silently ignored.
+
 ### Human Gates
 
 Human gates pause workflow execution for user input:

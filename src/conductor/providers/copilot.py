@@ -1555,6 +1555,28 @@ class CopilotProvider(AgentProvider):
             for field_name, field_def in schema.items()
         }
 
+    @staticmethod
+    def _add_constraint_keys(schema: dict[str, Any], field_def: OutputField) -> None:
+        """Add declared enum/pattern/range/length/nullable keys so the model sees them.
+
+        Enforcement happens independently in ``executor.output.validate_output``;
+        this only improves the odds the model complies on the first try.
+        """
+        if field_def.enum is not None:
+            schema["enum"] = field_def.enum
+        if field_def.pattern is not None:
+            schema["pattern"] = field_def.pattern
+        if field_def.minimum is not None:
+            schema["minimum"] = field_def.minimum
+        if field_def.maximum is not None:
+            schema["maximum"] = field_def.maximum
+        if field_def.min_length is not None:
+            schema["minLength"] = field_def.min_length
+        if field_def.max_length is not None:
+            schema["maxLength"] = field_def.max_length
+        if field_def.nullable:
+            schema["nullable"] = True
+
     def _build_prompt_field_schema(
         self,
         field_name: str,
@@ -1566,10 +1588,13 @@ class CopilotProvider(AgentProvider):
             "type": field_def.type,
             "description": field_def.description or f"The {field_name} field",
         }
+        self._add_constraint_keys(schema, field_def)
 
         if field_def.type == "object" and field_def.properties:
             schema["properties"] = self._build_prompt_schema(field_def.properties, depth=depth + 1)
-            schema["required"] = list(field_def.properties.keys())
+            schema["required"] = [
+                name for name, prop in field_def.properties.items() if not prop.optional
+            ]
 
         if field_def.type == "array" and field_def.items:
             schema["items"] = self._build_prompt_item_schema(field_def.items, depth=depth + 1)
@@ -1589,10 +1614,13 @@ class CopilotProvider(AgentProvider):
 
         if field_def.description:
             schema["description"] = field_def.description
+        self._add_constraint_keys(schema, field_def)
 
         if field_def.type == "object" and field_def.properties:
             schema["properties"] = self._build_prompt_schema(field_def.properties, depth=depth + 1)
-            schema["required"] = list(field_def.properties.keys())
+            schema["required"] = [
+                name for name, prop in field_def.properties.items() if not prop.optional
+            ]
 
         if field_def.type == "array" and field_def.items:
             schema["items"] = self._build_prompt_item_schema(field_def.items, depth=depth + 1)

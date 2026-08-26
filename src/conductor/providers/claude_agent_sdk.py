@@ -47,12 +47,24 @@ def _build_field_schema(field: OutputField, depth: int = 0) -> dict[str, Any]:
     if depth > 10:
         raise ProviderError("Output schema nesting exceeds 10 levels")
 
-    schema: dict[str, Any] = {"type": field.type}
+    schema: dict[str, Any] = {"type": [field.type, "null"] if field.nullable else field.type}
     if field.description:
         schema["description"] = field.description
+    if field.enum is not None:
+        schema["enum"] = field.enum
+    if field.pattern is not None:
+        schema["pattern"] = field.pattern
+    if field.minimum is not None:
+        schema["minimum"] = field.minimum
+    if field.maximum is not None:
+        schema["maximum"] = field.maximum
+    if field.min_length is not None:
+        schema["minLength"] = field.min_length
+    if field.max_length is not None:
+        schema["maxLength"] = field.max_length
     if field.type == "object" and field.properties:
         schema["properties"] = _build_properties(field.properties, depth + 1)
-        schema["required"] = list(field.properties.keys())
+        schema["required"] = [name for name, p in field.properties.items() if not p.optional]
     if field.type == "array" and field.items:
         schema["items"] = _build_field_schema(field.items, depth + 1)
     return schema

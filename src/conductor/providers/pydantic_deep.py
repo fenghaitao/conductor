@@ -26,7 +26,7 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 
 from conductor.exceptions import ProviderError
 from conductor.providers._event_format import extract_tool_result_text, format_tool_arguments
@@ -66,7 +66,16 @@ _RETRY_JITTER = 0.25
 
 
 def _conductor_type_to_python(field: OutputField) -> Any:
-    """Recursively map a Conductor OutputField to a Python type annotation."""
+    """Recursively map a Conductor OutputField to a Python type annotation.
+
+    An ``enum`` constraint narrows the annotation to ``Literal[...]`` instead
+    of the bare ``str``/``float`` — pydantic enforces enum membership at the
+    type level, not via a ``Field`` constraint.
+    """
+    if field.enum is not None:
+        from typing import Literal
+
+        return Literal[tuple(field.enum)]  # type: ignore[valid-type]
     if field.type == "string":
         return str
     if field.type == "number":
@@ -92,6 +101,12 @@ def _build_output_model(output_schema: dict[str, OutputField]) -> type[BaseModel
     CopilotProvider: pydantic-ai enforces the schema at the API level via a
     formal output tool definition, so no recovery loop is needed.
 
+    ``pattern``/``minimum``/``maximum``/``min_length``/``max_length`` become
+    ``Field`` constraints; ``enum`` narrows the type annotation itself (see
+    ``_conductor_type_to_python``); ``optional`` gives the field a ``None``
+    default (widening the annotation to include ``None``); ``nullable`` widens
+    the annotation to include ``None`` without changing required-ness.
+
     Args:
         output_schema: Conductor ``dict[str, OutputField]`` from ``AgentDef.output``.
 
@@ -101,7 +116,28 @@ def _build_output_model(output_schema: dict[str, OutputField]) -> type[BaseModel
     fields: dict[str, Any] = {}
     for name, field in output_schema.items():
         python_type = _conductor_type_to_python(field)
-        fields[name] = (python_type, ...)
+
+        field_kwargs: dict[str, Any] = {}
+        if field.pattern is not None:
+            field_kwargs["pattern"] = field.pattern
+        if field.minimum is not None:
+            field_kwargs["ge"] = field.minimum
+        if field.maximum is not None:
+            field_kwargs["le"] = field.maximum
+        if field.min_length is not None:
+            field_kwargs["min_length"] = field.min_length
+        if field.max_length is not None:
+            field_kwargs["max_length"] = field.max_length
+
+        if field.optional or field.nullable:
+            python_type = python_type | None
+        default = None if field.optional else ...
+
+        fields[name] = (
+            (python_type, Field(default=default, **field_kwargs))
+            if field_kwargs
+            else (python_type, default)
+        )
     model: type[BaseModel] = create_model("AgentOutput", **fields)  # type: ignore[call-overload]
     return model
 

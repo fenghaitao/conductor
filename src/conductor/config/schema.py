@@ -72,7 +72,19 @@ class InputDef(BaseModel):
 
 
 class OutputField(BaseModel):
-    """Schema for a single output field from an agent."""
+    """Schema for a single output field from an agent.
+
+    Beyond the bare ``type``, a field may declare constraints the model's
+    value must satisfy: ``enum``/``pattern`` for strings, ``minimum``/
+    ``maximum`` for numbers, ``min_length``/``max_length`` for strings and
+    arrays, plus the type-independent ``optional`` (the field may be absent)
+    and ``nullable`` (the field may be JSON ``null``). Enforcement lives in
+    ``conductor.executor.output.validate_output``; providers that build a
+    model-facing schema description should also surface these so the model
+    sees the constraint, not just the enforcement layer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["string", "number", "boolean", "array", "object"]
     """The type of the output field."""
@@ -86,15 +98,74 @@ class OutputField(BaseModel):
     properties: dict[str, OutputField] | None = None
     """For object types, the schema of object properties."""
 
+    enum: list[Any] | None = None
+    """Allowed literal values. Valid on ``string`` and ``number`` fields."""
+
+    pattern: str | None = None
+    """A regular expression the value must contain a match for (``re.search``
+    semantics, matching JSON Schema's ``pattern``). ``string`` only."""
+
+    minimum: float | None = None
+    """Inclusive lower bound. ``number`` only."""
+
+    maximum: float | None = None
+    """Inclusive upper bound. ``number`` only."""
+
+    min_length: int | None = None
+    """Minimum length. ``string`` (characters) or ``array`` (items) only."""
+
+    max_length: int | None = None
+    """Maximum length. ``string`` (characters) or ``array`` (items) only."""
+
+    optional: bool = False
+    """When True, the field may be absent from the agent's output entirely.
+
+    Rejected at the root of an agent's ``output:`` mapping (checked by
+    ``AgentDef``) — a top-level field is always expected to be produced;
+    only a nested ``properties`` entry may be optional.
+    """
+
+    nullable: bool = False
+    """When True, the field may be JSON ``null`` in addition to its ``type``."""
+
     @model_validator(mode="after")
     def validate_type_specific_fields(self) -> OutputField:
-        """Ensure type-specific fields are properly set."""
-        if self.type == "array" and self.items is None:
-            # Items are optional but recommended for arrays
-            pass
-        if self.type == "object" and self.properties is None:
-            # Properties are optional but recommended for objects
-            pass
+        """Reject constraint keywords that don't apply to this field's type."""
+        if self.enum is not None and self.type not in ("string", "number"):
+            raise ValueError(
+                f"'enum' is only valid on 'string' or 'number' fields, not '{self.type}'"
+            )
+        if self.pattern is not None and self.type != "string":
+            raise ValueError(f"'pattern' is only valid on 'string' fields, not '{self.type}'")
+        if (self.minimum is not None or self.maximum is not None) and self.type != "number":
+            raise ValueError(
+                f"'minimum'/'maximum' are only valid on 'number' fields, not '{self.type}'"
+            )
+        if (self.min_length is not None or self.max_length is not None) and self.type not in (
+            "string",
+            "array",
+        ):
+            raise ValueError(
+                "'min_length'/'max_length' are only valid on 'string' or 'array' "
+                f"fields, not '{self.type}'"
+            )
+        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+            raise ValueError(f"'minimum' ({self.minimum}) exceeds 'maximum' ({self.maximum})")
+        if (
+            self.min_length is not None
+            and self.max_length is not None
+            and self.min_length > self.max_length
+        ):
+            raise ValueError(
+                f"'min_length' ({self.min_length}) exceeds 'max_length' ({self.max_length})"
+            )
+        if self.pattern is not None:
+            import re as _re
+
+            try:
+                _re.compile(self.pattern)
+            except _re.error as exc:
+                raise ValueError(f"invalid 'pattern' regular expression: {exc}") from exc
         return self
 
 
@@ -904,6 +975,17 @@ class AgentDef(BaseModel):
                         f"'{self.type or 'agent'}' agents cannot have '{field_name}' "
                         "(only 'terminate' agents support this field)"
                     )
+
+        if self.output is not None:
+            optional_root_fields = [
+                name for name, field_def in self.output.items() if field_def.optional
+            ]
+            if optional_root_fields:
+                raise ValueError(
+                    "'optional' is not valid on a top-level output field "
+                    f"({', '.join(sorted(optional_root_fields))}) — a root output field is "
+                    "always expected; only a nested 'properties' entry may be optional"
+                )
 
         if self.type == "human_gate":
             if not self.options:

@@ -2204,20 +2204,24 @@ class ClaudeProvider(AgentProvider):
 
         for field_name, field_def in schema.items():
             prop: dict[str, Any] = {
-                "type": self._map_type_to_json_schema(field_def.type),
+                "type": self._json_schema_type(field_def),
             }
 
             if field_def.description:
                 prop["description"] = field_def.description
+
+            self._add_constraint_keys(prop, field_def)
 
             # Handle nested object schemas
             if field_def.type == "object" and field_def.properties:
                 prop["properties"] = self._build_json_schema_properties(
                     field_def.properties, depth=depth + 1
                 )
-                # All properties in OutputField schemas are required
-                # (OutputField has no 'required' attribute, all fields are mandatory)
-                prop["required"] = list(field_def.properties.keys())
+                # Optional properties (field_def.optional) are omitted from
+                # 'required'; every other nested property is mandatory.
+                prop["required"] = [
+                    name for name, p in field_def.properties.items() if not p.optional
+                ]
 
             # Handle array schemas with item definitions
             if field_def.type == "array" and field_def.items:
@@ -2227,6 +2231,27 @@ class ClaudeProvider(AgentProvider):
             properties[field_name] = prop
 
         return properties
+
+    @staticmethod
+    def _add_constraint_keys(schema: dict[str, Any], field_def: OutputField) -> None:
+        """Add declared enum/pattern/range/length keys as standard JSON Schema keywords."""
+        if field_def.enum is not None:
+            schema["enum"] = field_def.enum
+        if field_def.pattern is not None:
+            schema["pattern"] = field_def.pattern
+        if field_def.minimum is not None:
+            schema["minimum"] = field_def.minimum
+        if field_def.maximum is not None:
+            schema["maximum"] = field_def.maximum
+        if field_def.min_length is not None:
+            schema["minLength"] = field_def.min_length
+        if field_def.max_length is not None:
+            schema["maxLength"] = field_def.max_length
+
+    def _json_schema_type(self, field_def: OutputField) -> str | list[str]:
+        """Map an OutputField's type to JSON Schema, widening to [type, 'null'] when nullable."""
+        base = self._map_type_to_json_schema(field_def.type)
+        return [base, "null"] if field_def.nullable else base
 
     def _build_single_field_schema(self, field: OutputField, depth: int = 0) -> dict[str, Any]:
         """Build JSON Schema for a single field (used for array items).
@@ -2248,19 +2273,20 @@ class ClaudeProvider(AgentProvider):
             )
 
         schema: dict[str, Any] = {
-            "type": self._map_type_to_json_schema(field.type),
+            "type": self._json_schema_type(field),
         }
 
         if field.description:
             schema["description"] = field.description
+
+        self._add_constraint_keys(schema, field)
 
         # Handle nested objects in array items
         if field.type == "object" and field.properties:
             schema["properties"] = self._build_json_schema_properties(
                 field.properties, depth=depth + 1
             )
-            # All properties are required
-            schema["required"] = list(field.properties.keys())
+            schema["required"] = [name for name, p in field.properties.items() if not p.optional]
 
         # Handle nested arrays (array of arrays)
         if field.type == "array" and field.items:
