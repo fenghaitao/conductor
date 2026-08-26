@@ -42,6 +42,12 @@ from conductor.exceptions import (
 from conductor.executor.agent import AgentExecutor
 from conductor.executor.linkify import linkify_markdown
 from conductor.executor.output import validate_output
+from conductor.executor.questions import (
+    QuestionsExecutor,
+    QuestionsOutput,
+    normalize_source_questions,
+    resolve_inline_questions,
+)
 from conductor.executor.script import ScriptExecutor, ScriptOutput
 from conductor.executor.set_step import (
     SetExecutor,
@@ -373,6 +379,7 @@ class WorkflowEngine:
         self.script_executor = ScriptExecutor()
         self.set_executor = SetExecutor()
         self.wait_executor = WaitExecutor()
+        self.questions_executor = QuestionsExecutor(skip_gates=skip_gates)
         self.usage_tracker = UsageTracker(
             pricing_overrides=self._build_pricing_overrides(),
         )
@@ -955,6 +962,74 @@ class WorkflowEngine:
             },
         )
         return set_output
+
+    def _resolve_questions(self, agent: AgentDef, agent_context: dict[str, Any]) -> list[Any]:
+        """Resolve a questions step's question list from `source:` or `questions:`.
+
+        Schema validation (``validate_agent_type``) already guarantees
+        exactly one of the two is set.
+        """
+        if agent.source is not None:
+            raw = self._resolve_array_reference(agent.source)
+            return normalize_source_questions(raw)
+        assert agent.questions is not None
+        return resolve_inline_questions(
+            agent.questions,
+            lambda template: self.renderer.render(template, agent_context),
+        )
+
+    async def _run_questions_step(
+        self, agent: AgentDef, agent_context: dict[str, Any]
+    ) -> QuestionsOutput:
+        """Execute a questions step end-to-end with full event parity.
+
+        Mirrors ``_run_set_step``'s shape (started/completed/failed events,
+        no ``output:`` schema — rejected at load time since no provider is
+        invoked here to honor one).
+        """
+        iteration = self.limits.get_agent_execution_count(agent.name) + 1
+        self._emit(
+            "questions_started",
+            {"agent_name": agent.name, "iteration": iteration},
+        )
+
+        start = _time.time()
+        try:
+            questions = self._resolve_questions(agent, agent_context)
+            intro = self.renderer.render(agent.prompt, agent_context) if agent.prompt else None
+            questions_output = await self.questions_executor.execute(
+                questions,
+                intro=intro,
+                allow_back=agent.allow_back if agent.allow_back is not None else True,
+                allow_skip=agent.allow_skip if agent.allow_skip is not None else True,
+                allow_skip_all=(agent.allow_skip_all if agent.allow_skip_all is not None else True),
+                allow_abort=bool(agent.allow_abort),
+            )
+        except Exception as exc:
+            elapsed = _time.time() - start
+            self._emit(
+                "questions_failed",
+                {
+                    "agent_name": agent.name,
+                    "elapsed": elapsed,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            raise
+        elapsed = _time.time() - start
+
+        self._emit(
+            "questions_completed",
+            {
+                "agent_name": agent.name,
+                "elapsed": elapsed,
+                "answered_count": questions_output.answered_count,
+                "skipped_count": questions_output.skipped_count,
+                "outcome": questions_output.outcome,
+            },
+        )
+        return questions_output
 
     def _validate_script_output_schema(
         self,
@@ -3100,6 +3175,63 @@ class WorkflowEngine:
                                 return result
 
                             current_agent_name = route_result.target
+
+                            interrupt_result = await self._check_interrupt(current_agent_name)
+                            if interrupt_result is not None:
+                                current_agent_name = await self._handle_interrupt_result(
+                                    interrupt_result, current_agent_name
+                                )
+                            continue
+
+                        # Handle questions steps. Records answers; does not
+                        # couple a choice to a route the way human_gate does
+                        # — routes (if any) evaluate against the collected
+                        # output, same shape as a set step's dict output.
+                        if agent.type == "questions":
+                            agent_context = self.context.build_for_agent(
+                                agent.name,
+                                agent.input,
+                                mode=self.config.workflow.context.mode,
+                                agent_type=agent.type,
+                            )
+
+                            questions_output = await self._run_questions_step(agent, agent_context)
+                            output_dict = questions_output.to_dict()
+                            self.context.store(agent.name, output_dict)
+                            self.limits.record_execution(agent.name)
+                            self.limits.check_timeout()
+
+                            # abort_route is a shortcut for the common case;
+                            # when unset, an aborted outcome falls through to
+                            # ordinary routes: evaluation like any other
+                            # outcome value.
+                            if questions_output.outcome == "aborted" and agent.abort_route:
+                                route_target = agent.abort_route
+                                self._emit(
+                                    "route_taken",
+                                    {"from_agent": agent.name, "to_agent": route_target},
+                                )
+                            else:
+                                route_result = self._evaluate_routes(agent, output_dict)
+                                route_target = route_result.target
+                                self._emit(
+                                    "route_taken",
+                                    {"from_agent": agent.name, "to_agent": route_target},
+                                )
+
+                            if route_target == "$end":
+                                result = self._build_final_output()
+                                self._emit(
+                                    "workflow_completed",
+                                    {
+                                        "elapsed": _time.time() - _workflow_start,
+                                        "output": result,
+                                    },
+                                )
+                                self._execute_hook("on_complete", result=result)
+                                return result
+
+                            current_agent_name = route_target
 
                             interrupt_result = await self._check_interrupt(current_agent_name)
                             if interrupt_result is not None:

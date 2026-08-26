@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry may be optional. Unknown keys on an output field are rejected at
   load time. See docs/workflow-syntax.md#output-field-constraints.
 
+- `type: questions` — ask a human a set of questions in one step, CLI/terminal
+  only (no dedicated web-dashboard widget yet, no mid-node checkpoint resume).
+  `human_gate` handles a single decision; `questions` handles "an agent has N
+  questions and wants a human to work through them" without a
+  gate-loops-through-a-set-step workaround. Questions come from an inline
+  `questions:` list (full Jinja2 rendering) or a `source:` dotted path (same
+  convention as `for_each`; text used verbatim, never rendered). Supports
+  back/skip/skip-all/abort via `:back`/`:skip`/`:skip-all`/`:abort` control
+  tokens, per-question `required`/`default`/`choices`/`multiline`. `routes:`
+  evaluate against the collected output (`answers`/`items`/`transcript`/
+  `answered_count`/`skipped_count`/`answered_any`/`outcome`) rather than a
+  per-choice route — `questions` *records*, `human_gate` *routes*.
+  `--skip-gates` never selects a suggested `choices` value; only a `default`
+  is taken, everything else is skipped. Refused inside parallel/for_each
+  groups (same reason as `human_gate`). See
+  docs/workflow-syntax.md#questions.
+
 ### Fixed
 
 - `human_gate` agents: the dict returned by `prompt_for` text-collection fields

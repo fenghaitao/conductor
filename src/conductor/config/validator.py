@@ -207,6 +207,19 @@ def validate_workflow_config(
 
     # Validate for_each groups: reject step types that can't be used inline
     for for_each_group in config.for_each:
+        if for_each_group.agent.type == "human_gate":
+            errors.append(
+                f"For-each group '{for_each_group.name}' uses a human_gate step as its "
+                "inline agent. Human gates cannot be used in for_each groups."
+            )
+        if for_each_group.agent.type == "questions":
+            errors.append(
+                f"For-each group '{for_each_group.name}' uses a questions step as its "
+                "inline agent. Questions steps cannot be used in for_each groups "
+                "(concurrent prompts would compete for one terminal / one dashboard "
+                "prompt slot). Route to a questions step from the for_each group's "
+                "routes instead."
+            )
         if for_each_group.agent.type == "script":
             errors.append(
                 f"For-each group '{for_each_group.name}' uses a script step as its "
@@ -503,6 +516,15 @@ def _validate_parallel_groups(config: WorkflowConfig) -> list[str]:
                 errors.append(
                     f"Agent '{agent_name}' in parallel group '{pg.name}' is a human gate. "
                     "Human gates cannot be used in parallel groups."
+                )
+
+            # Validate no questions steps in parallel groups: concurrent
+            # prompts would compete for one terminal / one dashboard prompt
+            # slot, the same reason human_gate is refused above.
+            if agent.type == "questions":
+                errors.append(
+                    f"Agent '{agent_name}' in parallel group '{pg.name}' is a questions step. "
+                    "Questions steps cannot be used in parallel groups."
                 )
 
             # Validate no script steps in parallel groups

@@ -75,7 +75,7 @@ Agents are defined in the `agents` list. Each agent represents a unit of work.
 agents:
   - name: string                    # Required: Unique agent identifier
     description: string             # Optional: Purpose description
-    type: agent                     # agent | human_gate | script | workflow | wait | terminate (default: agent)
+    type: agent                     # agent | human_gate | questions | script | workflow | wait | terminate (default: agent)
     model: string                   # Optional: Model identifier (e.g., 'claude-sonnet-4.5')
     
     prompt: |                       # Required for type=agent: Agent instructions
@@ -254,6 +254,117 @@ agents:
 ```
 
 The auto-linkify processor is Markdown-aware: it skips fenced code blocks, inline code spans, and existing markdown links. File paths are validated against the workflow root directory (path traversal is blocked).
+
+### Questions
+
+A `questions` step asks a human a SET of questions inside one workflow step, holding the cursor and the answers internally.
+
+**Use a gate when the choice changes where the workflow goes; use `questions` when you just need the answers recorded.** `human_gate` *routes* on the selection, `questions` *records* it — there's no per-choice `route:`, only the step's own `routes:` evaluated against the collected output afterward.
+
+```yaml
+agents:
+  - name: architect
+    prompt: |
+      Design an approach for {{ workflow.input.topic }}.
+      List up to 4 open questions you need a human to settle. For each,
+      suggest 2-3 candidate answers where you can.
+    output:
+      summary: { type: string }
+      open_questions:
+        type: array
+        description: "Objects: {question, choices}."
+    routes:
+      - to: ask_questions
+
+  - name: ask_questions
+    type: questions
+
+    # Exactly one of `source:` or `questions:`.
+    source: architect.output.open_questions   # dotted path, same convention as for_each
+    # questions:
+    #   - text: "Server-side or client-side?"
+    #     choices: ["Server-side", "Client-side"]
+    #   - id: rollout                          # stable answer key
+    #     text: "How should this roll out?"
+    #     hint: "Think about the migration window."
+    #     required: true
+    #     default: "Behind a flag"
+    #     multiline: true
+    #     allow_free_text: true
+
+    prompt: |                                 # Optional intro, shown once
+      Unanswered questions become silent assumptions.
+
+    allow_back: true          # revise the previous answer (default: true)
+    allow_skip: true          # skip one question (default: true)
+    allow_skip_all: true      # skip everything remaining (default: true)
+    allow_abort: false        # abandon the node (default: false)
+    # abort_route: rescue     # shortcut: route straight here when outcome == aborted
+                               # (requires allow_abort: true). When unset, an
+                               # aborted outcome falls through to ordinary
+                               # routes: evaluation like any other outcome.
+
+    routes:
+      - to: finalize
+```
+
+#### Question fields
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `id` | `q1`..`qN` | Answer key. Set it explicitly so inserting a question upstream doesn't renumber the keys below it. |
+| `text` | required | The question. |
+| `hint` | — | Clarifying text shown beneath the question. |
+| `choices` | — | Suggested answers, offered as numbered options. |
+| `allow_free_text` | `true` | Offer a free-text answer alongside `choices`. A question with no `choices` and `allow_free_text: false` is rejected at load time — it would be unanswerable. |
+| `default` | — | Recorded when the question is skipped. Counts as answered. |
+| `required` | `false` | Blocks *skip* (single and skip-all), never *back* — a user is never trapped on one question. A question with a `default` is always skippable, since the default answers it. |
+| `multiline` | `true` | Whether the free-text path (no `choices`) reads multiple lines, terminated by a line containing only `.`. Inert when `choices` is set or `allow_free_text: false`. |
+
+#### Resolving questions from an agent
+
+`source:` uses the same dotted-path convention as `for_each` — it must resolve to a list, so it needs at least 3 path segments (e.g. `architect.output.open_questions`, not the bare `architect.output`). Entries may be plain strings **or** objects:
+
+```yaml
+open_questions: ["Why?", "When?"]                            # each becomes a question
+open_questions: [{question: "Why?", choices: ["A", "B"]}]    # with candidate answers
+```
+
+Question text from `source:` is used **verbatim**, not rendered as a template — `Should this use {{ user.id }}?` is an ordinary question for a developer tool, and rendering it would raise instead of asking the human. Inline `questions:` are author-written and get full Jinja2 rendering on `text`/`hint`, validated at `conductor validate` time.
+
+Because plain strings work, an agent already emitting `open_questions` as an `array of string` needs no changes; adding `choices` later is a backward-compatible upgrade that turns "answer this" into "pick one, or write your own."
+
+#### Output
+
+Stored under the node name:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `answers` | `dict` | `{question_id: answer}`, skipped questions omitted. |
+| `items` | `list` | `{id, question, answer, source, skipped}` in presentation order. `source` is `choice` / `free_text` / `default` / `skipped`. |
+| `transcript` | `string` | Pre-formatted `Q1. ...\nA: ...` block, ready to drop into a following agent's prompt. |
+| `answered_count` / `skipped_count` | `int` | Counts (a `default`-filled skip counts as answered). |
+| `answered_any` | `bool` | True only if at least one question got a real `choice`/`free_text` answer — a run where every question hit its `default` or was skipped is `false`. |
+| `outcome` | `string` | `completed` / `skipped_remaining` / `aborted`. |
+
+```yaml
+routes:
+  - to: finalize
+    when: "{{ ask_questions.output.answered_any }}"
+  - to: $end
+```
+
+#### `--skip-gates`
+
+`--skip-gates` **never selects a suggested answer.** Those come from the upstream agent, so recording one would feed invented input back as though a human had provided it. Questions with a `default` take it; every other question is skipped, and `outcome` is `skipped_remaining`.
+
+#### Restrictions and known gaps
+
+- Cannot be used inside parallel or for-each groups (concurrent prompts would compete for one terminal, the same reason gates are refused). Route to a `questions` step from the group's `routes:` instead.
+- Cannot set `options`, `model`, `provider`, `tools`, `output`, `dialog`, `reasoning`, `input_mapping`, `max_depth`, `timeout_seconds`, `max_session_seconds`, `max_agent_iterations`, `retry`, `interactive_input`, `working_dir`, `command`/`args`/`env`, `duration`, `value`/`values`/`output_type` — no provider is invoked.
+- `abort_route` requires `allow_abort: true`.
+- **Terminal-only**: unlike `human_gate`, there is no dedicated web-dashboard widget yet — the collected output is still visible in the dashboard's generic agent-output panel, just without an interactive question UI there.
+- **No mid-node resume**: a crash mid-question-set restarts the whole node on `conductor resume` (the engine checkpoints between steps, not between questions within one step).
 
 ### Script Steps
 

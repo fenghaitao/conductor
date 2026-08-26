@@ -94,6 +94,19 @@ conductor run examples/design-review.yaml --input requirement="Build a REST API"
 conductor run examples/design-review.yaml --input requirement="Build a REST API" --skip-gates
 ```
 
+### questions.yaml
+
+Ask a human a SET of questions in one workflow step, then use the answers. Demonstrates:
+- `type: questions` resolving from an agent's `output:` (`source:`)
+- Choices with a free-text override, back/skip/skip-all
+- Routing on `answered_any` (did the human engage at all)
+- `--skip-gates`: defaults win, everything else is skipped, nothing hangs
+
+```bash
+conductor run examples/questions.yaml --input topic="rate limiting"
+conductor run examples/questions.yaml --input topic="rate limiting" --skip-gates
+```
+
 ## Explicit Termination
 
 ### terminate.yaml

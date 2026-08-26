@@ -360,6 +360,62 @@ class GateOption(BaseModel):
     """Optional: field name to prompt for text input."""
 
 
+class QuestionDef(BaseModel):
+    """One question inside a ``type: questions`` step.
+
+    Entries under an agent's inline ``questions:`` list are validated with
+    this full model (and get full Jinja2 rendering of ``text``/``hint``).
+    Entries resolved at runtime via ``source:`` may instead be plain strings
+    (each becomes a question with no choices) or dicts with a subset of these
+    keys (``question``/``text`` for the prompt) — see
+    ``executor.questions.normalize_source_question``. Source-derived question
+    text is used verbatim, never Jinja2-rendered — it may itself contain
+    ``{{ }}``-looking content from evidence the model read, and rendering
+    that as a template would raise instead of asking the human.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    """Answer key. Defaults to q1..qN by position. Set explicitly so an
+    upstream question-list edit doesn't renumber (and silently reassign)
+    keys below the edit."""
+
+    text: str
+    """The question itself."""
+
+    hint: str | None = None
+    """Optional clarifying text shown beneath the question."""
+
+    choices: list[str] | None = None
+    """Suggested answers, offered as selectable options."""
+
+    allow_free_text: bool = True
+    """Offer 'write your own' alongside choices."""
+
+    default: str | None = None
+    """Recorded when the question is skipped. Counts as answered."""
+
+    required: bool = False
+    """Blocks *submission* (skip / skip-all), never navigation (back is
+    always allowed). A question with a ``default`` is always skippable,
+    since the default answers it."""
+
+    multiline: bool = True
+    """Whether the free-text path accepts multi-line input. Inert when
+    ``allow_free_text`` is False."""
+
+    @model_validator(mode="after")
+    def validate_answerable(self) -> QuestionDef:
+        """A question with no choices and no free text has no way to be answered."""
+        if not self.choices and not self.allow_free_text:
+            raise ValueError(
+                f"question {self.id or self.text!r} has no 'choices' and "
+                "'allow_free_text: false' — it cannot be answered"
+            )
+        return self
+
+
 class ContextConfig(BaseModel):
     """Configuration for context accumulation behavior."""
 
@@ -572,7 +628,10 @@ class AgentDef(BaseModel):
     """Human-readable description of agent's purpose."""
 
     type: (
-        Literal["agent", "human_gate", "script", "set", "terminate", "wait", "workflow"] | None
+        Literal[
+            "agent", "human_gate", "questions", "script", "set", "terminate", "wait", "workflow"
+        ]
+        | None
     ) = None
     """Agent type. Defaults to 'agent' if not specified."""
 
@@ -628,6 +687,40 @@ class AgentDef(BaseModel):
 
     options: list[GateOption] | None = None
     """Options for human_gate type agents."""
+
+    questions: list[QuestionDef] | None = None
+    """Inline question list for ``type: questions`` steps. Exactly one of
+    ``questions:`` / ``source:`` is required. Fully Jinja2-rendered (text and
+    hint) and validated at load time."""
+
+    source: str | None = None
+    """Dotted-path reference to a runtime array of questions for
+    ``type: questions`` steps, same convention as ``for_each``'s ``source:``
+    (e.g. ``architect.output.open_questions``). Entries may be plain strings
+    (each becomes a question with no choices) or dicts with a ``question``/
+    ``text`` key and optionally ``choices``. Resolved and used verbatim — NOT
+    Jinja2-rendered, since the text may itself contain literal ``{{ }}``
+    content read from evidence. Exactly one of ``questions:`` / ``source:``
+    is required."""
+
+    allow_back: bool | None = None
+    """``type: questions`` only: allow revising the previous answer.
+    Default ``True``. Tri-state so the schema can reject it on other types."""
+
+    allow_skip: bool | None = None
+    """``type: questions`` only: allow skipping one question. Default ``True``."""
+
+    allow_skip_all: bool | None = None
+    """``type: questions`` only: allow skipping every remaining question.
+    Default ``True``."""
+
+    allow_abort: bool | None = None
+    """``type: questions`` only: allow abandoning the node entirely, routing
+    to ``abort_route``. Default ``False``."""
+
+    abort_route: str | None = None
+    """``type: questions`` only: agent name or ``$end`` to route to when the
+    node is aborted. Requires ``allow_abort: true``."""
 
     command: str | None = None
     """Command to execute (required for script type). Supports Jinja2 templating."""
@@ -976,6 +1069,24 @@ class AgentDef(BaseModel):
                         "(only 'terminate' agents support this field)"
                     )
 
+        # Fields exclusive to ``type: questions`` — same "reject everywhere
+        # else" shape as the terminate-exclusive block above.
+        if self.type != "questions":
+            for field_name in (
+                "questions",
+                "source",
+                "allow_back",
+                "allow_skip",
+                "allow_skip_all",
+                "allow_abort",
+                "abort_route",
+            ):
+                if getattr(self, field_name) is not None:
+                    raise ValueError(
+                        f"'{self.type or 'agent'}' agents cannot have '{field_name}' "
+                        "(only 'questions' agents support this field)"
+                    )
+
         if self.output is not None:
             optional_root_fields = [
                 name for name, field_def in self.output.items() if field_def.optional
@@ -1010,6 +1121,46 @@ class AgentDef(BaseModel):
                 raise ValueError(
                     "human_gate agents cannot have 'output_type' (only 'set' agents do)"
                 )
+        elif self.type == "questions":
+            if (self.questions is None) == (self.source is None):
+                raise ValueError("questions agents require exactly one of 'questions' or 'source'")
+            if self.abort_route is not None and not self.allow_abort:
+                raise ValueError(
+                    "questions agents require 'allow_abort: true' to set 'abort_route'"
+                )
+            # No provider is invoked for a questions step; reject every field
+            # that implies one, plus fields exclusive to another step type.
+            for field_name in (
+                "provider",
+                "model",
+                "tools",
+                "system_prompt",
+                "options",
+                "command",
+                "args",
+                "env",
+                "working_dir",
+                "timeout",
+                "duration",
+                "reason",
+                "value",
+                "values",
+                "output_type",
+                "workflow",
+                "input_mapping",
+                "max_depth",
+                "max_session_seconds",
+                "max_agent_iterations",
+                "retry",
+                "dialog",
+                "interactive_input",
+                "reasoning",
+                "timeout_seconds",
+                "output",
+            ):
+                value = getattr(self, field_name)
+                if value:
+                    raise ValueError(f"questions agents cannot have '{field_name}'")
         elif self.type == "script":
             if not self.command:
                 raise ValueError("script agents require 'command'")
