@@ -34,8 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-choice route — `questions` *records*, `human_gate` *routes*.
   `--skip-gates` never selects a suggested `choices` value; only a `default`
   is taken, everything else is skipped. Refused inside parallel/for_each
-  groups (same reason as `human_gate`). See
-  docs/workflow-syntax.md#questions.
+  groups (same reason as `human_gate`). `--web-bg` now also aborts pre-fork
+  for a `questions` step, same as `human_gate` (`_abort_web_bg_if_human_gate`
+  extended to cover both). A recognized-but-currently-disallowed control
+  token (e.g. `:skip` on a required question with no default) re-prompts
+  instead of falling through to be recorded as the literal answer; `:skip-all`
+  is blocked outright when any remaining question is required with no
+  default. See docs/workflow-syntax.md#questions.
 
 ### Fixed
 

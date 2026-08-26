@@ -3195,7 +3195,19 @@ class WorkflowEngine:
                                 agent_type=agent.type,
                             )
 
-                            questions_output = await self._run_questions_step(agent, agent_context)
+                            # Suspend keyboard listener so stdin works normally
+                            # -- same reason human_gate's dispatch does this:
+                            # both the Esc/Ctrl+G listener and Prompt.ask
+                            # read stdin, and without suspending, the
+                            # listener steals keystrokes meant for the
+                            # question prompt on a real terminal.
+                            await self._suspend_listener()
+                            try:
+                                questions_output = await self._run_questions_step(
+                                    agent, agent_context
+                                )
+                            finally:
+                                await self._resume_listener()
                             output_dict = questions_output.to_dict()
                             self.context.store(agent.name, output_dict)
                             self.limits.record_execution(agent.name)

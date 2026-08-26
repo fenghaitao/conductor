@@ -164,14 +164,18 @@ def print_error(error: Exception) -> None:
 
 
 def _abort_web_bg_if_human_gate(workflow_path: Path, *, skip_gates: bool) -> None:
-    """Reject ``--web-bg`` when the workflow has a ``human_gate`` agent.
+    """Reject ``--web-bg`` when the workflow has a ``human_gate`` or ``questions`` step.
 
     Without this check, ``--web-bg`` forks a detached child whose stdin is
     redirected to ``DEVNULL``; ``Prompt.ask`` then raises ``EOFError`` and
     the parent only reports ``"Background process exited immediately"``,
-    which never mentions ``human_gate`` or ``--skip-gates``. Failing fast
-    in the parent process produces a single visible error on the user's
-    terminal. ``--skip-gates`` is a documented escape hatch and is honored.
+    which never mentions the blocking step type or ``--skip-gates``. Failing
+    fast in the parent process produces a single visible error on the user's
+    terminal. ``--skip-gates`` is a documented escape hatch and is honored
+    by both step types.
+
+    ``questions`` steps can't appear inside a ``for_each`` group (rejected
+    at validation time), so unlike ``human_gate`` they need no nested check.
     """
     if skip_gates:
         return
@@ -182,23 +186,30 @@ def _abort_web_bg_if_human_gate(workflow_path: Path, *, skip_gates: bool) -> Non
     except Exception:  # noqa: BLE001 — defer real validation to the loader path
         # If config fails to load, let the normal run path surface the error.
         return
-    has_gate = any(getattr(a, "type", None) == "human_gate" for a in config.agents) or any(
+    has_human_gate = any(getattr(a, "type", None) == "human_gate" for a in config.agents) or any(
         getattr(getattr(fe, "agent", None), "type", None) == "human_gate" for fe in config.for_each
     )
-    if not has_gate:
+    has_questions = any(getattr(a, "type", None) == "questions" for a in config.agents)
+    if not has_human_gate and not has_questions:
         return
+    blocking_types = [
+        name
+        for name, present in (("human_gate", has_human_gate), ("questions", has_questions))
+        if present
+    ]
+    step_list = " or ".join(blocking_types)
     # Emit via plain typer.echo (not typer.BadParameter) so the message renders
     # verbatim — BadParameter is rendered as a Rich panel whose text wrapping
     # can split long flag names like ``--skip-gates`` across border lines in
     # narrow terminals (e.g. CI runners), hiding the remediation hint.
     message = (
-        "Error: --web-bg is incompatible with workflows that contain human_gate "
+        f"Error: --web-bg is incompatible with workflows that contain {step_list} "
         "steps because the detached process has no stdin to prompt on.\n"
         "\n"
         "Options:\n"
         "  1. Use --web (foreground) instead of --web-bg\n"
-        "  2. Add --skip-gates to auto-accept the first option\n"
-        "  3. Remove human_gate steps from the workflow\n"
+        "  2. Add --skip-gates to auto-accept the first option / apply defaults\n"
+        f"  3. Remove {step_list} steps from the workflow\n"
         "  4. Wait for CLI gate-resolution support (planned follow-up)"
     )
     typer.echo(message, err=True)

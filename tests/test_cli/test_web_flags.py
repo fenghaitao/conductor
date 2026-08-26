@@ -492,3 +492,77 @@ output:
         )
         assert "human_gate" in combined
         assert "--skip-gates" in combined
+
+
+_QUESTIONS_WORKFLOW_YAML = """\
+workflow:
+  name: questions-web-bg-guard
+  entry_point: ask
+
+agents:
+  - name: ask
+    type: questions
+    questions:
+      - text: "Continue?"
+    routes:
+      - to: $end
+
+output:
+  result: "done"
+"""
+
+
+@pytest.fixture()
+def questions_workflow_file(tmp_path: Path) -> Path:
+    """Workflow containing a ``questions`` step."""
+    f = tmp_path / "questions.yaml"
+    f.write_text(_QUESTIONS_WORKFLOW_YAML)
+    return f
+
+
+class TestWebBgQuestionsValidation:
+    """``--web-bg`` must abort pre-fork when the workflow has a ``questions`` step.
+
+    Same rationale and same guard (``_abort_web_bg_if_human_gate``) as
+    ``TestWebBgHumanGateValidation`` above -- a detached ``--web-bg`` child
+    has no stdin to prompt on.
+    """
+
+    def test_run_web_bg_with_questions_aborts_before_fork(
+        self, questions_workflow_file: Path
+    ) -> None:
+        with patch("conductor.cli.bg_runner.launch_background") as mock_launch:
+            result = runner.invoke(app, ["run", str(questions_workflow_file), "--web-bg"])
+
+        assert result.exit_code != 0
+        assert not mock_launch.called
+        combined = (
+            (result.output or "")
+            + (result.stderr or "")
+            + (str(result.exception) if result.exception else "")
+        )
+        assert "questions" in combined
+        assert "--skip-gates" in combined
+
+    def test_run_web_bg_with_questions_and_skip_gates_proceeds(
+        self, questions_workflow_file: Path
+    ) -> None:
+        """``--skip-gates`` removes the incompatibility; fork proceeds."""
+        from pathlib import Path as _Path
+
+        from conductor.cli.bg_runner import BackgroundLaunch
+
+        with patch("conductor.cli.bg_runner.launch_background") as mock_launch:
+            mock_launch.return_value = BackgroundLaunch(
+                url="http://127.0.0.1:9999",
+                stderr_log=_Path("/tmp/conductor-test-deadbeef.bg.stderr.log"),
+                stdout_log=_Path("/tmp/conductor-test-deadbeef.bg.stdout.log"),
+                run_id="deadbeef",
+            )
+
+            result = runner.invoke(
+                app, ["run", str(questions_workflow_file), "--web-bg", "--skip-gates"]
+            )
+
+        assert result.exit_code == 0
+        assert mock_launch.called

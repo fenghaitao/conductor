@@ -193,13 +193,14 @@ class TestQuestionsExecutorInteractive:
         assert out.answers == {"q1": "second", "q2": "ok"}
 
     @pytest.mark.asyncio
-    async def test_back_at_first_question_is_noop(self) -> None:
-        """allow_back only applies once idx > 0; at q1 the flag is forced False,
-        so a stray ':back' is treated as an ordinary (if odd) free-text answer."""
+    async def test_back_disallowed_at_first_question_reprompts(self) -> None:
+        """allow_back only applies once idx > 0; at q1 the flag is forced
+        False. ':back' must be rejected and re-prompted -- NEVER recorded as
+        the literal answer, which would corrupt the reviewer's real answer."""
         questions = [ResolvedQuestion(id="q1", text="a", multiline=False)]
-        ex = _executor([":back"])
+        ex = _executor([":back", "real answer"])
         out = await ex.execute(questions, allow_back=True)
-        assert out.answers == {"q1": ":back"}
+        assert out.answers == {"q1": "real answer"}
 
     @pytest.mark.asyncio
     async def test_abort(self) -> None:
@@ -214,15 +215,40 @@ class TestQuestionsExecutorInteractive:
 
     @pytest.mark.asyncio
     async def test_required_question_cannot_skip_without_default(self) -> None:
-        """allow_skip is computed by the caller (engine); this test simulates
-        the engine passing allow_skip=False for a required, default-less question."""
+        """allow_skip is computed by the caller (engine): passing
+        allow_skip=False simulates a required, default-less question.
+        ':skip' must be rejected and re-prompted, never recorded as the
+        literal answer."""
         questions = [ResolvedQuestion(id="q1", text="a", required=True, multiline=False)]
         ex = _executor([":skip", "answered anyway"])
         out = await ex.execute(questions, allow_skip=False)
-        # ':skip' isn't recognized as a control token when allow_skip=False,
-        # so it's treated as free text and rejected only if empty; here it's
-        # accepted as literal text since allow_free_text defaults to True.
-        assert out.answers == {"q1": ":skip"}
+        assert out.answers == {"q1": "answered anyway"}
+
+    @pytest.mark.asyncio
+    async def test_skip_all_blocked_when_a_remaining_question_is_required(self) -> None:
+        """One ':skip-all' must not bypass a later required question's own
+        guard -- the exact bug upstream's questions-node review caught."""
+        questions = [
+            ResolvedQuestion(id="q1", text="a", multiline=False),
+            ResolvedQuestion(id="q2", text="b", required=True, multiline=False),
+        ]
+        ex = _executor([":skip-all", "answer1", "answer2"])
+        out = await ex.execute(questions, allow_skip=True, allow_skip_all=True)
+        # skip-all is rejected at q1 (q2 is required with no default), so
+        # both questions are answered normally instead.
+        assert out.answers == {"q1": "answer1", "q2": "answer2"}
+        assert out.outcome == "completed"
+
+    @pytest.mark.asyncio
+    async def test_skip_all_allowed_once_no_remaining_required_question(self) -> None:
+        questions = [
+            ResolvedQuestion(id="q1", text="a", multiline=False),
+            ResolvedQuestion(id="q2", text="b", required=True, default="d", multiline=False),
+        ]
+        ex = _executor([":skip-all"])
+        out = await ex.execute(questions, allow_skip_all=True)
+        assert out.answers == {"q2": "d"}
+        assert out.outcome == "skipped_remaining"
 
     @pytest.mark.asyncio
     async def test_multiline_free_text_joins_lines(self) -> None:

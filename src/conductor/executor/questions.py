@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
@@ -275,13 +275,21 @@ class QuestionsExecutor:
         idx = 0
         while idx < len(questions):
             q = questions[idx]
+            # skip_all is blocked outright when ANY remaining question is
+            # required with no default -- computed fresh every question
+            # since "remaining" shrinks as idx advances. Without this, one
+            # ':skip-all' bypasses every required question's own guard, the
+            # exact bug upstream's questions-node review caught.
+            skip_all_ok = allow_skip_all and not any(
+                later.required and later.default is None for later in questions[idx:]
+            )
             action, value = await self._ask_one(
                 q,
                 idx,
                 len(questions),
                 allow_back=allow_back and idx > 0,
                 allow_skip=allow_skip and (not q.required or q.default is not None),
-                allow_skip_all=allow_skip_all,
+                allow_skip_all=skip_all_ok,
                 allow_abort=allow_abort,
             )
 
@@ -417,9 +425,11 @@ class QuestionsExecutor:
         while True:
             if q.multiline and not q.choices and q.allow_free_text:
                 first_line = await self._read_line("> ")
-                control = self._match_control(
+                control = self._check_control(
                     first_line, allow_back, allow_skip, allow_skip_all, allow_abort
                 )
+                if control == "disallowed":
+                    continue
                 if control is not None:
                     return control, None
                 if not first_line:
@@ -435,7 +445,9 @@ class QuestionsExecutor:
                 return "answer", "\n".join(lines)
 
             raw = await self._read_line("> ")
-            control = self._match_control(raw, allow_back, allow_skip, allow_skip_all, allow_abort)
+            control = self._check_control(raw, allow_back, allow_skip, allow_skip_all, allow_abort)
+            if control == "disallowed":
+                continue
             if control is not None:
                 return control, None
 
@@ -461,24 +473,41 @@ class QuestionsExecutor:
 
             return "answer", raw
 
-    @staticmethod
-    def _match_control(
+    def _check_control(
+        self,
         raw: str,
         allow_back: bool,
         allow_skip: bool,
         allow_skip_all: bool,
         allow_abort: bool,
-    ) -> Literal["back", "skip", "skip_all", "abort"] | None:
+    ) -> Literal["back", "skip", "skip_all", "abort", "disallowed"] | None:
+        """Recognize a control token and check whether it's currently allowed.
+
+        Recognition and permission are deliberately separate: returning
+        ``None`` for a disallowed-but-recognized token would fall straight
+        through to the free-text branch, silently recording the literal
+        control string (e.g. ``":skip"``) as the answer -- worse than a
+        typo, since it looks like a real answer downstream. A recognized,
+        disallowed token always returns ``"disallowed"`` (after printing
+        why) so the caller re-prompts instead of falling through.
+
+        Returns ``None`` only when ``raw`` isn't a control token at all.
+        """
         token = raw.strip().lower()
-        if token == _BACK and allow_back:
-            return "back"
-        if token == _SKIP and allow_skip:
-            return "skip"
-        if token == _SKIP_ALL and allow_skip_all:
-            return "skip_all"
-        if token == _ABORT and allow_abort:
-            return "abort"
-        return None
+        control_map: dict[str, tuple[str, bool]] = {
+            _BACK: ("back", allow_back),
+            _SKIP: ("skip", allow_skip),
+            _SKIP_ALL: ("skip_all", allow_skip_all),
+            _ABORT: ("abort", allow_abort),
+        }
+        match = control_map.get(token)
+        if match is None:
+            return None
+        action, allowed = match
+        if allowed:
+            return cast(Literal["back", "skip", "skip_all", "abort"], action)
+        self.console.print(f"[red]'{token}' isn't available for this question right now.[/red]")
+        return "disallowed"
 
     async def _read_line(self, prompt: str) -> str:
         """Read one line from stdin.
