@@ -33,24 +33,29 @@ workflow:
       description: What to design.
 
 agents:
-  # Emits questions as objects so it can propose candidate answers. A plain
-  # `array of string` works too -- each string becomes a question with no
-  # choices, so an agent that already emits open_questions this way needs no
-  # changes; adding `choices` later is a backward-compatible upgrade.
+  # Emits questions as objects so it can propose candidate answers and a
+  # default. A plain `array of string` works too -- each string becomes a
+  # question with no choices and no default, so an agent that already emits
+  # open_questions this way needs no changes; adding `choices`/`default`
+  # later is a backward-compatible upgrade.
   - name: architect
     model: claude-sonnet-5
     prompt: |
       Design an approach for: {{ workflow.input.topic }}
 
       List up to 4 open questions you need a human to settle. For each,
-      suggest 2-3 candidate answers where you can.
+      suggest 2-3 candidate answers where you can, and name which one is
+      your recommended default -- the value a `:skip` on that question
+      should fall back to instead of leaving it unanswered.
     output:
       summary:
         type: string
         description: Your proposed approach.
       open_questions:
         type: array
-        description: "Objects: {question, choices}."
+        description: "Objects: {question, choices, default}. `default` is one \
+          of `choices` (or omitted if you have no real recommendation) -- it's \
+          what a skipped question resolves to, not just a placeholder."
     routes:
       - to: ask_questions
 
