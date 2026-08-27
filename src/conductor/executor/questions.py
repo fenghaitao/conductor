@@ -37,12 +37,27 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt as _RichPrompt
 
 from conductor.exceptions import ExecutionError
 
 if TYPE_CHECKING:
     from conductor.config.schema import QuestionDef
+
+
+class Prompt(_RichPrompt):
+    """Rich's ``Prompt`` with no decorative ``": "`` suffix.
+
+    Conductor's own control tokens (``:back``, ``:skip``, ...) already own
+    the leading colon. Rich's default ``prompt_suffix = ": "`` would render
+    a second, purely decorative colon right next to them — e.g. ``"> : "`` —
+    which reads as part of the command and led a real user to type ``back``
+    instead of ``:back``, expecting the colon they saw on screen to already
+    be there. Suppressing it removes the ambiguity.
+    """
+
+    prompt_suffix = ""
+
 
 AnswerSource = Literal["choice", "free_text", "default", "skipped"]
 QuestionsOutcome = Literal["completed", "skipped_remaining", "aborted"]
