@@ -53,6 +53,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+codex = [
+    # Drives a local Codex app-server over JSON-RPC. Pulls in the bundled
+    # `codex` binary via openai-codex-cli-bin, pinned to the same version.
+    "openai-codex>=0.147.0",
+]
 claude-agent-sdk = [
     # `strict_mcp_config` (which the provider always sets, so ambient MCP
     # config cannot attach undeclared servers) has existed since 0.1.74, but

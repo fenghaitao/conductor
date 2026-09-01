@@ -19,6 +19,7 @@ from conductor.providers.claude_agent_sdk import (
     CLAUDE_AGENT_SDK_AVAILABLE,
     ClaudeAgentSdkProvider,
 )
+from conductor.providers.codex import CODEX_SDK_AVAILABLE, CodexProvider
 from conductor.providers.context_tier import ContextTier
 from conductor.providers.copilot import CopilotProvider, IdleRecoveryConfig
 from conductor.providers.hermes import HERMES_SDK_AVAILABLE, HermesProvider
@@ -285,11 +286,35 @@ async def create_provider(
                 max_session_seconds=max_session_seconds,
                 tool_output=tool_output,
             )
+        case "codex":
+            if not CODEX_SDK_AVAILABLE:
+                raise ProviderError(
+                    "codex provider requires the openai-codex package",
+                    suggestion=f"Install with: {install_command('codex')}",
+                )
+            # Codex exposes no sampling controls: the app-server owns the
+            # request. Refuse loudly rather than silently dropping either,
+            # matching the claude-agent-sdk arm above.
+            if temperature is not None:
+                raise ProviderError(
+                    f"codex does not support `temperature` (received {temperature!r}).",
+                    suggestion="Remove `runtime.temperature` for workflows that use codex.",
+                )
+            if max_tokens is not None:
+                raise ProviderError(
+                    f"codex does not support `max_tokens` (received {max_tokens!r}).",
+                    suggestion="Remove `runtime.max_tokens` for workflows that use codex.",
+                )
+            provider = CodexProvider(
+                model=default_model,
+                max_session_seconds=max_session_seconds,
+            )
         case _:
             raise ProviderError(
                 f"Unknown provider: {provider_type}",
                 suggestion=(
-                    "Valid providers are: copilot, openai, claude, claude-agent-sdk, hermes, aca"
+                    "Valid providers are: copilot, openai, claude, claude-agent-sdk, hermes, "
+                    "aca, codex"
                 ),
             )
 

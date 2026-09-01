@@ -111,6 +111,13 @@ _CREDENTIAL_SPECS: dict[str, _CredentialSpec] = {
     ),
     "openai": _CredentialSpec(env_vars=("OPENAI_API_KEY",)),
     "hermes": _CredentialSpec(),
+    "codex": _CredentialSpec(
+        env_vars=("OPENAI_API_KEY",),
+        optional_auth_note=(
+            "authenticates via `codex login` (ChatGPT or API key); "
+            "OPENAI_API_KEY is an optional override"
+        ),
+    ),
 }
 
 # Update-check opt-out env var (mirrors cli/update.py so diagnostics does not
@@ -336,6 +343,10 @@ def _sdk_available(name: str) -> bool:
             from conductor.providers.hermes import HERMES_SDK_AVAILABLE
 
             return HERMES_SDK_AVAILABLE
+        if name == "codex":
+            from conductor.providers.codex import CODEX_SDK_AVAILABLE
+
+            return CODEX_SDK_AVAILABLE
     except Exception:  # noqa: BLE001 - diagnostics must never raise
         return False
     return False

@@ -1,0 +1,106 @@
+# Codex provider — letting the model actually run commands
+#
+# The companion to examples/codex-basic.yaml. That one shows structured
+# output; this one shows the part that makes Codex a *runtime* rather than
+# just a model: the agent runs real shell and Python commands, and Conductor
+# reports each one as a tool event.
+#
+# THE KEY LINE IS THE ONE THAT ISN'T HERE. Neither agent declares `tools:`.
+# On the codex provider that is not "no tools" — it is "no restriction", and
+# it is the only valid setting:
+#
+#   tools:            <- omitted. Correct. The sandbox governs access.
+#   tools: [shell]    <- ERROR. Codex has no allowlist to apply it to.
+#   tools: []         <- ERROR too, unlike claude-agent-sdk. Codex cannot run
+#                        with zero tools; `read-only` is a different promise.
+#
+# Access is scoped by Codex's SANDBOX (read-only / workspace-write /
+# full-access), which comes from your Codex configuration. The commands below
+# only read, so they work under any preset.
+#
+# Watch for `shell` tool events in the console output — the tool name and the
+# exact command are both reported, and land in the JSONL event log too.
+#
+# Pre-requisites:
+#   uv sync --extra codex        # or: pip install 'conductor-cli[codex]'
+#   codex login
+#
+# Usage (run from the repo root):
+#   conductor run examples/codex-tools.yaml
+#
+#   conductor run examples/codex-tools.yaml \
+#     --input target="src/conductor/providers"
+#
+# Validation only (no execution / no app-server):
+#   conductor validate examples/codex-tools.yaml
+
+workflow:
+  name: codex-tools
+  description: >
+    An agent that runs real shell and Python commands through Codex's own
+    sandbox, then a second agent that summarises what it found.
+  version: "1.0.0"
+  entry_point: inspect_env
+
+  runtime:
+    provider: codex
+
+  input:
+    target:
+      type: string
+      required: false
+      default: "src/conductor"
+      description: Directory to inspect
+
+agents:
+  - name: inspect_env
+    description: Runs shell and Python commands to inspect the environment
+    # No `tools:` — see the header. The sandbox is the control here.
+    prompt: |
+      Inspect this environment by actually RUNNING commands. Do not guess
+      or answer from memory — run each one and report what it printed.
+
+      1. Print the Python version with:
+         python3 -c "import sys; print(sys.version.split()[0])"
+      2. Count the Python files under {{ workflow.input.target }} with a
+         shell command.
+      3. Print the current working directory.
+
+      Report each command's real output.
+    output:
+      python_version:
+        type: string
+        description: The Python version that was printed
+      file_count:
+        type: number
+        description: How many .py files were counted
+      working_dir:
+        type: string
+        description: The working directory that was printed
+      commands_run:
+        type: string
+        description: The commands that were actually executed
+    routes:
+      - to: summarize
+
+  - name: summarize
+    description: Summarises the inspection in one line
+    prompt: |
+      Summarise this environment inspection in a single sentence.
+
+      Python: {{ inspect_env.output.python_version }}
+      Python files under {{ workflow.input.target }}: {{ inspect_env.output.file_count }}
+      Working directory: {{ inspect_env.output.working_dir }}
+    output:
+      summary:
+        type: string
+        description: One-sentence summary
+    routes:
+      - to: $end
+
+output:
+  python_version: "{{ inspect_env.output.python_version }}"
+  file_count: "{{ inspect_env.output.file_count }}"
+  working_dir: "{{ inspect_env.output.working_dir }}"
+  commands_run: "{{ inspect_env.output.commands_run }}"
+  summary: "{{ summarize.output.summary }}"
