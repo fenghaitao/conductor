@@ -41,6 +41,7 @@ from conductor.providers._recovery_prompt import build_parse_recovery_prompt
 from conductor.providers._schema import SchemaDepthError, build_json_schema_properties
 from conductor.providers.base import AgentOutput, AgentProvider, EventCallback
 from conductor.providers.capabilities import ProviderCapabilities
+from conductor.providers.reasoning import ReasoningEffort, resolve_reasoning_effort
 
 if TYPE_CHECKING:
     from conductor.config.schema import AgentDef, OutputField
@@ -76,6 +77,16 @@ _SESSION_ID_PREFIX: Final[str] = "codex:"
 The engine merges every active provider's map into one field, and our keys
 are agent names that genuinely collide with Copilot's — so ours are
 prefixed, exactly as ``claude-agent-sdk`` namespaces its own.
+"""
+
+_DEFAULT_REASONING_EFFORT: Final[str] = "high"
+"""Effort used when neither the agent nor the workflow names one.
+
+Deliberately not Codex's own default. ``gpt-5.6-sol`` defaults to ``low``,
+which suits an interactive session where a human reacts to a shallow answer;
+a workflow step has no such reader, and its output is usually consumed by a
+route or a downstream agent that cannot tell an under-reasoned answer from a
+considered one.
 """
 
 # Codex's ``ReasoningEffort`` enum names none/minimal/low/medium/high/xhigh,
@@ -261,6 +272,7 @@ class CodexProvider(AgentProvider):
         max_session_seconds: float | None = None,
         sandbox: str | None = None,
         approval_mode: str | None = None,
+        default_reasoning_effort: ReasoningEffort | None = None,
         **_ignored: Any,
     ) -> None:
         """Construct the provider.
@@ -275,6 +287,9 @@ class CodexProvider(AgentProvider):
             approval_mode: ``deny_all`` or ``auto_review``. Defaults to
                 ``deny_all`` -- an unattended workflow has nobody to answer
                 an approval prompt, so requesting review would hang.
+            default_reasoning_effort: Workflow-wide ``reasoning.effort``
+                default, from ``runtime.default_reasoning_effort``. Falls
+                back to :data:`_DEFAULT_REASONING_EFFORT`.
             **_ignored: Runtime fields other providers accept that Codex has
                 no equivalent for (e.g. ``temperature``). Swallowed so the
                 factory can pass a uniform kwarg set.
@@ -292,6 +307,7 @@ class CodexProvider(AgentProvider):
 
         self._model = model
         self._max_session_seconds = max_session_seconds
+        self._default_reasoning_effort = default_reasoning_effort
         self._sandbox = self._coerce_sandbox(sandbox)
         self._approval_mode = self._coerce_approval_mode(approval_mode)
 
@@ -442,6 +458,14 @@ class CodexProvider(AgentProvider):
     def _resolve_effort(self, agent: AgentDef) -> str | None:
         """Translate Conductor's reasoning effort to Codex's enum value.
 
+        Precedence is per-agent ``reasoning.effort``, then the workflow's
+        ``runtime.default_reasoning_effort``, then this provider's own
+        :data:`_DEFAULT_REASONING_EFFORT`. The last rung is why this returns
+        a value where the other providers return ``None``: sending nothing
+        lets Codex apply the *model's* default, which is ``low`` on
+        ``gpt-5.6-sol`` and too shallow for the multi-step work a workflow
+        step usually is.
+
         Raises:
             ValidationError: If the effort is not one Conductor defines.
                 Checked here as well as statically because ``conductor run``
@@ -449,10 +473,9 @@ class CodexProvider(AgentProvider):
                 effort that only resolves after Jinja rendering is invisible
                 until now.
         """
-        reasoning = getattr(agent, "reasoning", None)
-        effort = getattr(reasoning, "effort", None) if reasoning else None
+        effort = resolve_reasoning_effort(agent, self._default_reasoning_effort)
         if effort is None:
-            return None
+            effort = _DEFAULT_REASONING_EFFORT
         mapped = _EFFORT_MAP.get(str(effort))
         if mapped is None:
             raise ValidationError(

@@ -308,6 +308,7 @@ async def create_provider(
             provider = CodexProvider(
                 model=default_model,
                 max_session_seconds=max_session_seconds,
+                default_reasoning_effort=default_reasoning_effort,
             )
         case _:
             raise ProviderError(

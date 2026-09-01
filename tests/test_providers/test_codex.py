@@ -301,6 +301,30 @@ class TestReasoningEffort:
             await _run(provider, agent)
         assert "turbo" in str(exc.value)
 
+    async def test_defaults_to_high_when_nothing_declared(self, sdk_stub: None) -> None:
+        """Codex's own model default is `low`, which is too shallow here."""
+        provider = CodexProvider()
+        thread = _Thread(["ok"])
+        provider._client = _Client(thread)
+        agent = _agent()
+        assert agent.reasoning is None
+        await _run(provider, agent)
+        assert thread.turn_kwargs[0]["effort"] == "high"
+
+    async def test_workflow_default_beats_provider_default(self, sdk_stub: None) -> None:
+        provider = CodexProvider(default_reasoning_effort="low")
+        thread = _Thread(["ok"])
+        provider._client = _Client(thread)
+        await _run(provider, _agent())
+        assert thread.turn_kwargs[0]["effort"] == "low"
+
+    async def test_agent_effort_beats_both_defaults(self, sdk_stub: None) -> None:
+        provider = CodexProvider(default_reasoning_effort="low")
+        thread = _Thread(["ok"])
+        provider._client = _Client(thread)
+        await _run(provider, _agent(reasoning={"effort": "medium"}))
+        assert thread.turn_kwargs[0]["effort"] == "medium"
+
     async def test_xhigh_forwarded(self, sdk_stub: None) -> None:
         provider = CodexProvider()
         thread = _Thread(["ok"])
