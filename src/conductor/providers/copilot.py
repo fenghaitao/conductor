@@ -29,6 +29,8 @@ from conductor.providers.capabilities import ProviderCapabilities
 from conductor.providers.reasoning import ReasoningEffort, resolve_reasoning_effort
 
 if TYPE_CHECKING:
+    from copilot.session import PermissionInvocation
+
     from conductor.config.schema import AgentDef, OutputField, ProviderSettings
 
 logger = logging.getLogger(__name__)
@@ -376,7 +378,7 @@ class CopilotProvider(AgentProvider):
     @staticmethod
     def _default_permission_handler(
         request: Any,
-        invocation: dict[str, str],
+        invocation: PermissionInvocation,
     ) -> Any:
         """Default permission handler that approves all requests.
 
@@ -875,6 +877,11 @@ class CopilotProvider(AgentProvider):
                 "working_directory": os.getcwd(),
                 "streaming": True,
             }
+            if agent.excluded_tools:
+                # Copilot's SDK-level filter covers its built-in catalog too.
+                # In particular, excluding ``task`` prevents an agent from
+                # launching an independently-modelled nested reviewer.
+                session_kwargs["excluded_tools"] = list(agent.excluded_tools)
 
             # Note: Copilot SDK >=0.2.0 does not support temperature as a
             # session parameter. If a temperature was configured, log a warning
@@ -930,10 +937,12 @@ class CopilotProvider(AgentProvider):
             resume_sid = self._resume_session_ids.get(agent.name)
             if resume_sid is not None:
                 try:
-                    session = await self._client.resume_session(
-                        resume_sid,
-                        on_permission_request=self._default_permission_handler,
-                    )
+                    resume_kwargs: dict[str, Any] = {
+                        "on_permission_request": self._default_permission_handler,
+                    }
+                    if agent.excluded_tools:
+                        resume_kwargs["excluded_tools"] = list(agent.excluded_tools)
+                    session = await self._client.resume_session(resume_sid, **resume_kwargs)
                     logger.info(f"Resumed Copilot session {resume_sid} for agent '{agent.name}'")
                 except Exception as exc:
                     logger.warning(

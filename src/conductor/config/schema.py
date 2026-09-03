@@ -594,7 +594,8 @@ class AgentDef(BaseModel):
     discriminates between them:
 
     - ``agent`` (default): LLM-backed agent. Requires ``prompt``; supports
-      ``model``, ``provider``, ``tools``, ``output``, ``reasoning``, ``retry``,
+      ``model``, ``provider``, ``tools``, ``excluded_tools``, ``output``,
+      ``reasoning``, ``retry``,
       ``dialog``, and ``timeout_seconds``.
     - ``human_gate``: Pause for user decision. Requires ``prompt`` and
       ``options``.
@@ -672,6 +673,16 @@ class AgentDef(BaseModel):
 
     tools: list[str] | None = None
     """Tools available to this agent. None = all, [] = none."""
+
+    excluded_tools: list[str] = Field(default_factory=list)
+    """Copilot tool names to remove from this agent's SDK session.
+
+    This filter applies to the complete Copilot tool catalog, including
+    built-in tools such as ``task`` as well as MCP and custom tools. It is
+    forwarded to both newly-created and resumed Copilot sessions. Other
+    providers currently ignore it because they do not expose Copilot's
+    built-in tool catalog.
+    """
 
     system_prompt: str | None = None
     """System message for the agent (always included)."""
@@ -1052,6 +1063,12 @@ class AgentDef(BaseModel):
     @model_validator(mode="after")
     def validate_agent_type(self) -> AgentDef:
         """Ensure agent has required fields for its type."""
+        if self.type not in (None, "agent") and self.excluded_tools:
+            raise ValueError(
+                f"'{self.type}' agents cannot have 'excluded_tools' "
+                "(only provider-backed agents support this field)"
+            )
+
         # Fields exclusive to ``type: terminate`` — reject if set on any
         # other type. This is enforced before the per-type branches so the
         # error message clearly names the conflict.

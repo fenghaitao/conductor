@@ -1671,6 +1671,11 @@ class TestTerminateAgent:
             AgentDef(name="x", type="terminate", status="success", reason="r", tools=["foo"])
         assert "tools" in str(exc_info.value).lower()
 
+    def test_excluded_tools_rejected_on_non_agent_step(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            AgentDef(name="x", type="script", command="echo", excluded_tools=["task"])
+        assert "excluded_tools" in str(exc_info.value)
+
     def test_output_rejected_on_terminate(self) -> None:
         """`output:` is for agent schemas; terminate uses `output_template:` instead."""
         with pytest.raises(ValidationError) as exc_info:

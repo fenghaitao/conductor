@@ -97,6 +97,9 @@ agents:
     tools:                          # Optional: Agent-specific tools
       - tool_name
 
+    excluded_tools:                 # Optional, Copilot: remove SDK tools
+      - task                         # Includes built-in tools
+
     reasoning:                      # Optional: per-agent reasoning override
       effort: high                  # low | medium | high | xhigh
                                     # Overrides runtime.default_reasoning_effort.
@@ -1129,6 +1132,20 @@ agents:
 ```
 
 **Note**: Tool implementation depends on your provider. See provider documentation for available tools.
+
+For Copilot sessions, `excluded_tools` removes names from the complete SDK
+tool catalog, including built-in tools. This is useful when orchestration must
+remain in the workflow rather than being delegated by the model:
+
+```yaml
+agents:
+  - name: bounded_fixer
+    excluded_tools:
+      - task
+    prompt: "Apply the supplied findings directly."
+```
+
+The exclusion is applied when creating or resuming the agent's session.
 
 ### MCP Servers
 

@@ -18,9 +18,14 @@ from conductor.config.schema import AgentDef
 from conductor.providers.copilot import CopilotProvider
 
 
-def _make_agent(name: str = "test_agent") -> AgentDef:
+def _make_agent(name: str = "test_agent", *, excluded_tools: list[str] | None = None) -> AgentDef:
     """Create a minimal AgentDef for testing."""
-    return AgentDef(name=name, model="gpt-4o", prompt="Test prompt")
+    return AgentDef(
+        name=name,
+        model="gpt-4o",
+        prompt="Test prompt",
+        excluded_tools=excluded_tools or [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +158,7 @@ class TestSessionResumeFallback:
         provider._started = True
         provider.set_resume_session_ids({"researcher": resumed_sid})
 
-        agent = _make_agent("researcher")
+        agent = _make_agent("researcher", excluded_tools=["task"])
 
         with (
             patch("conductor.cli.app.is_verbose", return_value=False),
@@ -164,6 +169,7 @@ class TestSessionResumeFallback:
         mock_client.resume_session.assert_called_once_with(
             resumed_sid,
             on_permission_request=CopilotProvider._default_permission_handler,
+            excluded_tools=["task"],
         )
         mock_client.create_session.assert_not_called()
 

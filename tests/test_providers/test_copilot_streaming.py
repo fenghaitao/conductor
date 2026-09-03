@@ -32,8 +32,13 @@ from conductor.config.schema import AgentDef
 from conductor.providers.copilot import CopilotProvider
 
 
-def _make_agent(name: str = "writer") -> AgentDef:
-    return AgentDef(name=name, model="claude-opus-4.7-1m-internal", prompt="Write a file")
+def _make_agent(name: str = "writer", *, excluded_tools: list[str] | None = None) -> AgentDef:
+    return AgentDef(
+        name=name,
+        model="claude-opus-4.7-1m-internal",
+        prompt="Write a file",
+        excluded_tools=excluded_tools or [],
+    )
 
 
 def _build_mocked_provider() -> tuple[CopilotProvider, AsyncMock]:
@@ -120,3 +125,34 @@ async def test_create_session_preserves_existing_kwargs() -> None:
     assert kwargs.get("model") == "claude-opus-4.7-1m-internal"
     assert "on_permission_request" in kwargs
     assert "working_directory" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_create_session_forwards_agent_tool_exclusions() -> None:
+    """SDK exclusions must cover built-in tools such as ``task``."""
+    provider, mock_client = _build_mocked_provider()
+
+    with (
+        patch("conductor.providers.copilot.CopilotProvider._log_event_verbose"),
+        patch("conductor.cli.app.is_verbose", return_value=False),
+        patch("conductor.cli.app.is_full", return_value=False),
+    ):
+        await provider.execute(_make_agent(excluded_tools=["task"]), {}, "Fix without delegation")
+
+    kwargs = mock_client.create_session.call_args.kwargs
+    assert kwargs["excluded_tools"] == ["task"]
+
+
+@pytest.mark.asyncio
+async def test_create_session_omits_empty_tool_exclusions() -> None:
+    """Keep compatibility with SDK versions when no exclusion is requested."""
+    provider, mock_client = _build_mocked_provider()
+
+    with (
+        patch("conductor.providers.copilot.CopilotProvider._log_event_verbose"),
+        patch("conductor.cli.app.is_verbose", return_value=False),
+        patch("conductor.cli.app.is_full", return_value=False),
+    ):
+        await provider.execute(_make_agent(), {}, "Write a comprehensive document")
+
+    assert "excluded_tools" not in mock_client.create_session.call_args.kwargs
