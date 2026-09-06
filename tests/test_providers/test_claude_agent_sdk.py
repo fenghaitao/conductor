@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from unittest.mock import Mock, patch
 
@@ -969,6 +970,33 @@ class TestMaxSessionSeconds:
 
         assert output.content == {"response": "done"}
 
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_session_id_seen_before_timeout_is_still_tracked(self) -> None:
+        """This is the motivating scenario for checkpoint resume: a session
+        id surfaces, then the wall-clock timeout fires on a later message
+        boundary (raised before ``msg_type`` dispatch, so it never reaches
+        the ResultMessage branch). ``get_session_ids()`` must still have it
+        so a later ``conductor resume`` can reconnect to this exact run."""
+
+        async def slow_query(**kwargs):
+            yield _assistant(
+                content=[TextBlock(text="part1")], session_id="sess-before-timeout-001"
+            )
+            await asyncio.sleep(0.05)
+            yield _assistant(content=[TextBlock(text="part2")])
+
+        with patch("conductor.providers.claude_agent_sdk.query", slow_query):
+            provider = ClaudeAgentSdkProvider(max_session_seconds=0.01)
+            with pytest.raises(ProviderError, match="exceeded maximum session duration"):
+                await provider.execute(
+                    agent=AgentDef(name="slow_agent", prompt="hi"),
+                    context={},
+                    rendered_prompt="hi",
+                )
+
+        assert provider.get_session_ids() == {"slow_agent": "sess-before-timeout-001"}
+
 
 class TestRetryableClassification:
     """is_retryable is derived from error context, not hardcoded False (#241 / A9).
@@ -1684,3 +1712,141 @@ class TestSessionId:
             )
 
         assert output.session_id == "sess-authoritative-004"
+
+
+class TestSessionResume:
+    """``get_session_ids()`` / ``set_resume_session_ids()`` — the checkpoint
+    resume contract mirrored from the Copilot provider (see
+    ``test_copilot_resume.py``). Unlike Copilot, the SDK has no separable
+    resume-vs-create call: ``resume`` is passed straight through to
+    ``ClaudeAgentOptions`` and a stale id surfaces as a ``ProviderError``
+    from ``query()`` rather than falling back to a fresh session."""
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.query", lambda **kwargs: None)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    def test_initial_session_ids_empty(self) -> None:
+        provider = ClaudeAgentSdkProvider()
+        assert provider.get_session_ids() == {}
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.query", lambda **kwargs: None)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    def test_get_session_ids_returns_copy(self) -> None:
+        provider = ClaudeAgentSdkProvider()
+        provider._session_ids["x"] = "y"
+        ids = provider.get_session_ids()
+        ids["z"] = "w"
+        assert "z" not in provider._session_ids
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.query", lambda **kwargs: None)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    def test_set_resume_session_ids(self) -> None:
+        provider = ClaudeAgentSdkProvider()
+        provider.set_resume_session_ids({"agent_a": "sid-1"})
+        assert provider._resume_session_ids == {"agent_a": "sid-1"}
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_session_id_tracked_after_successful_execution(self) -> None:
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="hi")])
+            yield _result(result="hi", session_id="sess-tracked-001")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            await provider.execute(
+                agent=AgentDef(name="researcher", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+            )
+
+        assert provider.get_session_ids() == {"researcher": "sess-tracked-001"}
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_session_id_tracked_even_when_run_fails(self) -> None:
+        """A session id seen before a mid-stream failure must still be
+        recorded — this is what lets a ``max_session_seconds`` timeout (or
+        any other mid-stream ``ProviderError``) be resumed later, since the
+        failure path never reaches the final ``_build_output`` capture."""
+
+        async def fake_query(**kwargs):
+            yield _assistant(
+                content=[TextBlock(text="working")], session_id="sess-before-crash-002"
+            )
+            yield _result(is_error=True, result="boom", session_id="sess-before-crash-002")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            with pytest.raises(ProviderError):
+                await provider.execute(
+                    agent=AgentDef(name="implementer", prompt="hi"),
+                    context={},
+                    rendered_prompt="hi",
+                )
+
+        assert provider.get_session_ids() == {"implementer": "sess-before-crash-002"}
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_resume_id_passed_to_options_when_available(self) -> None:
+        captured_kwargs: dict = {}
+
+        async def fake_query(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield _result(result="hi", session_id="sess-resumed-003")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            provider.set_resume_session_ids({"researcher": "sess-old-003"})
+            await provider.execute(
+                agent=AgentDef(name="researcher", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+            )
+
+        assert captured_kwargs["options"].resume == "sess-old-003"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_no_resume_when_no_stored_id_for_agent(self) -> None:
+        captured_kwargs: dict = {}
+
+        async def fake_query(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield _result(result="hi")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            provider.set_resume_session_ids({"other_agent": "sess-old-004"})
+            await provider.execute(
+                agent=AgentDef(name="researcher", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+            )
+
+        assert captured_kwargs["options"].resume is None
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_warns_when_session_id_never_captured(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def fake_query(**kwargs):
+            yield _assistant(content=[TextBlock(text="no session id on this message")])
+
+        with (
+            caplog.at_level(logging.WARNING, logger="conductor.providers.claude_agent_sdk"),
+            patch("conductor.providers.claude_agent_sdk.query", fake_query),
+        ):
+            provider = ClaudeAgentSdkProvider()
+            await provider.execute(
+                agent=AgentDef(name="researcher", prompt="hi"),
+                context={},
+                rendered_prompt="hi",
+            )
+
+        assert any("never surfaced a session id" in r.message for r in caplog.records)
+        assert "researcher" not in provider.get_session_ids()

@@ -159,16 +159,27 @@ class ClaudeAgentSdkProvider(AgentProvider):
         # ``max_session_seconds`` is enforced between messages via
         # ``time.monotonic()``.
         max_session_seconds=True,
-        # The SDK manages its own session state inside the ``claude`` CLI;
-        # Conductor does not persist or replay it through resume.
-        checkpoint_resume=False,
+        # The SDK's ``resume`` option reconnects ``query()`` to a prior
+        # session's conversation history. Conductor captures the session id
+        # opportunistically (see ``execute()``) and replays it via
+        # ``set_resume_session_ids()`` on ``conductor resume``. Unlike the
+        # Copilot provider, there is no graceful fallback if the stored id
+        # is stale/expired — ``query()`` is a single call, not a separable
+        # resume-then-create step, so a failed resume surfaces as a
+        # ``ProviderError`` rather than silently starting fresh.
+        checkpoint_resume=True,
         # Token counts come from ``ResultMessage.usage`` (cumulative
         # session total — see A4 fix).
         usage_tracking=True,
         # No global mutable state shared across calls — the SDK spawns
         # an independent subprocess per query() invocation.
         concurrent_safe=True,
-        upstream_pin="claude-agent-sdk>=0.1.0",
+        # Matches the ``claude-agent-sdk`` optional-dependency floor in
+        # pyproject.toml (uv.lock currently resolves 0.2.87). Confirmed live
+        # against 0.2.87 that ``ClaudeAgentOptions.resume`` (checkpoint_resume,
+        # above) reconnects to a prior conversation's history, not just that
+        # the SDK accepts the kwarg.
+        upstream_pin="claude-agent-sdk>=0.1.64",
         maintainer="@lesandiz (best-effort)",
     )
 
@@ -187,6 +198,36 @@ class ClaudeAgentSdkProvider(AgentProvider):
         self._default_model = model or _DEFAULT_MODEL
         self._default_max_turns = max_turns if max_turns is not None else 50
         self._max_session_seconds = max_session_seconds
+        self._session_ids: dict[str, str] = {}
+        self._resume_session_ids: dict[str, str] = {}
+
+    def get_session_ids(self) -> dict[str, str]:
+        """Get tracked session IDs for all executed agents.
+
+        Returns a copy of the mapping from agent name to Claude Agent SDK
+        session ID, captured opportunistically from the message stream
+        during ``execute()`` (see the capture site in the ``async for``
+        loop). The id is recorded as soon as it is known, so it is present
+        even for a session that later fails (e.g. a ``max_session_seconds``
+        timeout) — this is what lets ``conductor resume`` reconnect to it.
+
+        Returns:
+            Dict mapping agent names to their Claude Agent SDK session IDs.
+        """
+        return self._session_ids.copy()
+
+    def set_resume_session_ids(self, ids: dict[str, str]) -> None:
+        """Set session IDs to attempt resuming on next execution.
+
+        When executing an agent, the provider checks this mapping for a
+        stored session ID and passes it as ``ClaudeAgentOptions.resume``.
+        Unlike the Copilot provider there is no fallback path: if the id is
+        stale, ``query()`` raises and that surfaces as a ``ProviderError``.
+
+        Args:
+            ids: Mapping of agent names to session IDs from a checkpoint.
+        """
+        self._resume_session_ids = dict(ids)
 
     async def execute(
         self,
@@ -230,6 +271,13 @@ class ClaudeAgentSdkProvider(AgentProvider):
 
         sdk_tools, permission_mode = self._resolve_tool_config(tools, agent)
 
+        # ``resume`` is mutually exclusive with ``session_id`` /
+        # ``continue_conversation`` unless ``fork_session`` is also set —
+        # neither is set here, so passing ``resume`` unconditionally
+        # (None when absent) is safe. Revisit this comment if either of
+        # those fields is ever added to the options below.
+        resume_session_id = self._resume_session_ids.get(agent.name)
+
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=agent.system_prompt,
@@ -237,6 +285,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
             max_turns=max_turns,
             permission_mode=permission_mode,
             tools=sdk_tools,
+            resume=resume_session_id,
         )
 
         content_parts: list[str] = []
@@ -281,6 +330,13 @@ class ClaudeAgentSdkProvider(AgentProvider):
                     msg_data = getattr(message, "data", None)
                     if isinstance(msg_data, dict) and msg_data.get("session_id"):
                         session_id = msg_data["session_id"]
+
+                # Record as soon as known (not only on successful return) so
+                # a session that later fails (e.g. a max_session_seconds
+                # timeout raised below) still has its id available to
+                # ``get_session_ids()`` for the failure-path checkpoint.
+                if session_id is not None:
+                    self._session_ids[agent.name] = session_id
 
                 if interrupt_signal is not None and interrupt_signal.is_set():
                     return self._build_output(
@@ -399,17 +455,23 @@ class ClaudeAgentSdkProvider(AgentProvider):
                         )
 
         except ProviderError:
+            self._warn_if_session_id_missing(agent, session_id)
             raise
         except asyncio.CancelledError:
             # Do NOT translate into ProviderError — upstream interrupt
-            # handlers rely on CancelledError to unwind cleanly.
+            # handlers rely on CancelledError to unwind cleanly. No
+            # session-id warning here either: cancellation isn't a
+            # checkpoint-on-failure path.
             raise
         except Exception as e:
+            self._warn_if_session_id_missing(agent, session_id)
             raise ProviderError(
                 f"Claude Agent SDK execution error: {e}",
                 suggestion=_classify_error_suggestion(e),
                 is_retryable=_is_retryable_exception(e),
             ) from e
+
+        self._warn_if_session_id_missing(agent, session_id)
 
         return self._build_output(
             content_parts,
@@ -420,6 +482,23 @@ class ClaudeAgentSdkProvider(AgentProvider):
             total_output_tokens,
             session_id=session_id,
         )
+
+    @staticmethod
+    def _warn_if_session_id_missing(agent: AgentDef, session_id: str | None) -> None:
+        """Log once, on the way out of ``execute()``, if no session id ever
+        surfaced this run — a checkpoint saved after this call has nothing
+        to resume for this agent (see the capture site inside the ``async
+        for`` loop, and ``get_session_ids()``). Not called on the interrupt
+        or ``CancelledError`` exits, since those aren't checkpoint-on-failure
+        paths and calling it there would assert something false about what
+        happens next.
+        """
+        if session_id is None:
+            logger.warning(
+                "Claude Agent SDK never surfaced a session id for agent "
+                "'%s' this run; it will not be resumable via conductor resume.",
+                agent.name,
+            )
 
     async def validate_connection(self) -> bool:
         """Check that the SDK is importable and the ``claude`` CLI is locatable.
