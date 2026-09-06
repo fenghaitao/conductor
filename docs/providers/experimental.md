@@ -97,7 +97,7 @@ adopting one does not inflate the install surface for others.
 
 | Provider | Upstream pin | Maintainer | Capability carve-outs |
 |---|---|---|---|
-| `claude-agent-sdk` | `claude-agent-sdk>=0.1.0` | `@lesandiz (best-effort)` | no `mcp_tools`, no `workflow_tools_passthrough`, no `reasoning_effort`, `prompt_injection` structured output, no `checkpoint_resume` |
+| `claude-agent-sdk` | `claude-agent-sdk>=0.1.64` | `@lesandiz (best-effort)` | no `mcp_tools`, no `workflow_tools_passthrough`, no `reasoning_effort`, `prompt_injection` structured output |
 
 ## See also
 

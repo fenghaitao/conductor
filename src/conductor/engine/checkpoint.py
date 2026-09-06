@@ -98,7 +98,11 @@ class CheckpointData:
         current_agent: Name of the agent that was executing when failure occurred.
         context: Serialized ``WorkflowContext`` state.
         limits: Serialized ``LimitEnforcer`` state.
-        copilot_session_ids: Mapping of agent names to Copilot session IDs.
+        copilot_session_ids: Mapping of agent names to provider session IDs.
+            Despite the name (kept for on-disk back-compat), this is
+            provider-agnostic — any provider whose class implements
+            ``get_session_ids()`` / ``set_resume_session_ids()`` (currently
+            Copilot and the Claude Agent SDK) populates and consumes it.
         file_path: Path where the checkpoint file is stored.
         instructions_preamble: Workspace instructions preamble that was
             active during the original run, or ``None``.
