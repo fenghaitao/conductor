@@ -48,6 +48,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+codex = [
+    # Drives a local Codex app-server over JSON-RPC. Pulls in the bundled
+    # `codex` binary via openai-codex-cli-bin, pinned to the same version.
+    "openai-codex>=0.147.0",
+]
 claude-agent-sdk = [
     "claude-agent-sdk>=0.1.64",
 ]

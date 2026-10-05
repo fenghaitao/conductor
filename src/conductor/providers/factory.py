@@ -16,6 +16,7 @@ from conductor.providers.claude_agent_sdk import (
     ClaudeAgentSdkProvider,
 )
 from conductor.providers.claude_credentials import resolve_auth_token
+from conductor.providers.codex import CODEX_SDK_AVAILABLE, CodexProvider
 from conductor.providers.copilot import CopilotProvider, IdleRecoveryConfig
 from conductor.providers.pydantic_deep import PYDANTIC_DEEP_AVAILABLE, PydanticDeepProvider
 from conductor.providers.reasoning import ReasoningEffort
@@ -32,6 +33,7 @@ async def create_provider(
         "pydantic-deep",
         "claude-agent-sdk",
         "claude-subscription",
+        "codex",
     ] = "copilot",
     validate: bool = True,
     mcp_servers: dict[str, Any] | None = None,
@@ -192,11 +194,35 @@ async def create_provider(
                 max_turns=max_agent_iterations,
                 max_session_seconds=max_session_seconds,
             )
+        case "codex":
+            if not CODEX_SDK_AVAILABLE:
+                raise ProviderError(
+                    "codex provider requires the openai-codex package",
+                    suggestion="Install with: uv add 'openai-codex>=0.147.0'",
+                )
+            # Codex exposes no sampling controls: the app-server owns the
+            # request. Refuse loudly rather than silently dropping either,
+            # matching the claude-agent-sdk arm above.
+            if temperature is not None:
+                raise ProviderError(
+                    f"codex does not support `temperature` (received {temperature!r}).",
+                    suggestion="Remove `runtime.temperature` for workflows that use codex.",
+                )
+            if max_tokens is not None:
+                raise ProviderError(
+                    f"codex does not support `max_tokens` (received {max_tokens!r}).",
+                    suggestion="Remove `runtime.max_tokens` for workflows that use codex.",
+                )
+            provider = CodexProvider(
+                model=default_model,
+                max_session_seconds=max_session_seconds,
+                default_reasoning_effort=default_reasoning_effort,
+            )
         case _:
             raise ProviderError(
                 f"Unknown provider: {provider_type}",
                 suggestion="Valid providers are: copilot, openai-agents, claude, "
-                "claude-subscription, pydantic-deep, claude-agent-sdk",
+                "claude-subscription, pydantic-deep, claude-agent-sdk, codex",
             )
 
     if validate and not await provider.validate_connection():

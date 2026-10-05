@@ -637,7 +637,14 @@ class AgentDef(BaseModel):
     """Agent type. Defaults to 'agent' if not specified."""
 
     provider: (
-        Literal["copilot", "claude", "pydantic-deep", "claude-agent-sdk", "claude-subscription"]
+        Literal[
+            "copilot",
+            "claude",
+            "pydantic-deep",
+            "claude-agent-sdk",
+            "claude-subscription",
+            "codex",
+        ]
         | None
     ) = None
     """Provider override for this agent.
@@ -1606,6 +1613,7 @@ class ProviderSettings(BaseModel):
         "claude-agent-sdk",
         "claude-subscription",
         "pydantic-deep",
+        "codex",
     ] = "copilot"
     """SDK provider to use for agent execution."""
 

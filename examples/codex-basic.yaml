@@ -1,0 +1,100 @@
+# Codex provider — a two-step review workflow
+#
+# Runs agents through a local Codex app-server (the `openai-codex` SDK drives
+# it over JSON-RPC), rather than calling a chat-completions endpoint. Use this
+# provider when you want Codex's own agentic loop — its tools, its sandbox —
+# rather than just its model. For the model alone, use `provider: openai`.
+#
+# Two things behave differently from other providers, and this example is
+# shaped to show both:
+#
+#   1. NO `tools:` ALLOWLIST. Codex scopes tool access by SANDBOX, not by an
+#      enumerated list, so neither agent declares `tools:` — doing so is an
+#      error, including `tools: []`. The sandbox is the control.
+#   2. STRUCTURED OUTPUT IS CONSTRAINED, NOT GUARANTEED. Codex takes the
+#      `output:` schema as a real constraint on the final message, but makes
+#      no strictness promise, so Conductor still parses, validates and
+#      re-prompts once if the shape is wrong. You may see an
+#      `agent_parse_recovery` event; that is the loop working, not a failure.
+#
+# Pre-requisites:
+#   uv sync --extra codex        # or: pip install 'conductor-cli[codex]'
+#   codex login                  # ChatGPT or API-key sign-in
+#
+# Usage (run from the repo root):
+#   conductor run examples/codex-basic.yaml \
+#     --input topic="the parse-recovery loop in src/conductor/providers/codex.py"
+#
+# Validation only (no execution / no API calls / no app-server):
+#   conductor validate examples/codex-basic.yaml
+
+workflow:
+  name: codex-basic
+  description: >
+    Ask Codex to explain a topic, then have a second agent grade the
+    explanation — demonstrating structured output and routing on the
+    codex provider.
+  version: "1.0.0"
+  entry_point: explain
+
+  runtime:
+    provider: codex
+    # Codex exposes no temperature or max_tokens: the app-server owns the
+    # request, and Conductor refuses both rather than dropping them silently.
+
+  input:
+    topic:
+      type: string
+      required: true
+      description: What to explain
+
+agents:
+  - name: explain
+    description: Explains the requested topic
+    prompt: |
+      Explain the following clearly and concisely, for a working engineer:
+
+      {{ workflow.input.topic }}
+
+      Keep it under 200 words. Do not pad with preamble.
+    output:
+      explanation:
+        type: string
+        description: The explanation
+      assumptions:
+        type: string
+        description: Anything you had to assume to answer
+    routes:
+      - to: grade
+
+  - name: grade
+    description: Grades the explanation and decides whether it passes
+    prompt: |
+      Grade this explanation for accuracy and concision.
+
+      Explanation:
+      {{ explain.output.explanation }}
+
+      Stated assumptions:
+      {{ explain.output.assumptions }}
+
+      Score it 0-10 and say plainly whether it is good enough to ship.
+    output:
+      score:
+        type: number
+        description: Quality score from 0 to 10
+      verdict:
+        type: string
+        description: One of "ship" or "revise"
+      reasoning:
+        type: string
+        description: Why that score
+    routes:
+      - to: $end
+
+output:
+  topic: "{{ workflow.input.topic }}"
+  explanation: "{{ explain.output.explanation }}"
+  score: "{{ grade.output.score }}"
+  verdict: "{{ grade.output.verdict }}"
+  reasoning: "{{ grade.output.reasoning }}"

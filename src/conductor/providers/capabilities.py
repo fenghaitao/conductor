@@ -206,6 +206,7 @@ _PROVIDER_CLASS_PATHS: Final[dict[str, str]] = {
     "claude-agent-sdk": "conductor.providers.claude_agent_sdk:ClaudeAgentSdkProvider",
     "claude-subscription": "conductor.providers.claude:ClaudeProvider",
     "pydantic-deep": "conductor.providers.pydantic_deep:PydanticDeepProvider",
+    "codex": "conductor.providers.codex:CodexProvider",
 }
 
 # Provider names that appear in the schema / factory but are not yet

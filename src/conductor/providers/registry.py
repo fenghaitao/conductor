@@ -22,6 +22,7 @@ ProviderType = Literal[
     "pydantic-deep",
     "claude-agent-sdk",
     "claude-subscription",
+    "codex",
 ]
 
 

@@ -1,0 +1,222 @@
+"""Shared, provider-neutral output-schema builders.
+
+This private module contains the core logic for turning
+:class:`~conductor.config.schema.OutputField` definitions into
+JSON-Schema fragments and prompt-facing schema fragments. Each provider
+wraps these helpers with its own error type and message formatting.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from conductor.config.schema import OutputField
+
+
+class SchemaDepthError(Exception):
+    """Raised when output schema nesting exceeds the configured maximum depth."""
+
+    def __init__(self, depth: int, max_depth: int) -> None:
+        """Initialize with the depth that was exceeded.
+
+        Args:
+            depth: The current nesting depth that triggered the limit.
+            max_depth: The maximum allowed nesting depth.
+        """
+        super().__init__(f"Schema nesting depth {depth} exceeds maximum of {max_depth} levels")
+        self.depth = depth
+        self.max_depth = max_depth
+
+
+def _check_depth(depth: int, max_depth: int) -> None:
+    """Raise :class:`SchemaDepthError` if ``depth > max_depth``.
+
+    Args:
+        depth: Current nesting depth.
+        max_depth: Maximum allowed nesting depth.
+
+    Raises:
+        SchemaDepthError: When the depth limit is exceeded.
+    """
+    if depth > max_depth:
+        raise SchemaDepthError(depth, max_depth)
+
+
+def build_json_schema_field(
+    field: OutputField, *, depth: int = 0, max_depth: int = 10
+) -> dict[str, Any]:
+    """Build a JSON-Schema fragment for a single ``OutputField``.
+
+    The fragment contains ``type`` and optionally ``description``,
+    ``properties`` + ``required`` (for objects), or ``items`` (for arrays).
+
+    Args:
+        field: The output field definition.
+        depth: Current nesting depth.
+        max_depth: Maximum allowed nesting depth.
+
+    Returns:
+        A JSON-Schema fragment dictionary.
+
+    Raises:
+        SchemaDepthError: When the depth limit is exceeded.
+    """
+    _check_depth(depth, max_depth)
+
+    schema: dict[str, Any] = {"type": field.type}
+
+    if field.nullable:
+        schema["type"] = [field.type, "null"]
+
+    if field.description:
+        schema["description"] = field.description
+
+    if field.enum is not None:
+        # YAML `enum` cannot contain null (schema.py rejects it); append None
+        # here so the generated schema is honest when type is ["string", "null"].
+        schema["enum"] = [*field.enum, None] if field.nullable else field.enum
+
+    if field.type == "string":
+        if field.pattern is not None:
+            schema["pattern"] = field.pattern
+        if field.min_length is not None:
+            schema["minLength"] = field.min_length
+        if field.max_length is not None:
+            schema["maxLength"] = field.max_length
+    elif field.type == "number":
+        if field.minimum is not None:
+            schema["minimum"] = field.minimum
+        if field.maximum is not None:
+            schema["maximum"] = field.maximum
+
+    if field.type == "object" and field.properties:
+        schema["properties"] = build_json_schema_properties(
+            field.properties, depth=depth + 1, max_depth=max_depth
+        )
+        required = [name for name, prop in field.properties.items() if not prop.optional]
+        if required:
+            schema["required"] = required
+
+    if field.type == "array" and field.items:
+        schema["items"] = build_json_schema_field(field.items, depth=depth + 1, max_depth=max_depth)
+
+    return schema
+
+
+def build_json_schema_properties(
+    fields: dict[str, OutputField], *, depth: int = 0, max_depth: int = 10
+) -> dict[str, Any]:
+    """Build a JSON-Schema ``properties`` mapping from named ``OutputField`` definitions.
+
+    Args:
+        fields: Mapping from field name to output field definition.
+        depth: Current nesting depth.
+        max_depth: Maximum allowed nesting depth.
+
+    Returns:
+        A JSON-Schema ``properties`` object.
+
+    Raises:
+        SchemaDepthError: When the depth limit is exceeded.
+    """
+    _check_depth(depth, max_depth)
+
+    return {
+        name: build_json_schema_field(field, depth=depth, max_depth=max_depth)
+        for name, field in fields.items()
+    }
+
+
+def build_prompt_schema_field(
+    field: OutputField,
+    *,
+    depth: int = 0,
+    max_depth: int = 10,
+) -> dict[str, Any]:
+    """Build a prompt-facing schema fragment for a single ``OutputField``.
+
+    The fragment contains ``type`` and optionally ``description``,
+    ``properties`` + ``required`` (for objects), or ``items`` (for arrays).
+
+    Args:
+        field: The output field definition.
+        depth: Current nesting depth.
+        max_depth: Maximum allowed nesting depth.
+
+    Returns:
+        A prompt-facing schema fragment dictionary.
+
+    Raises:
+        SchemaDepthError: When the depth limit is exceeded.
+    """
+    _check_depth(depth, max_depth)
+
+    schema: dict[str, Any] = {"type": field.type}
+    if field.nullable:
+        schema["type"] = [field.type, "null"]
+
+    description = field.description
+    if description and field.optional:
+        description += " (optional)"
+    if description:
+        schema["description"] = description
+
+    if field.enum is not None:
+        # YAML `enum` cannot contain null (schema.py rejects it); append None
+        # here so the generated schema is honest when type is ["string", "null"].
+        schema["enum"] = [*field.enum, None] if field.nullable else field.enum
+
+    if field.type == "string":
+        if field.pattern is not None:
+            schema["pattern"] = field.pattern
+        if field.min_length is not None:
+            schema["minLength"] = field.min_length
+        if field.max_length is not None:
+            schema["maxLength"] = field.max_length
+    elif field.type == "number":
+        if field.minimum is not None:
+            schema["minimum"] = field.minimum
+        if field.maximum is not None:
+            schema["maximum"] = field.maximum
+
+    if field.type == "object" and field.properties:
+        schema["properties"] = build_prompt_schema_properties(
+            field.properties, depth=depth + 1, max_depth=max_depth
+        )
+        required = [name for name, prop in field.properties.items() if not prop.optional]
+        if required:
+            schema["required"] = required
+
+    if field.type == "array" and field.items:
+        schema["items"] = build_prompt_schema_field(
+            field.items, depth=depth + 1, max_depth=max_depth
+        )
+
+    return schema
+
+
+def build_prompt_schema_properties(
+    fields: dict[str, OutputField],
+    *,
+    depth: int = 0,
+    max_depth: int = 10,
+) -> dict[str, Any]:
+    """Build a prompt-facing schema mapping from named ``OutputField`` definitions.
+
+    Args:
+        fields: Mapping from field name to output field definition.
+        depth: Current nesting depth.
+        max_depth: Maximum allowed nesting depth.
+
+    Returns:
+        A prompt-facing schema mapping.
+
+    Raises:
+        SchemaDepthError: When the depth limit is exceeded.
+    """
+    _check_depth(depth, max_depth)
+
+    return {
+        name: build_prompt_schema_field(field, depth=depth, max_depth=max_depth)
+        for name, field in fields.items()
+    }
