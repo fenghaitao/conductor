@@ -465,6 +465,34 @@ class TestSessionContinuity:
         provider._thread_ids["investigate"] = "th_9"
         assert provider.get_session_ids() == {"investigate": "th_9"}
 
+    async def test_thread_id_is_the_output_session_id(self, sdk_stub: None) -> None:
+        provider = CodexProvider()
+        provider._client = _Client(_Thread(["ok"], thread_id="th_7"))
+        out = await _run(provider, _agent())
+        assert out.session_id == "th_7"
+
+    async def test_turn_start_names_the_thread_before_the_turn_ends(self, sdk_stub: None) -> None:
+        """A run killed mid-turn must still name its rollout."""
+        provider = CodexProvider()
+        provider._client = _Client(_Thread(["ok"], thread_id="th_7"))
+        events: list[tuple[str, dict[str, Any]]] = []
+        await _run(provider, _agent(), event_callback=lambda t, d: events.append((t, d)))
+        starts = [d for t, d in events if t == "agent_turn_start"]
+        assert starts and all(d["session_id"] == "th_7" for d in starts)
+
+    def test_turn_started_notification_carries_the_thread_id(self, sdk_stub: None) -> None:
+        class TurnStartedNotification:
+            pass
+
+        provider = CodexProvider()
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider._dispatch_notification(
+            _Notification(TurnStartedNotification()),
+            lambda t, d: events.append((t, d)),
+            "th_7",
+        )
+        assert events == [("agent_turn_start", {"turn": 1, "session_id": "th_7"})]
+
     async def test_agent_resumes_restored_thread(self, sdk_stub: None) -> None:
         provider = CodexProvider()
         thread = _Thread(["ok"])

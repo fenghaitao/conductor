@@ -161,6 +161,12 @@ class _TurnOutcome:
     interrupted: bool
 
 
+def _thread_id(thread: Any) -> str | None:
+    """The thread's id as a string, or None when the SDK reports none."""
+    thread_id = getattr(thread, "id", None)
+    return str(thread_id) if thread_id else None
+
+
 def _final_response_from_items(items: list[Any]) -> str | None:
     """Pick the turn's final assistant message.
 
@@ -568,9 +574,17 @@ class CodexProvider(AgentProvider):
 
         handle = await thread.turn(turn_input, **kwargs)
         turn_id = getattr(handle, "id", None)
+        # The thread id is the rollout's id under CODEX_HOME/sessions. It is
+        # on every turn start, so a run killed mid-turn still names its
+        # transcript for session collection.
+        session_id = _thread_id(thread)
 
         if event_callback is not None:
-            self._safe_emit(event_callback, "agent_turn_start", {"turn": "awaiting_model"})
+            self._safe_emit(
+                event_callback,
+                "agent_turn_start",
+                {"turn": "awaiting_model", "session_id": session_id},
+            )
 
         loop = asyncio.get_running_loop()
         deadline = (
@@ -597,7 +611,7 @@ class CodexProvider(AgentProvider):
                 elif name == "TurnCompletedNotification":
                     completed = getattr(payload, "turn", None)
 
-                self._dispatch_notification(notification, event_callback)
+                self._dispatch_notification(notification, event_callback, session_id)
 
                 # Checked *after* collecting the notification, not before: an
                 # interrupt should keep the text that already arrived rather
@@ -649,7 +663,10 @@ class CodexProvider(AgentProvider):
             logger.debug("Codex turn interrupt failed", exc_info=True)
 
     def _dispatch_notification(
-        self, notification: Any, event_callback: EventCallback | None
+        self,
+        notification: Any,
+        event_callback: EventCallback | None,
+        session_id: str | None = None,
     ) -> None:
         """Map one streamed notification onto Conductor's event vocabulary."""
         if event_callback is None:
@@ -658,7 +675,9 @@ class CodexProvider(AgentProvider):
         name = type(payload).__name__
 
         if name == "TurnStartedNotification":
-            self._safe_emit(event_callback, "agent_turn_start", {"turn": 1})
+            self._safe_emit(
+                event_callback, "agent_turn_start", {"turn": 1, "session_id": session_id}
+            )
         elif name == "AgentMessageDeltaNotification":
             delta = getattr(payload, "delta", "") or ""
             if delta:
@@ -747,6 +766,7 @@ class CodexProvider(AgentProvider):
             cache_write_tokens=getattr(total, "cache_write_input_tokens", 0) or 0,
             model=model,
             partial=interrupted,
+            session_id=_thread_id(thread),
         )
 
     async def _open_thread(self, client: Any, agent: AgentDef, model: str | None) -> Any:
@@ -780,9 +800,9 @@ class CodexProvider(AgentProvider):
 
     def _record_thread_id(self, agent: AgentDef, thread: Any) -> None:
         """Remember this thread id so a checkpoint can reattach to it."""
-        thread_id = getattr(thread, "id", None)
+        thread_id = _thread_id(thread)
         if thread_id:
-            self._thread_ids[agent.name] = str(thread_id)
+            self._thread_ids[agent.name] = thread_id
 
     async def _resolve_content(
         self,
