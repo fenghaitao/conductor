@@ -333,9 +333,9 @@ class CodexProvider(AgentProvider):
         """Return the working directory for this agent's thread.
 
         ``agent.working_dir`` has already been rendered, absolutised and
-        existence-checked by ``WorkflowEngine._resolve_agent_working_dir``, so
+        existence-checked by ``AgentExecutor._resolve_agent_working_dir``, so
         it is passed verbatim -- re-resolving here would collapse the symlink
-        aliases the engine preserves on purpose. ``None`` lets Codex use its
+        aliases the executor preserves on purpose. ``None`` lets Codex use its
         own default rather than pinning the process cwd, which may not be the
         project the workflow is about.
         """

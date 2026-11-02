@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from conductor.exceptions import ValidationError
@@ -123,6 +124,29 @@ class AgentExecutor:
         self.instructions_preamble = instructions_preamble
         self.renderer = TemplateRenderer()
 
+    def _resolve_agent_working_dir(self, agent: AgentDef, context: dict[str, Any]) -> AgentDef:
+        """Render and validate an agent working directory without changing process cwd.
+
+        ``Path.absolute()`` intentionally makes relative paths absolute without
+        normalizing ``..`` components or resolving symlinks. That preserves the
+        filesystem semantics of paths such as ``symlink/..`` while still giving
+        providers an absolute working directory.
+        """
+        if agent.working_dir is None:
+            return agent
+
+        rendered_directory = self.renderer.render(agent.working_dir, context)
+        if not rendered_directory.strip():
+            raise ValidationError(f"Agent '{agent.name}' working_dir must not be empty")
+
+        directory = Path(rendered_directory).expanduser().absolute()
+        if not directory.is_dir():
+            raise ValidationError(
+                f"Agent '{agent.name}' working_dir is not an existing directory: {directory}"
+            )
+
+        return agent.model_copy(update={"working_dir": str(directory)})
+
     async def execute(
         self,
         agent: AgentDef,
@@ -164,6 +188,11 @@ class AgentExecutor:
         if agent.model and ("{{" in agent.model or "{%" in agent.model):
             rendered_model = self.renderer.render(agent.model, context)
             agent = agent.model_copy(update={"model": rendered_model})
+
+        # Resolve the working directory once in the shared execution path so
+        # filesystem-backed providers (Copilot, Codex, Claude Agent SDK) all
+        # receive the same rendered and validated value.
+        agent = self._resolve_agent_working_dir(agent, context)
 
         # Render prompt with context
         rendered_prompt = self.renderer.render(agent.prompt, context)

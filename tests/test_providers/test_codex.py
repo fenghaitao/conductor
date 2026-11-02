@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -21,6 +22,7 @@ import pytest
 
 from conductor.config.schema import AgentDef, OutputField
 from conductor.exceptions import ProviderError, ValidationError
+from conductor.executor.agent import AgentExecutor
 from conductor.providers import codex as codex_mod
 from conductor.providers.codex import CodexProvider
 
@@ -152,6 +154,7 @@ class _Client:
         self.closed = False
         self.resumed: list[str] = []
         self.start_kwargs: dict[str, Any] = {}
+        self.resume_kwargs: dict[str, Any] = {}
 
     async def __aenter__(self) -> _Client:
         self.start_calls += 1
@@ -169,6 +172,7 @@ class _Client:
 
     async def thread_resume(self, thread_id: str, **kwargs: Any) -> _Thread:
         self.resumed.append(thread_id)
+        self.resume_kwargs = kwargs
         return self._thread
 
 
@@ -203,6 +207,51 @@ class TestAvailabilityGuard:
             CodexProvider()
         assert "openai-codex" in str(exc.value)
         assert exc.value.suggestion is not None
+
+
+class TestWorkingDirectory:
+    async def test_executor_resolves_template_before_codex(
+        self, sdk_stub: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine_root = tmp_path / "engine"
+        workspace = tmp_path / "workspace"
+        engine_root.mkdir()
+        workspace.mkdir()
+        monkeypatch.chdir(engine_root)
+
+        provider = CodexProvider()
+        thread = _Thread(["ok"])
+        client = _Client(thread)
+        provider._client = client
+        agent = _agent(working_dir="{{ workflow.input.workspace }}")
+
+        await AgentExecutor(provider).execute(
+            agent,
+            {"workflow": {"input": {"workspace": "../workspace"}}},
+        )
+
+        start_cwd = Path(client.start_kwargs["cwd"])
+        turn_cwd = Path(thread.turn_kwargs[0]["cwd"])
+        assert start_cwd.is_absolute()
+        assert start_cwd.samefile(workspace)
+        assert turn_cwd.samefile(workspace)
+        assert client.start_kwargs["cwd"] == thread.turn_kwargs[0]["cwd"]
+        assert agent.working_dir == "{{ workflow.input.workspace }}"
+
+    async def test_resumed_thread_receives_working_dir(
+        self, sdk_stub: None, tmp_path: Path
+    ) -> None:
+        provider = CodexProvider()
+        thread = _Thread(["ok"])
+        client = _Client(thread)
+        provider._client = client
+        provider.set_resume_session_ids({"researcher": "th_prior"})
+
+        await _run(provider, _agent(working_dir=str(tmp_path)))
+
+        assert client.resumed == ["th_prior"]
+        assert client.resume_kwargs["cwd"] == str(tmp_path)
+        assert thread.turn_kwargs[0]["cwd"] == str(tmp_path)
 
 
 class TestCapabilityHonesty:

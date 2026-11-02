@@ -285,6 +285,7 @@ class ClaudeAgentSdkProvider(AgentProvider):
             max_turns=max_turns,
             permission_mode=permission_mode,
             tools=sdk_tools,
+            cwd=agent.working_dir,
             resume=resume_session_id,
         )
 

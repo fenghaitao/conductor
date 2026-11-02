@@ -165,6 +165,30 @@ class TestExecute:
 
     @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
     @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    @pytest.mark.parametrize("explicit_working_dir", [True, False])
+    async def test_execute_forwards_working_directory(
+        self, tmp_path, explicit_working_dir: bool
+    ) -> None:
+        captured_kwargs: dict = {}
+
+        async def fake_query(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield _result(result="done")
+
+        working_dir = str(tmp_path) if explicit_working_dir else None
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            await provider.execute(
+                agent=AgentDef(name="worker", prompt="Work", working_dir=working_dir),
+                context={},
+                rendered_prompt="Work",
+            )
+
+        # ``None`` lets the CLI fall back to the process cwd.
+        assert captured_kwargs["options"].cwd == working_dir
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
     async def test_execute_structured_output(self) -> None:
         async def fake_query(**kwargs):
             yield _assistant(
@@ -1808,6 +1832,29 @@ class TestSessionResume:
             )
 
         assert captured_kwargs["options"].resume == "sess-old-003"
+
+    @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
+    @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)
+    async def test_resume_forwards_working_directory(self, tmp_path) -> None:
+        """The CLI stores sessions per project directory, so a resumed session
+        must be reopened with the same ``cwd`` it was created under."""
+        captured_kwargs: dict = {}
+
+        async def fake_query(**kwargs):
+            captured_kwargs.update(kwargs)
+            yield _result(result="hi", session_id="sess-resumed-005")
+
+        with patch("conductor.providers.claude_agent_sdk.query", fake_query):
+            provider = ClaudeAgentSdkProvider()
+            provider.set_resume_session_ids({"researcher": "sess-old-005"})
+            await provider.execute(
+                agent=AgentDef(name="researcher", prompt="hi", working_dir=str(tmp_path)),
+                context={},
+                rendered_prompt="hi",
+            )
+
+        assert captured_kwargs["options"].resume == "sess-old-005"
+        assert captured_kwargs["options"].cwd == str(tmp_path)
 
     @patch("conductor.providers.claude_agent_sdk.CLAUDE_AGENT_SDK_AVAILABLE", True)
     @patch("conductor.providers.claude_agent_sdk.ClaudeAgentOptions", Mock)

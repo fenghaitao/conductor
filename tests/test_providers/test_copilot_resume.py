@@ -14,7 +14,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from conductor.config.schema import AgentDef
+from conductor.executor.agent import AgentExecutor
 from conductor.providers.copilot import CopilotProvider, SDKResponse
 
 
@@ -152,8 +154,9 @@ class TestSessionResumeFallback:
             new_callable=AsyncMock,
             return_value=SDKResponse(content='{"result": "ok"}'),
         ):
-            await provider.execute(
-                agent, {"workflow": {"input": {"vp_root": str(old_dir)}}}, "Start"
+            await AgentExecutor(provider).execute(
+                agent,
+                {"workflow": {"input": {"vp_root": str(old_dir)}}},
             )
             assert mock_client.create_session.call_args.kwargs["working_directory"] == str(old_dir)
 
@@ -165,8 +168,9 @@ class TestSessionResumeFallback:
                 monkeypatch.chdir(new_dir)
             invocation_dir = Path.cwd()
 
-            await resumed_provider.execute(
-                agent, {"workflow": {"input": {"vp_root": str(new_dir)}}}, "Continue"
+            await AgentExecutor(resumed_provider).execute(
+                agent,
+                {"workflow": {"input": {"vp_root": str(new_dir)}}},
             )
 
         mock_client.resume_session.assert_awaited_once_with(

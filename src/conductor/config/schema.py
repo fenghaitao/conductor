@@ -750,7 +750,11 @@ class AgentDef(BaseModel):
     """Environment variables for script subprocess."""
 
     working_dir: str | None = None
-    """Working directory for script subprocess execution."""
+    """Working directory for script execution or filesystem-backed agent providers.
+
+    Agent working directories support Jinja2 templating and are rendered and validated
+    by the shared agent executor before provider execution.
+    """
 
     timeout: int | None = None
     """Per-script timeout in seconds."""

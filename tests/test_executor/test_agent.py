@@ -8,6 +8,8 @@ Tests cover:
 - Error handling
 """
 
+from pathlib import Path
+
 import pytest
 
 from conductor.config.schema import AgentDef, OutputField
@@ -156,6 +158,127 @@ class TestAgentExecutorBasic:
         )
         assert "{%" not in seen_system_prompt
         assert "Python" in seen_system_prompt
+
+
+class TestAgentExecutorWorkingDirectory:
+    """Shared working-directory resolution used by filesystem-backed providers."""
+
+    @pytest.mark.asyncio
+    async def test_working_dir_template_is_resolved_before_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine_root = tmp_path / "engine"
+        workspace = tmp_path / "workspace"
+        engine_root.mkdir()
+        workspace.mkdir()
+        monkeypatch.chdir(engine_root)
+        captured: list[str | None] = []
+
+        def mock_handler(agent: AgentDef, prompt: str, context: dict) -> dict:
+            captured.append(agent.working_dir)
+            return {"result": "ok"}
+
+        agent = AgentDef(
+            name="worker",
+            prompt="Work",
+            working_dir="{{ workflow.input.workspace }}",
+        )
+        provider = CopilotProvider(mock_handler=mock_handler)
+        executor = AgentExecutor(provider)
+
+        await executor.execute(
+            agent,
+            {"workflow": {"input": {"workspace": "../workspace"}}},
+        )
+
+        assert len(captured) == 1
+        resolved = Path(captured[0] or "")
+        assert resolved.is_absolute()
+        assert resolved.samefile(workspace)
+        assert agent.working_dir == "{{ workflow.input.workspace }}"
+        assert Path.cwd() == engine_root
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path_kind", ["empty", "whitespace", "rendered-empty", "missing", "file"]
+    )
+    async def test_invalid_working_dir_is_rejected_before_provider(
+        self, tmp_path: Path, path_kind: str
+    ) -> None:
+        called = False
+        ordinary_file = tmp_path / "not-a-directory"
+        ordinary_file.touch()
+        working_dirs = {
+            "empty": "",
+            "whitespace": "   ",
+            "rendered-empty": "{{ workflow.input.workspace }}",
+            "missing": str(tmp_path / "missing"),
+            "file": str(ordinary_file),
+        }
+
+        def mock_handler(agent: AgentDef, prompt: str, context: dict) -> dict:
+            nonlocal called
+            called = True
+            return {"result": "ok"}
+
+        agent = AgentDef(name="worker", prompt="Work", working_dir=working_dirs[path_kind])
+        executor = AgentExecutor(CopilotProvider(mock_handler=mock_handler))
+
+        with pytest.raises(ValidationError, match="Agent 'worker' working_dir"):
+            await executor.execute(
+                agent,
+                {"workflow": {"input": {"workspace": ""}}},
+            )
+
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_undefined_working_dir_template_is_rejected_before_provider(self) -> None:
+        called = False
+
+        def mock_handler(agent: AgentDef, prompt: str, context: dict) -> dict:
+            nonlocal called
+            called = True
+            return {"result": "ok"}
+
+        agent = AgentDef(
+            name="worker",
+            prompt="Work",
+            working_dir="{{ workflow.input.workspace }}",
+        )
+        executor = AgentExecutor(CopilotProvider(mock_handler=mock_handler))
+
+        with pytest.raises(TemplateError):
+            await executor.execute(agent, {"workflow": {"input": {}}})
+
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_working_dir_preserves_symlink_parent_semantics(self, tmp_path: Path) -> None:
+        aliases = tmp_path / "aliases"
+        repositories = tmp_path / "repositories"
+        project = repositories / "project"
+        aliases.mkdir()
+        project.mkdir(parents=True)
+        current = aliases / "current"
+        try:
+            current.symlink_to(project, target_is_directory=True)
+        except OSError:
+            pytest.skip("directory symlinks are unavailable on this platform")
+
+        captured: list[str | None] = []
+
+        def mock_handler(agent: AgentDef, prompt: str, context: dict) -> dict:
+            captured.append(agent.working_dir)
+            return {"result": "ok"}
+
+        agent = AgentDef(name="worker", prompt="Work", working_dir=str(current / ".."))
+        executor = AgentExecutor(CopilotProvider(mock_handler=mock_handler))
+        await executor.execute(agent, {})
+
+        resolved = Path(captured[0] or "")
+        assert ".." in resolved.parts
+        assert resolved.samefile(repositories)
 
 
 class TestAgentExecutorPromptRendering:
