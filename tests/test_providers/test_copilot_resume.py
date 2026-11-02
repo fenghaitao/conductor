@@ -9,13 +9,13 @@ Tests cover:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from conductor.config.schema import AgentDef
-from conductor.providers.copilot import CopilotProvider
+from conductor.providers.copilot import CopilotProvider, SDKResponse
 
 
 def _make_agent(name: str = "test_agent", *, excluded_tools: list[str] | None = None) -> AgentDef:
@@ -121,6 +121,63 @@ class TestSessionIdTracking:
 class TestSessionResumeFallback:
     """Verify resume_session is attempted and falls back on failure."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("explicit_working_dir", [True, False])
+    async def test_resume_session_applies_changed_working_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, explicit_working_dir: bool
+    ) -> None:
+        """Checkpoint resume uses the current directory rather than the saved one."""
+        old_dir = tmp_path / "old-checkout"
+        new_dir = tmp_path / "new-checkout"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        monkeypatch.chdir(old_dir)
+
+        mock_session = AsyncMock()
+        mock_session.session_id = "saved-session"
+        mock_client = AsyncMock()
+        mock_client.create_session.return_value = mock_session
+        mock_client.resume_session.return_value = mock_session
+
+        provider = CopilotProvider()
+        provider._client = mock_client
+        provider._started = True
+        agent = _make_agent("researcher")
+        if explicit_working_dir:
+            agent = agent.model_copy(update={"working_dir": "{{ workflow.input.vp_root }}"})
+
+        with patch.object(
+            CopilotProvider,
+            "_send_and_wait",
+            new_callable=AsyncMock,
+            return_value=SDKResponse(content='{"result": "ok"}'),
+        ):
+            await provider.execute(
+                agent, {"workflow": {"input": {"vp_root": str(old_dir)}}}, "Start"
+            )
+            assert mock_client.create_session.call_args.kwargs["working_directory"] == str(old_dir)
+
+            resumed_provider = CopilotProvider()
+            resumed_provider._client = mock_client
+            resumed_provider._started = True
+            resumed_provider.set_resume_session_ids(provider.get_session_ids())
+            if not explicit_working_dir:
+                monkeypatch.chdir(new_dir)
+            invocation_dir = Path.cwd()
+
+            await resumed_provider.execute(
+                agent, {"workflow": {"input": {"vp_root": str(new_dir)}}}, "Continue"
+            )
+
+        mock_client.resume_session.assert_awaited_once_with(
+            "saved-session",
+            on_permission_request=CopilotProvider._default_permission_handler,
+            working_directory=str(new_dir),
+        )
+        mock_client.create_session.assert_awaited_once()
+        assert resumed_provider.get_session_ids() == {"researcher": "saved-session"}
+        assert Path.cwd() == invocation_dir
+
     def test_set_resume_session_ids(self) -> None:
         """set_resume_session_ids stores the mapping."""
         provider = CopilotProvider(mock_handler=lambda a, p, c: {"r": 1})
@@ -169,6 +226,7 @@ class TestSessionResumeFallback:
         mock_client.resume_session.assert_called_once_with(
             resumed_sid,
             on_permission_request=CopilotProvider._default_permission_handler,
+            working_directory=str(Path.cwd()),
             excluded_tools=["task"],
         )
         mock_client.create_session.assert_not_called()
@@ -213,6 +271,7 @@ class TestSessionResumeFallback:
         mock_client.resume_session.assert_called_once_with(
             "stale-sid",
             on_permission_request=CopilotProvider._default_permission_handler,
+            working_directory=str(Path.cwd()),
         )
         mock_client.create_session.assert_called_once()
         # Session ID should now reflect the new session

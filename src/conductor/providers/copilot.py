@@ -952,6 +952,7 @@ class CopilotProvider(AgentProvider):
                 try:
                     resume_kwargs: dict[str, Any] = {
                         "on_permission_request": self._default_permission_handler,
+                        "working_directory": session_kwargs["working_directory"],
                     }
                     if agent.excluded_tools:
                         resume_kwargs["excluded_tools"] = list(agent.excluded_tools)
