@@ -35,10 +35,24 @@ uses `gpt-6.1-sol`; native retains Codex's model default. Connection validation
 makes a small real inference request on the Copilot route. A ChatGPT login or
 a model catalog alone cannot satisfy it.
 
+The probe always starts a fresh ephemeral thread in an empty temporary
+directory with an explicit read-only sandbox and deny-all approvals. Both
+thread creation and the inference turn use those limits, regardless of the
+workflow provider's sandbox, working directory or restored agent sessions.
+
 Before and after turns, including resume and output parse recovery, Conductor
 checks the thread's provider and model. A missing/mismatched route, failed
 resume or model-reroute notification fails without native fallback. Failed or
 incomplete turns and parse recovery cannot produce a successful result.
+
+New Conductor checkpoints save the selected backend and public catalog digest
+under `provider_state.codex`. Resume restores and validates those settings
+before provider construction or connection validation, even in a fresh shell
+without backend variables. Proxy credentials still come from the environment.
+Catalog drift and failed Copilot session resume fail without native fallback.
+Native checkpoints also retain their native backend if the shell later selects
+Copilot. Legacy checkpoints without provider settings retain their existing
+environment-based behavior; supply the original backend explicitly for those.
 
 ## SDK compatibility and durable callers
 

@@ -6,6 +6,8 @@ the appropriate AgentProvider based on the requested provider type.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Literal
 
 from conductor.exceptions import ProviderError
@@ -46,6 +48,7 @@ async def create_provider(
     default_reasoning_effort: ReasoningEffort | None = None,
     skill_directories: list[str] | None = None,
     provider_settings: ProviderSettings | None = None,
+    checkpoint_state: dict[str, Any] | None = None,
 ) -> AgentProvider:
     """Factory function to create the appropriate provider.
 
@@ -76,6 +79,8 @@ async def create_provider(
             applied when ``provider_type == "copilot"`` and the settings
             opted into custom routing; ignored for all other providers
             (structured config for those providers is not yet implemented).
+        checkpoint_state: Public resume settings for this provider, restored
+            before connection validation can dispatch any inference.
 
     Returns:
         Configured AgentProvider instance.
@@ -217,6 +222,7 @@ async def create_provider(
                 model=default_model,
                 max_session_seconds=max_session_seconds,
                 default_reasoning_effort=default_reasoning_effort,
+                checkpoint_state=checkpoint_state,
             )
         case _:
             raise ProviderError(
@@ -225,17 +231,24 @@ async def create_provider(
                 "claude-subscription, pydantic-deep, claude-agent-sdk, codex",
             )
 
-    if validate and not await provider.validate_connection():
-        suggestion = (
-            "Run 'claude login' to refresh your subscription token, "
-            "or check your network connection"
-            if provider_type == "claude-subscription"
-            else "Check your credentials and network connection"
-        )
-        raise ProviderError(
-            f"Failed to connect to {provider_type} provider",
-            suggestion=suggestion,
-        )
+    if validate:
+        try:
+            if not await provider.validate_connection():
+                suggestion = (
+                    "Run 'claude login' to refresh your subscription token, "
+                    "or check your network connection"
+                    if provider_type == "claude-subscription"
+                    else "Check your credentials and network connection"
+                )
+                raise ProviderError(
+                    f"Failed to connect to {provider_type} provider",
+                    suggestion=suggestion,
+                )
+        except BaseException:
+            # A rejected provider never reaches the registry's close path.
+            with suppress(Exception):
+                await asyncio.wait_for(provider.close(), timeout=10)
+            raise
 
     return provider
 

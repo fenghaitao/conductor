@@ -1912,6 +1912,15 @@ class WorkflowEngine:
                     copilot_session_ids = p.get_session_ids()  # type: ignore[union-attr]
                     break
 
+        provider_state = {}
+        state_source = provider if provider is not None else self._registry
+        if state_source is not None:
+            get_state = getattr(state_source, "get_checkpoint_state", None)
+            if callable(get_state):
+                saved_state = get_state()
+                if isinstance(saved_state, dict):
+                    provider_state = saved_state
+
         checkpoint_path = CheckpointManager.save_checkpoint(
             workflow_path=self.workflow_path,
             context=self.context,
@@ -1924,6 +1933,7 @@ class WorkflowEngine:
             instructions_preamble=self._instructions_preamble,
             run_id=self._run_context.run_id,
             event_log_path=self._run_context.log_file,
+            provider_state=provider_state,
         )
         self._last_checkpoint_path = checkpoint_path
         if checkpoint_path is not None:

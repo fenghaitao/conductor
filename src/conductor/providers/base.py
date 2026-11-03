@@ -170,6 +170,14 @@ class AgentProvider(ABC):
     # subclass at import time.
     CAPABILITIES: ClassVar[ProviderCapabilities | None] = None
 
+    def get_checkpoint_state(self) -> dict[str, dict[str, Any]]:
+        """Return public resume settings, namespaced by provider type.
+
+        Implementations must exclude credentials. Providers without extra
+        resume settings retain their existing session-ID-only behavior.
+        """
+        return {}
+
     def __init_subclass__(cls, *, abstract: bool = False, **kwargs: Any) -> None:
         """Enforce that every production subclass declares ``CAPABILITIES``.
 

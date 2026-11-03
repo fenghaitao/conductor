@@ -325,6 +325,7 @@ class TestSaveCheckpoint:
         cp = CheckpointManager.load_checkpoint(saved_path)
         assert cp.run_id == ""
         assert cp.event_log_path == ""
+        assert cp.provider_state == {}
 
     def test_no_leftover_tmp_file(self, tmp_path: Path) -> None:
         """After a successful save, no .tmp file should remain."""
