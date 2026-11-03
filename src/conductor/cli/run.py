@@ -2177,6 +2177,9 @@ async def resume_workflow_async(
         ) as registry:
             verbose_log("Starting resumed workflow execution...")
 
+            if cp.provider_state:
+                registry.set_checkpoint_state(cp.provider_state)
+
             # Pass stored session IDs to registry for Copilot session resume.
             # Skip for custom-routed providers (e.g. DeepSeek, local LLMs) —
             # those endpoints are stateless and don't support session continuation.

@@ -29,6 +29,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
@@ -260,6 +262,7 @@ class CodexProvider(AgentProvider):
         approval_mode: str | None = None,
         default_reasoning_effort: ReasoningEffort | None = None,
         backend: str | None = None,
+        checkpoint_state: dict[str, Any] | None = None,
         **_ignored: Any,
     ) -> None:
         """Construct the provider.
@@ -279,6 +282,8 @@ class CodexProvider(AgentProvider):
                 back to :data:`_DEFAULT_REASONING_EFFORT`.
             backend: Explicit ``native`` or ``copilot`` backend. When omitted,
                 uses CONDUCTOR_CODEX_BACKEND (default ``native``).
+            checkpoint_state: Saved public backend settings. These take
+                precedence over ambient environment on checkpoint resume.
             **_ignored: Runtime fields other providers accept that Codex has
                 no equivalent for (e.g. ``temperature``). Swallowed so the
                 factory can pass a uniform kwarg set.
@@ -294,8 +299,21 @@ class CodexProvider(AgentProvider):
                 suggestion="Install it with: uv add 'openai-codex>=0.163.0,<0.164'",
             )
 
-        self._backend = resolve_backend(backend)
-        self._backend_settings = backend_settings(self._backend)
+        if checkpoint_state is not None:
+            settings = checkpoint_state.get("backend_settings")
+            if not isinstance(settings, dict):
+                raise ProviderError("Codex checkpoint is missing public backend settings")
+            try:
+                backend_environment(settings)  # Refuse route or catalog drift before startup.
+                self._backend = resolve_backend(settings["backend"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ProviderError("Invalid Codex checkpoint backend settings") from exc
+            if backend is not None and backend != self._backend:
+                raise ProviderError("Requested Codex backend conflicts with the checkpoint")
+            self._backend_settings = deepcopy(settings)
+        else:
+            self._backend = resolve_backend(backend)
+            self._backend_settings = backend_settings(self._backend)
         self._model = model or (_DEFAULT_COPILOT_MODEL if self._backend == "copilot" else None)
         self._max_session_seconds = max_session_seconds
         self._default_reasoning_effort = default_reasoning_effort
@@ -307,6 +325,10 @@ class CodexProvider(AgentProvider):
         # agent name -> Codex thread id, exported for checkpoints.
         self._thread_ids: dict[str, str] = {}
         self._restored_thread_ids: dict[str, str] = {}
+
+    def get_checkpoint_state(self) -> dict[str, dict[str, Any]]:
+        """Keep backend selection and catalog digest durable without credentials."""
+        return {"codex": {"backend_settings": deepcopy(self._backend_settings)}}
 
     @staticmethod
     def _coerce_sandbox(value: str | None) -> Any:
@@ -405,26 +427,35 @@ class CodexProvider(AgentProvider):
         try:
             client = await self._ensure_client()
             if self._backend == "copilot":
-                from conductor.config.schema import AgentDef
-
                 # A catalog or an existing ChatGPT account is not an entitlement
-                # check. This tiny real turn uses the exact route guarded below.
-                probe = await self._open_thread(
-                    client, AgentDef(name="connection_probe", prompt="Reply OK."), self._model
-                )
-                result = await self._run_turn(
-                    probe,
-                    self._build_turn_input("Reply only OK. Do not use tools."),
-                    output_schema=None,
-                    effort="low",
-                    model=self._model,
-                    interrupt_signal=None,
-                    event_callback=None,
-                )
-                if not result.status.endswith("completed") or not result.final_response:
-                    message = getattr(result.error, "message", None) or result.status
-                    raise ProviderError(f"Copilot inference connection check failed: {message}")
-                await self._verify_backend(probe, self._model)
+                # check. Never inherit workflow write authority or consume a
+                # restored agent session for this disposable inference probe.
+                sandbox = self._coerce_sandbox("read-only")
+                with tempfile.TemporaryDirectory(prefix="conductor-codex-probe-") as cwd:
+                    probe = await client.thread_start(
+                        model=self._model,
+                        model_provider="github_copilot",
+                        sandbox=sandbox,
+                        approval_mode=self._coerce_approval_mode("deny_all"),
+                        cwd=cwd,
+                        ephemeral=True,
+                    )
+                    await self._verify_backend(probe, self._model)
+                    result = await self._run_turn(
+                        probe,
+                        self._build_turn_input("Reply only OK. Do not use tools."),
+                        output_schema=None,
+                        effort="low",
+                        model=self._model,
+                        interrupt_signal=None,
+                        event_callback=None,
+                        cwd=cwd,
+                        sandbox=sandbox,
+                    )
+                    if not result.status.endswith("completed") or not result.final_response:
+                        message = getattr(result.error, "message", None) or result.status
+                        raise ProviderError(f"Copilot inference connection check failed: {message}")
+                    await self._verify_backend(probe, self._model)
             else:
                 await client.account()
         except ProviderError:
@@ -603,6 +634,7 @@ class CodexProvider(AgentProvider):
         interrupt_signal: asyncio.Event | None,
         event_callback: EventCallback | None,
         cwd: str | None = None,
+        sandbox: Any = None,
     ) -> _TurnOutcome:
         """Start one turn, then stream and collect it in a **single** pass.
 
@@ -622,7 +654,9 @@ class CodexProvider(AgentProvider):
             kwargs["effort"] = effort
         if model is not None:
             kwargs["model"] = model
-        if self._sandbox is not None:
+        if sandbox is not None:
+            kwargs["sandbox"] = sandbox
+        elif self._sandbox is not None:
             kwargs["sandbox"] = self._sandbox
         if cwd is not None:
             kwargs["cwd"] = cwd

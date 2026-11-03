@@ -6,6 +6,7 @@ provider instances with lazy instantiation and caching.
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any, Literal
 
 from conductor.providers.base import AgentProvider
@@ -65,6 +66,7 @@ class ProviderRegistry:
         self._providers: dict[ProviderType, AgentProvider] = {}
         self._default_provider_type: ProviderType = config.workflow.runtime.provider.name
         self._resume_session_ids: dict[str, str] = {}
+        self._checkpoint_state: dict[str, dict[str, Any]] = {}
 
     @property
     def default_provider_type(self) -> ProviderType:
@@ -125,6 +127,17 @@ class ProviderRegistry:
         # Claude override (and vice versa once Claude grows its own
         # structured config).
         provider_settings = runtime.provider if runtime.provider.name == provider_type else None
+        if provider_type == "codex" and provider_type not in self._checkpoint_state:
+            from conductor.providers.codex_backend import backend_settings, resolve_backend
+
+            # Connection validation performs inference. Retain its route even
+            # when validation fails before the provider becomes active.
+            self._checkpoint_state[provider_type] = {
+                "backend_settings": backend_settings(resolve_backend())
+            }
+        checkpoint_kwargs: dict[str, Any] = {}
+        if provider_type in self._checkpoint_state:
+            checkpoint_kwargs["checkpoint_state"] = self._checkpoint_state[provider_type]
         provider = await create_provider(
             provider_type=provider_type,
             validate=True,
@@ -138,6 +151,7 @@ class ProviderRegistry:
             default_reasoning_effort=runtime.default_reasoning_effort,
             skill_directories=self._skill_directories,
             provider_settings=provider_settings,
+            **checkpoint_kwargs,
         )
 
         # Pass stored resume session IDs to newly created providers
@@ -193,6 +207,19 @@ class ProviderRegistry:
             True if the provider is active, False otherwise.
         """
         return provider_type in self._providers
+
+    def set_checkpoint_state(self, state: dict[str, dict[str, Any]]) -> None:
+        """Restore public settings before creating or validating any provider."""
+        if self._providers:
+            raise ValueError("restore provider checkpoint settings before provider creation")
+        self._checkpoint_state = copy.deepcopy(state)
+
+    def get_checkpoint_state(self) -> dict[str, dict[str, Any]]:
+        """Retain both restored settings and settings from active providers."""
+        state = copy.deepcopy(self._checkpoint_state)
+        for provider in self._providers.values():
+            state.update(provider.get_checkpoint_state())
+        return state
 
     def set_resume_session_ids(self, ids: dict[str, str]) -> None:
         """Store session IDs for Copilot session resume.

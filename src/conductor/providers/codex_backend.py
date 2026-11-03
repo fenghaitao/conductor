@@ -78,9 +78,12 @@ def config_overrides(settings: dict) -> tuple[str, ...]:
 
 def backend_environment(settings: dict) -> dict[str, str]:
     """Rehydrate saved routing, refusing catalog drift; keep secrets in env only."""
+    backend = resolve_backend(settings["backend"])
+    if backend == "native" and settings != {"backend": "native"}:
+        raise ProviderError("Invalid saved native Codex backend settings")
     env = dict(os.environ)
-    env[BACKEND_ENV] = settings["backend"]
-    if settings["backend"] == "copilot":
+    env[BACKEND_ENV] = backend
+    if backend == "copilot":
         env[CATALOG_ENV] = settings["model_catalog_json"]
         env["COPILOT_PROXY_PORT"] = settings["port"]
         if backend_settings("copilot", env) != settings:

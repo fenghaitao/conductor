@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -298,3 +299,215 @@ def test_unavailable_attestation_and_resume_errors_fail_closed(catalog):
         p._client.thread_start.assert_not_called()
 
     asyncio.run(run())
+
+
+def completed_turn(text="OK", status="completed"):
+    return TurnHandle(
+        [
+            notification(
+                "ItemCompletedNotification",
+                turn_id="test-turn",
+                item=SimpleNamespace(type="agentMessage", text=text),
+            ),
+            notification(
+                "TurnCompletedNotification", turn=SimpleNamespace(status=status, error=None)
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize("sandbox", [None, "workspace-write", "full-access"])
+def test_validation_uses_disposable_read_only_thread_outside_workspace(
+    catalog, tmp_path, monkeypatch, sandbox
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sentinel = workspace / "source.txt"
+    sentinel.write_text("unchanged")
+    monkeypatch.chdir(workspace)
+
+    async def run():
+        p = CodexProvider(backend="copilot", sandbox=sandbox, approval_mode="auto_review")
+        original_sandbox = p._sandbox
+        p.set_resume_session_ids({"connection_probe": "workflow-thread"})
+        t = thread()
+
+        async def turn(_input, **kwargs):
+            assert kwargs["sandbox"].value == "read-only"
+            assert Path(kwargs["cwd"]) != workspace
+            assert list(Path(kwargs["cwd"]).iterdir()) == []
+            return completed_turn()
+
+        t.turn.side_effect = turn
+        client = SimpleNamespace(thread_start=AsyncMock(return_value=t), thread_resume=AsyncMock())
+        p._client = client
+        assert await p.validate_connection()
+        options = client.thread_start.call_args.kwargs
+        assert options["sandbox"].value == "read-only"
+        assert options["approval_mode"].value == "deny_all"
+        assert options["ephemeral"] is True
+        assert options["cwd"] == t.turn.call_args.kwargs["cwd"]
+        assert not Path(options["cwd"]).exists()
+        assert p._sandbox is original_sandbox
+        assert p._restored_thread_ids == {"connection_probe": "workflow-thread"}
+        client.thread_resume.assert_not_called()
+        assert Path.cwd() == workspace and sentinel.read_text() == "unchanged"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "outcome", ["success", "resume-error", "catalog-drift", "wrong-route", "probe-failure"]
+)
+def test_checkpoint_resume_restores_copilot_before_any_inference(
+    catalog, tmp_path, monkeypatch, outcome
+):
+    """Exercise real checkpoint I/O, CLI resume, registry and factory wiring."""
+    from conductor.cli.run import resume_workflow_async
+    from conductor.config.loader import load_config
+    from conductor.engine.checkpoint import CheckpointManager
+    from conductor.engine.workflow import WorkflowEngine
+    from conductor.providers import factory
+    from conductor.providers.registry import ProviderRegistry
+
+    workflow = tmp_path / "workflow.yaml"
+    workflow.write_text("""workflow:
+  name: codex-checkpoint
+  entry_point: worker
+  runtime:
+    provider: codex
+    default_model: gpt-6.1-sol
+agents:
+  - name: worker
+    prompt: Continue the task.
+    routes:
+      - to: $end
+output:
+  result: "{{ worker.output.response }}"
+""")
+    monkeypatch.setenv("CONDUCTOR_TMPDIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("CONDUCTOR_CODEX_BACKEND", "copilot")
+    monkeypatch.setenv("COPILOT_PROXY_API_KEY", "original-secret")
+    monkeypatch.setenv("COPILOT_PROXY_PORT", "4123")
+    monkeypatch.setattr(factory, "CODEX_SDK_AVAILABLE", True)
+    monkeypatch.setattr(codex_mod, "CodexConfig", lambda **kw: SimpleNamespace(**kw))
+    monkeypatch.setattr(codex_mod, "guard_startup", lambda *args: None)
+
+    async def run():
+        worker = thread()
+        worker.turn.side_effect = (
+            [completed_turn("resumed")]
+            if outcome == "probe-failure"
+            else [completed_turn(status="failed"), completed_turn("resumed")]
+        )
+        initial_run = True
+
+        async def start(**kwargs):
+            assert kwargs["model_provider"] == "github_copilot"
+            if kwargs.get("ephemeral"):
+                probe = thread()
+                probe.turn.return_value = completed_turn(
+                    status="failed" if outcome == "probe-failure" and initial_run else "completed"
+                )
+                return probe
+            return worker
+
+        client = SimpleNamespace(
+            __aenter__=AsyncMock(),
+            close=AsyncMock(),
+            thread_start=AsyncMock(side_effect=start),
+            thread_resume=AsyncMock(return_value=worker),
+            account=AsyncMock(),
+        )
+        configs = []
+
+        def make_client(config):
+            assert config.env["CONDUCTOR_CODEX_BACKEND"] == "copilot"
+            assert config.env["COPILOT_PROXY_PORT"] == "4123"
+            configs.append(config)
+            return client
+
+        monkeypatch.setattr(codex_mod, "AsyncCodex", make_client)
+        config = load_config(workflow)
+        async with ProviderRegistry(config) as registry:
+            engine = WorkflowEngine(config, registry=registry, workflow_path=workflow)
+            with pytest.raises(ProviderError, match="failed"):
+                await engine.run({})
+        checkpoints = list((tmp_path / "runtime/checkpoints").glob("*.json"))
+        assert len(checkpoints) == 1
+        saved = CheckpointManager.load_checkpoint(checkpoints[0])
+        settings = saved.provider_state["codex"]["backend_settings"]
+        assert settings == backend_settings("copilot")
+        assert saved.copilot_session_ids == (
+            {} if outcome == "probe-failure" else {"worker": "test-thread"}
+        )
+        if outcome == "probe-failure":
+            assert client.close.await_count >= 1
+        assert "original-secret" not in checkpoints[0].read_text()
+        initial_run = False
+
+        for key in (
+            "CONDUCTOR_CODEX_BACKEND",
+            "CONDUCTOR_CODEX_COPILOT_CATALOG",
+            "AGENT_PROVIDERS_ROOT",
+            "COPILOT_PROXY_PORT",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("COPILOT_PROXY_API_KEY", "rotated-secret")
+        if outcome == "catalog-drift":
+            catalog.write_text('{"models": ["changed"]}')
+        elif outcome == "resume-error":
+            client.thread_resume.side_effect = RuntimeError("unreachable thread")
+        elif outcome == "wrong-route":
+            client.thread_resume.return_value = thread(provider="openai")
+        if outcome in {"success", "probe-failure"}:
+            result = await resume_workflow_async(
+                checkpoint_path=checkpoints[0], no_interactive=True
+            )
+            assert result == {"result": "resumed"}
+            assert configs[-1].env["COPILOT_PROXY_API_KEY"] == "rotated-secret"
+        else:
+            with pytest.raises(ProviderError, match="changed|no fallback|mismatch"):
+                await resume_workflow_async(checkpoint_path=checkpoints[0], no_interactive=True)
+        # Resume must never dispatch a fresh native thread, even on failure.
+        starts = [
+            call.kwargs
+            for call in client.thread_start.call_args_list
+            if not call.kwargs.get("ephemeral")
+        ]
+        assert len(starts) == 1
+        if outcome not in {"catalog-drift", "probe-failure"}:
+            assert client.thread_resume.call_args.kwargs["model_provider"] == "github_copilot"
+        client.account.assert_not_called()
+        assert worker.turn.await_count == (2 if outcome == "success" else 1)
+
+    asyncio.run(run())
+
+
+def test_native_checkpoint_ignores_later_copilot_environment(catalog, monkeypatch):
+    saved = CodexProvider(backend="native").get_checkpoint_state()["codex"]
+    monkeypatch.setenv("CONDUCTOR_CODEX_BACKEND", "copilot")
+    monkeypatch.setenv("CONDUCTOR_CODEX_COPILOT_CATALOG", "/missing-catalog.json")
+    restored = CodexProvider(checkpoint_state=saved)
+    assert restored.get_checkpoint_state() == {"codex": saved}
+    assert restored._backend == "native"
+
+
+def test_uninstantiated_checkpoint_settings_survive_another_checkpoint(catalog):
+    from conductor.config.schema import RuntimeConfig, WorkflowConfig, WorkflowDef
+    from conductor.providers.registry import ProviderRegistry
+
+    saved = {"codex": {"backend_settings": backend_settings("copilot")}}
+    registry = ProviderRegistry(
+        WorkflowConfig(
+            workflow=WorkflowDef(
+                name="resume", entry_point="worker", runtime=RuntimeConfig(provider="codex")
+            ),
+            agents=[AgentDef(name="worker", prompt="Continue")],
+        )
+    )
+    registry.set_checkpoint_state(saved)
+    retained = registry.get_checkpoint_state()
+    assert retained == saved
+    retained["codex"]["backend_settings"]["backend"] = "native"
+    assert registry.get_checkpoint_state() == saved

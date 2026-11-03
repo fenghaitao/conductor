@@ -102,7 +102,9 @@ class CheckpointData:
             Despite the name (kept for on-disk back-compat), this is
             provider-agnostic — any provider whose class implements
             ``get_session_ids()`` / ``set_resume_session_ids()`` (currently
-            Copilot and the Claude Agent SDK) populates and consumes it.
+            Copilot, Codex and the Claude Agent SDK) populates and consumes it.
+        provider_state: Public provider settings required for safe resume,
+            such as the selected Codex backend and model-catalog digest.
         file_path: Path where the checkpoint file is stored.
         instructions_preamble: Workspace instructions preamble that was
             active during the original run, or ``None``.
@@ -137,6 +139,8 @@ class CheckpointData:
     """Filesystem path to the original JSONL event log. Empty for
     checkpoints written before this field was introduced, or when the
     log file was unavailable at checkpoint time."""
+    provider_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Public provider resume settings; credentials remain environment-only."""
 
 
 class CheckpointManager:
@@ -186,6 +190,7 @@ class CheckpointManager:
         instructions_preamble: str | None = None,
         run_id: str = "",
         event_log_path: str = "",
+        provider_state: dict[str, dict[str, Any]] | None = None,
     ) -> Path | None:
         """Serialize workflow state to a checkpoint file.
 
@@ -210,6 +215,7 @@ class CheckpointManager:
             event_log_path: Filesystem path to the original JSONL event log.
                 Persisted so resume can replay prior events into the
                 dashboard and append further events to the same log.
+            provider_state: Public provider settings required for safe resume.
 
         Returns:
             Path to the saved checkpoint file, or ``None`` if saving failed.
@@ -250,6 +256,7 @@ class CheckpointManager:
                 "context": _make_json_serializable(context.to_dict()),
                 "limits": _make_json_serializable(limits.to_dict()),
                 "copilot_session_ids": copilot_session_ids or {},
+                "provider_state": provider_state or {},
                 "system": system_metadata or {},
                 "instructions_preamble": instructions_preamble,
                 "run_id": run_id,
@@ -357,6 +364,16 @@ class CheckpointManager:
                     checkpoint_path=str(checkpoint_path),
                 )
 
+        provider_state = data.get("provider_state", {})
+        if not isinstance(provider_state, dict) or any(
+            not isinstance(name, str) or not isinstance(settings, dict)
+            for name, settings in provider_state.items()
+        ):
+            raise CheckpointError(
+                "Checkpoint provider_state must map provider names to public settings",
+                checkpoint_path=str(checkpoint_path),
+            )
+
         return CheckpointData(
             version=data["version"],
             workflow_path=data["workflow_path"],
@@ -372,6 +389,7 @@ class CheckpointManager:
             instructions_preamble=data.get("instructions_preamble"),
             run_id=data.get("run_id", "") or "",
             event_log_path=data.get("event_log_path", "") or "",
+            provider_state=provider_state,
         )
 
     @staticmethod
