@@ -26,7 +26,7 @@ from conductor.config.schema import (
     WorkflowDef,
 )
 from conductor.engine.workflow import WorkflowEngine
-from conductor.exceptions import ExecutionError
+from conductor.exceptions import ProviderError
 from conductor.providers.copilot import CopilotProvider
 
 
@@ -460,7 +460,7 @@ class TestSubWorkflowSkillDirectoriesRestoration:
 
         engine = WorkflowEngine(config, provider, workflow_path=parent_path)
 
-        with pytest.raises(ExecutionError):
+        with pytest.raises(ProviderError, match="Simulated failure"):
             await engine.run({})
 
         # Even after failure, provider should be restored
