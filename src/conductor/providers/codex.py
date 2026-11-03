@@ -40,6 +40,13 @@ from conductor.providers._recovery_prompt import build_parse_recovery_prompt
 from conductor.providers._schema import SchemaDepthError, build_json_schema_properties
 from conductor.providers.base import AgentOutput, AgentProvider, EventCallback
 from conductor.providers.capabilities import ProviderCapabilities
+from conductor.providers.codex_backend import (
+    backend_environment,
+    backend_settings,
+    config_overrides,
+    guard_startup,
+    resolve_backend,
+)
 from conductor.providers.reasoning import ReasoningEffort, resolve_reasoning_effort
 
 if TYPE_CHECKING:
@@ -65,6 +72,7 @@ except ImportError:  # pragma: no cover - exercised via the availability flag
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_COPILOT_MODEL: Final[str] = "gpt-6.1-sol"
 _MAX_SCHEMA_DEPTH: Final[int] = 10
 _MAX_PARSE_RECOVERY_ATTEMPTS: Final[int] = 2
 
@@ -240,7 +248,7 @@ class CodexProvider(AgentProvider):
         # Each execution owns its own thread; the id map is a plain dict
         # mutated only from the event loop.
         concurrent_safe=True,
-        upstream_pin="openai-codex>=0.147.0",
+        upstream_pin="openai-codex>=0.163.0,<0.164",
         maintainer="unassigned (experimental)",
     )
 
@@ -251,6 +259,7 @@ class CodexProvider(AgentProvider):
         sandbox: str | None = None,
         approval_mode: str | None = None,
         default_reasoning_effort: ReasoningEffort | None = None,
+        backend: str | None = None,
         **_ignored: Any,
     ) -> None:
         """Construct the provider.
@@ -268,6 +277,8 @@ class CodexProvider(AgentProvider):
             default_reasoning_effort: Workflow-wide ``reasoning.effort``
                 default, from ``runtime.default_reasoning_effort``. Falls
                 back to :data:`_DEFAULT_REASONING_EFFORT`.
+            backend: Explicit ``native`` or ``copilot`` backend. When omitted,
+                uses CONDUCTOR_CODEX_BACKEND (default ``native``).
             **_ignored: Runtime fields other providers accept that Codex has
                 no equivalent for (e.g. ``temperature``). Swallowed so the
                 factory can pass a uniform kwarg set.
@@ -280,10 +291,12 @@ class CodexProvider(AgentProvider):
             raise ProviderError(
                 "The 'openai-codex' package is required for the codex provider "
                 "but is not installed.",
-                suggestion="Install it with: uv add 'openai-codex>=0.147.0'",
+                suggestion="Install it with: uv add 'openai-codex>=0.163.0,<0.164'",
             )
 
-        self._model = model
+        self._backend = resolve_backend(backend)
+        self._backend_settings = backend_settings(self._backend)
+        self._model = model or (_DEFAULT_COPILOT_MODEL if self._backend == "copilot" else None)
         self._max_session_seconds = max_session_seconds
         self._default_reasoning_effort = default_reasoning_effort
         self._sandbox = self._coerce_sandbox(sandbox)
@@ -348,7 +361,17 @@ class CodexProvider(AgentProvider):
         async with self._start_lock:
             if self._client is not None:
                 return self._client
-            client = AsyncCodex(CodexConfig())  # ty: ignore[call-non-callable]
+            config = (
+                CodexConfig()  # ty: ignore[call-non-callable]
+                if self._backend == "native"
+                else CodexConfig(  # ty: ignore[call-non-callable]
+                    config_overrides=config_overrides(self._backend_settings),
+                    env=backend_environment(self._backend_settings),
+                )
+            )
+            client = AsyncCodex(config)  # ty: ignore[call-non-callable]
+            if self._backend == "copilot":
+                guard_startup(client, config)
             try:
                 # ``AsyncCodex`` initializes lazily and exposes no ``start()``;
                 # the SDK documents context entry as the standard path because
@@ -356,28 +379,60 @@ class CodexProvider(AgentProvider):
                 # directly since the client's lifetime spans many ``execute``
                 # calls and cannot sit inside a single ``async with``.
                 await client.__aenter__()
-            except Exception as exc:
+            except BaseException as exc:
+                # Cancellation also abandons startup. The SDK offloads its
+                # initialize read to an executor; closing this local client
+                # releases that read even before self._client is assigned.
+                try:
+                    await asyncio.wait_for(client.close(), timeout=10)
+                except Exception:
+                    logger.debug("Partially started Codex client close failed", exc_info=True)
+                if not isinstance(exc, Exception):
+                    raise
                 raise ProviderError(
                     f"Could not start the Codex app-server: {exc}",
                     suggestion=(
                         "Check that the bundled `codex` binary is runnable and "
-                        "that you are signed in (`codex login`)."
+                        "that the requested backend is reachable "
+                        "(Copilot does not use `codex login`)."
                     ),
                 ) from exc
             self._client = client
             return client
 
     async def validate_connection(self) -> bool:
-        """Confirm the app-server starts and an account is available."""
+        """Validate the requested route, not a possibly unrelated ChatGPT login."""
         try:
             client = await self._ensure_client()
-            await client.account()
+            if self._backend == "copilot":
+                from conductor.config.schema import AgentDef
+
+                # A catalog or an existing ChatGPT account is not an entitlement
+                # check. This tiny real turn uses the exact route guarded below.
+                probe = await self._open_thread(
+                    client, AgentDef(name="connection_probe", prompt="Reply OK."), self._model
+                )
+                result = await self._run_turn(
+                    probe,
+                    self._build_turn_input("Reply only OK. Do not use tools."),
+                    output_schema=None,
+                    effort="low",
+                    model=self._model,
+                    interrupt_signal=None,
+                    event_callback=None,
+                )
+                if not result.status.endswith("completed") or not result.final_response:
+                    message = getattr(result.error, "message", None) or result.status
+                    raise ProviderError(f"Copilot inference connection check failed: {message}")
+                await self._verify_backend(probe, self._model)
+            else:
+                await client.account()
         except ProviderError:
             raise
         except Exception as exc:
             raise ProviderError(
                 f"Codex connection check failed: {exc}",
-                suggestion="Run `codex login` to authenticate, then retry.",
+                suggestion="Check the requested backend credentials and connectivity, then retry.",
             ) from exc
         return True
 
@@ -572,6 +627,7 @@ class CodexProvider(AgentProvider):
         if cwd is not None:
             kwargs["cwd"] = cwd
 
+        await self._verify_backend(thread, model)
         handle = await thread.turn(turn_input, **kwargs)
         turn_id = getattr(handle, "id", None)
         # The thread id is the rollout's id under CODEX_HOME/sessions. It is
@@ -602,6 +658,17 @@ class CodexProvider(AgentProvider):
             async for notification in handle.stream():
                 payload = getattr(notification, "payload", notification)
                 name = type(payload).__name__
+                if (
+                    self._backend == "copilot"
+                    and name == "ModelReroutedNotification"
+                    and self._for_turn(payload, turn_id)
+                    and getattr(payload, "to_model", None) != model
+                ):
+                    await self._interrupt(handle)
+                    raise ProviderError(
+                        f"Copilot model rerouted to {getattr(payload, 'to_model', None)!r}; "
+                        f"expected {model!r}. Refusing model fallback."
+                    )
                 if name == "ItemCompletedNotification" and self._for_turn(payload, turn_id):
                     items.append(getattr(payload, "item", None))
                 elif name == "ThreadTokenUsageUpdatedNotification" and self._for_turn(
@@ -632,6 +699,7 @@ class CodexProvider(AgentProvider):
         except Exception as exc:
             raise ProviderError(f"Codex turn failed: {exc}") from exc
 
+        await self._verify_backend(thread, model)
         status = str(getattr(completed, "status", "") or "")
         return _TurnOutcome(
             final_response=_final_response_from_items(items),
@@ -734,12 +802,17 @@ class CodexProvider(AgentProvider):
             cwd=self._resolve_cwd(agent),
         )
 
+        await self._verify_backend(thread, model)
         self._record_thread_id(agent, thread)
         interrupted = result.interrupted
 
         if result.status.endswith("failed"):
             message = getattr(result.error, "message", None) or "Codex turn failed."
             raise ProviderError(f"Agent '{agent.name}': {message}")
+        if not interrupted and not result.status.endswith("completed"):
+            raise ProviderError(
+                f"Agent '{agent.name}' Codex turn did not complete: {result.status}"
+            )
 
         content = await self._resolve_content(
             result,
@@ -769,11 +842,30 @@ class CodexProvider(AgentProvider):
             session_id=_thread_id(thread),
         )
 
+    async def _verify_backend(self, thread: Any, model: str | None) -> None:
+        """Attest the app-server's actual thread before any paid turn."""
+        if self._backend != "copilot":
+            return
+        try:
+            observed = (await thread.read()).thread
+            provider = observed.model_provider
+            observed_model = observed.model
+        except Exception as exc:
+            raise ProviderError(f"Cannot attest Copilot session backend: {exc}") from exc
+        if provider != "github_copilot" or not model or observed_model != model:
+            raise ProviderError(
+                f"Copilot backend mismatch: session provider={provider!r}, "
+                f"model={observed_model!r}; expected github_copilot, {model!r}. "
+                "Refusing ChatGPT/native fallback."
+            )
+
     async def _open_thread(self, client: Any, agent: AgentDef, model: str | None) -> Any:
-        """Start a new thread, or resume the one restored from a checkpoint."""
+        """Start/resume a thread, refusing any requested-backend mismatch."""
         kwargs: dict[str, Any] = {"approval_mode": self._approval_mode}
         if model is not None:
             kwargs["model"] = model
+        if self._backend == "copilot":
+            kwargs["model_provider"] = "github_copilot"
         if self._sandbox is not None:
             kwargs["sandbox"] = self._sandbox
         cwd = self._resolve_cwd(agent)
@@ -781,22 +873,23 @@ class CodexProvider(AgentProvider):
             kwargs["cwd"] = cwd
         if agent.system_prompt:
             kwargs["developer_instructions"] = agent.system_prompt
-
-        # Only a checkpoint-restored id is resumed: a thread id recorded this
-        # run is for checkpointing, not for cross-execution continuity.
         existing = self._restored_thread_ids.pop(agent.name, None)
         if existing:
             try:
-                return await client.thread_resume(existing, **kwargs)
-            except Exception:
-                # A pruned or unreachable thread must not fail the run --
-                # start fresh.
+                thread = await client.thread_resume(existing, **kwargs)
+            except Exception as exc:
+                if self._backend == "copilot":
+                    raise ProviderError(
+                        f"Copilot session resume failed; no fallback: {exc}"
+                    ) from exc
                 logger.debug(
-                    "Codex thread %s could not be resumed; starting fresh",
-                    existing,
-                    exc_info=True,
+                    "Codex thread %s could not resume; starting fresh", existing, exc_info=True
                 )
-        return await client.thread_start(**kwargs)
+                thread = await client.thread_start(**kwargs)
+        else:
+            thread = await client.thread_start(**kwargs)
+        await self._verify_backend(thread, model)
+        return thread
 
     def _record_thread_id(self, agent: AgentDef, thread: Any) -> None:
         """Remember this thread id so a checkpoint can reattach to it."""
@@ -881,6 +974,11 @@ class CodexProvider(AgentProvider):
                 event_callback=event_callback,
                 cwd=self._resolve_cwd(agent),
             )
+            if retry.interrupted or not retry.status.endswith("completed"):
+                message = getattr(retry.error, "message", None) or retry.status
+                raise ProviderError(
+                    f"Agent '{agent.name}' parse recovery did not complete: {message}"
+                )
             current = retry.final_response or ""
 
         # Budget spent. Re-raise the original ValidationError where we have

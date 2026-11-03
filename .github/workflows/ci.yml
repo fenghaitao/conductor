@@ -130,6 +130,17 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  codex-sdk:
+    name: Codex SDK compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install supported SDK and test dependencies
+        run: uv sync --python 3.12 --group dev --extra codex
+      - name: Test provider and real SDK startup cleanup without inference
+        run: uv run --extra codex pytest tests/test_providers/test_codex*.py
+
   validate-examples:
     name: Validate Example Workflows
     runs-on: ubuntu-latest

@@ -51,7 +51,9 @@ dependencies = [
 codex = [
     # Drives a local Codex app-server over JSON-RPC. Pulls in the bundled
     # `codex` binary via openai-codex-cli-bin, pinned to the same version.
-    "openai-codex>=0.147.0",
+    # Copilot startup cleanup uses the 0.163 transport internals; validate a
+    # new SDK series before widening this compatibility range.
+    "openai-codex>=0.163.0,<0.164",
 ]
 claude-agent-sdk = [
     "claude-agent-sdk>=0.1.64",

@@ -198,7 +198,7 @@ async def create_provider(
             if not CODEX_SDK_AVAILABLE:
                 raise ProviderError(
                     "codex provider requires the openai-codex package",
-                    suggestion="Install with: uv add 'openai-codex>=0.147.0'",
+                    suggestion="Install with: uv add 'openai-codex>=0.163.0,<0.164'",
                 )
             # Codex exposes no sampling controls: the app-server owns the
             # request. Refuse loudly rather than silently dropping either,
