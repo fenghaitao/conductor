@@ -23,9 +23,15 @@ import pytest
 from conductor.config.schema import AgentDef, OutputField
 from conductor.exceptions import ProviderError
 from conductor.providers.pydantic_deep import (
+    PYDANTIC_DEEP_AVAILABLE,
     PydanticDeepProvider,
     _build_output_model,
     _conductor_type_to_python,
+)
+
+pytestmark = pytest.mark.skipif(
+    not PYDANTIC_DEEP_AVAILABLE,
+    reason="optional pydantic-deep/pydantic-ai dependencies are not installed",
 )
 
 # ---------------------------------------------------------------------------

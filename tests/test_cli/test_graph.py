@@ -12,6 +12,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from conductor.cli.app import app
@@ -595,9 +596,10 @@ class TestGraphCLI:
     def test_graph_help(self) -> None:
         result = runner.invoke(app, ["graph", "--help"])
         assert result.exit_code == 0
-        assert "Render a workflow" in result.stdout
-        assert "--output" in result.stdout
-        assert "--depth" in result.stdout
+        output = unstyle(result.stdout)
+        assert "Render a workflow" in output
+        assert "--output" in output
+        assert "--depth" in output
 
     def test_graph_simple_qa(self) -> None:
         """VAL-CROSS-001: Linear workflow produces valid Mermaid."""
