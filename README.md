@@ -357,6 +357,7 @@ See the [`examples/`](./examples/) directory for complete workflows:
 | [Parallel Execution](./docs/parallel-execution.md) | Static parallel groups |
 | [Dynamic Parallel](./docs/dynamic-parallel.md) | For-each groups and array processing |
 | [Claude Provider](./docs/providers/claude.md) | Claude setup and configuration |
+| [Codex Provider](./docs/providers/codex.md) | Codex SDK and GitHub Copilot inference through LiteLLM |
 | [Provider Comparison](./docs/providers/comparison.md) | Copilot vs Claude decision guide |
 
 ## Development
