@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Literal
 
+from conductor.exceptions import CheckpointError
 from conductor.providers.base import AgentProvider
 from conductor.providers.factory import create_provider
 
@@ -220,6 +221,28 @@ class ProviderRegistry:
         for provider in self._providers.values():
             state.update(provider.get_checkpoint_state())
         return state
+
+    def get_session_ids(self) -> dict[str, str]:
+        """Collect every provider's sessions, refusing ambiguous agent identities.
+
+        Active providers supersede their restored IDs. Retain restored IDs
+        for providers that have not been instantiated on this resume yet.
+        """
+        sessions: dict[str, str] = {}
+        owners: dict[str, str] = {}
+        for provider_type, provider in self._providers.items():
+            get_ids = getattr(provider, "get_session_ids", None)
+            if not callable(get_ids):
+                continue
+            for agent_name, session_id in get_ids().items():
+                if agent_name in sessions and sessions[agent_name] != session_id:
+                    raise CheckpointError(
+                        f"Conflicting checkpoint session IDs for agent {agent_name!r} "
+                        f"from providers {owners[agent_name]!r} and {provider_type!r}"
+                    )
+                sessions[agent_name] = session_id
+                owners[agent_name] = provider_type
+        return self._resume_session_ids | sessions
 
     def set_resume_session_ids(self, ids: dict[str, str]) -> None:
         """Store session IDs for Copilot session resume.

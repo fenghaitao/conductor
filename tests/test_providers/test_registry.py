@@ -2,11 +2,13 @@
 
 import asyncio
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from conductor.config.schema import AgentDef, RuntimeConfig, WorkflowConfig, WorkflowDef
+from conductor.engine.workflow import WorkflowEngine
+from conductor.exceptions import CheckpointError, ProviderError
 from conductor.providers.base import AgentOutput, AgentProvider
 from conductor.providers.registry import ProviderRegistry
 
@@ -34,6 +36,15 @@ class MockProvider(AgentProvider, abstract=True):
 
     async def close(self) -> None:
         self.closed = True
+
+
+class SessionProvider(MockProvider, abstract=True):
+    def __init__(self, sessions: dict[str, str]) -> None:
+        super().__init__()
+        self.sessions = sessions
+
+    def get_session_ids(self) -> dict[str, str]:
+        return self.sessions.copy()
 
 
 def create_test_config(
@@ -85,6 +96,67 @@ class TestProviderRegistryBasics:
 
         assert not registry.is_provider_active("copilot")
         assert not registry.is_provider_active("claude")
+
+
+class TestCheckpointSessions:
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_aggregates_all_session_capable_providers(self, reverse: bool) -> None:
+        registry = ProviderRegistry(create_test_config())
+        providers = {
+            "copilot": SessionProvider({"planner": "copilot-session"}),
+            "codex": SessionProvider({"implementer": "codex-thread"}),
+            "claude-agent-sdk": SessionProvider({"reviewer": "claude-session"}),
+            "claude": MockProvider(),
+        }
+        registry._providers.update(reversed(list(providers.items())) if reverse else providers)
+        assert registry.get_session_ids() == {
+            "planner": "copilot-session",
+            "implementer": "codex-thread",
+            "reviewer": "claude-session",
+        }
+
+    def test_preserves_uninstantiated_sessions_and_updates_active_sessions(self) -> None:
+        registry = ProviderRegistry(create_test_config())
+        restored = {"planner": "copilot-session", "implementer": "old-thread"}
+        registry.set_resume_session_ids(restored)
+        registry._providers["codex"] = SessionProvider({"implementer": "new-thread"})
+        sessions = registry.get_session_ids()
+        assert sessions == {"planner": "copilot-session", "implementer": "new-thread"}
+        sessions["planner"] = "changed"
+        assert registry.get_session_ids()["planner"] == restored["planner"]
+
+    @pytest.mark.parametrize("same_id", [False, True])
+    def test_rejects_conflicting_agent_names(self, same_id: bool) -> None:
+        registry = ProviderRegistry(create_test_config())
+        registry._providers["copilot"] = SessionProvider({"worker": "original"})
+        registry._providers["codex"] = SessionProvider(
+            {"worker": "original" if same_id else "other"}
+        )
+        if same_id:
+            assert registry.get_session_ids() == {"worker": "original"}
+        else:
+            with pytest.raises(CheckpointError, match="Conflicting.*worker.*copilot.*codex"):
+                registry.get_session_ids()
+
+    @pytest.mark.asyncio
+    async def test_conflict_refuses_partial_checkpoint_without_masking_original_error(
+        self, tmp_path, caplog, monkeypatch
+    ) -> None:
+        config = create_test_config()
+        registry = ProviderRegistry(config)
+        failing = SessionProvider({"worker": "copilot-session"})
+        failing.execute = AsyncMock(side_effect=ProviderError("original workflow failure"))
+        registry._providers["copilot"] = failing
+        registry._providers["codex"] = SessionProvider({"worker": "codex-thread"})
+        workflow = tmp_path / "workflow.yaml"
+        workflow.write_text("fixture")
+        monkeypatch.setenv("CONDUCTOR_TMPDIR", str(tmp_path / "runtime"))
+        engine = WorkflowEngine(config, registry=registry, workflow_path=workflow)
+        with pytest.raises(ProviderError, match="original workflow failure"):
+            await engine.run({})
+        assert engine._last_checkpoint_path is None
+        assert not list(tmp_path.rglob("*.json"))
+        assert "Checkpoint not saved: Conflicting checkpoint session IDs" in caplog.text
 
 
 class TestProviderResolution:

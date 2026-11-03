@@ -49,6 +49,10 @@ New Conductor checkpoints save the selected backend and public catalog digest
 under `provider_state.codex`. Resume restores and validates those settings
 before provider construction or connection validation, even in a fresh shell
 without backend variables. Proxy credentials still come from the environment.
+Mixed-provider checkpoints retain session IDs from every active provider, so
+Codex can reattach to its original thread even when another provider ran first.
+Conflicting session IDs for the same agent refuse checkpoint creation with an
+explicit error instead of writing ambiguous resume state.
 Catalog drift and failed Copilot session resume fail without native fallback.
 Native checkpoints also retain their native backend if the shell later selects
 Copilot. Legacy checkpoints without provider settings retain their existing
