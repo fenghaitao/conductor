@@ -511,3 +511,106 @@ def test_uninstantiated_checkpoint_settings_survive_another_checkpoint(catalog):
     assert retained == saved
     retained["codex"]["backend_settings"]["backend"] = "native"
     assert registry.get_checkpoint_state() == saved
+
+
+def test_mixed_provider_checkpoint_preserves_both_sessions_and_resumes_codex_thread(
+    catalog, tmp_path, monkeypatch
+):
+    from conductor.cli.run import resume_workflow_async
+    from conductor.config.loader import load_config
+    from conductor.engine.checkpoint import CheckpointManager
+    from conductor.engine.workflow import WorkflowEngine
+    from conductor.providers import factory
+    from conductor.providers.copilot import CopilotProvider
+    from conductor.providers.registry import ProviderRegistry
+
+    workflow = tmp_path / "mixed.yaml"
+    workflow.write_text("""workflow:
+  name: mixed-provider-checkpoint
+  entry_point: planner
+  runtime:
+    provider: codex
+    default_model: gpt-6.1-sol
+agents:
+  - name: planner
+    provider: copilot
+    prompt: Prepare the plan.
+    routes:
+      - to: implementer
+  - name: implementer
+    provider: codex
+    prompt: Continue the implementation.
+    routes:
+      - to: $end
+output:
+  result: "{{ implementer.output.response }}"
+""")
+    monkeypatch.setenv("CONDUCTOR_TMPDIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("CONDUCTOR_CODEX_BACKEND", "copilot")
+    monkeypatch.setattr(factory, "CODEX_SDK_AVAILABLE", True)
+    monkeypatch.setattr(codex_mod, "CodexConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(codex_mod, "guard_startup", lambda *args: None)
+    planner_calls = []
+
+    def plan(agent, _prompt, _context):
+        planner_calls.append(agent.name)
+        return {"plan": "prepared"}
+
+    copilot = CopilotProvider(mock_handler=plan)
+    # The native SDK session is simulated, while collection uses the real
+    # Copilot provider's get_session_ids() method.
+    copilot._session_ids["planner"] = "copilot-session-A"
+    monkeypatch.setattr(factory, "CopilotProvider", lambda **kwargs: copilot)
+
+    async def run():
+        implementer = thread()
+        implementer.id = "codex-thread-B"
+        implementer.turn.side_effect = [
+            completed_turn(status="failed"),
+            completed_turn("continued"),
+        ]
+
+        async def start(**kwargs):
+            assert kwargs["model_provider"] == "github_copilot"
+            if kwargs.get("ephemeral"):
+                probe = thread()
+                probe.turn.return_value = completed_turn()
+                return probe
+            return implementer
+
+        client = SimpleNamespace(
+            __aenter__=AsyncMock(),
+            close=AsyncMock(),
+            thread_start=AsyncMock(side_effect=start),
+            thread_resume=AsyncMock(return_value=implementer),
+            account=AsyncMock(),
+        )
+        monkeypatch.setattr(codex_mod, "AsyncCodex", lambda config: client)
+        config = load_config(workflow)
+        async with ProviderRegistry(config) as registry:
+            engine = WorkflowEngine(config, registry=registry, workflow_path=workflow)
+            with pytest.raises(ProviderError, match="failed"):
+                await engine.run({})
+            assert list(registry.get_active_providers()) == ["copilot", "codex"]
+        checkpoints = list((tmp_path / "runtime/checkpoints").glob("*.json"))
+        assert len(checkpoints) == 1
+        saved = CheckpointManager.load_checkpoint(checkpoints[0])
+        assert saved.copilot_session_ids == {
+            "planner": "copilot-session-A",
+            "implementer": "codex-thread-B",
+        }
+        assert saved.context["agent_outputs"]["planner"] == {"plan": "prepared"}
+        monkeypatch.delenv("CONDUCTOR_CODEX_BACKEND")
+        monkeypatch.delenv("CONDUCTOR_CODEX_COPILOT_CATALOG")
+        result = await resume_workflow_async(checkpoint_path=checkpoints[0], no_interactive=True)
+        assert result == {"result": "continued"}
+        assert client.thread_resume.call_args.args == ("codex-thread-B",)
+        assert client.thread_resume.call_args.kwargs["model_provider"] == "github_copilot"
+        assert planner_calls == ["planner"]
+        client.account.assert_not_called()
+        assert (
+            len([c for c in client.thread_start.call_args_list if not c.kwargs.get("ephemeral")])
+            == 1
+        )
+
+    asyncio.run(run())

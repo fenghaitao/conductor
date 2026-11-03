@@ -28,6 +28,7 @@ from conductor.engine.usage import UsageTracker, WorkflowUsage
 from conductor.events import WorkflowEvent, WorkflowEventEmitter
 from conductor.exceptions import (
     AgentTimeoutError,
+    CheckpointError,
     ConductorError,
     ExecutionError,
     InterruptError,
@@ -1901,19 +1902,21 @@ class WorkflowEngine:
             logger.debug("No workflow_path set; skipping checkpoint save")
             return
 
-        # Collect session IDs from provider if available
+        # The registry aggregates every active session-capable provider.
         copilot_session_ids: dict[str, str] | None = None
         provider = self._single_provider
-        if provider is not None and hasattr(provider, "get_session_ids"):
-            copilot_session_ids = provider.get_session_ids()  # type: ignore[union-attr]
-        elif self._registry is not None:
-            for p in self._registry.get_active_providers().values():
-                if hasattr(p, "get_session_ids"):
-                    copilot_session_ids = p.get_session_ids()  # type: ignore[union-attr]
-                    break
+        state_source = provider if provider is not None else self._registry
+        try:
+            get_ids = getattr(state_source, "get_session_ids", None)
+            if callable(get_ids):
+                copilot_session_ids = get_ids()
+        except CheckpointError as exc:
+            # Do not write a partial checkpoint or replace the original error.
+            self._last_checkpoint_path = None
+            logger.error("Checkpoint not saved: %s", exc)
+            return
 
         provider_state = {}
-        state_source = provider if provider is not None else self._registry
         if state_source is not None:
             get_state = getattr(state_source, "get_checkpoint_state", None)
             if callable(get_state):
