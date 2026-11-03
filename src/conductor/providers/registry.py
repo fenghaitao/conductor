@@ -156,8 +156,8 @@ class ProviderRegistry:
         )
 
         # Pass stored resume session IDs to newly created providers
-        if self._resume_session_ids and hasattr(provider, "set_resume_session_ids"):
-            provider.set_resume_session_ids(self._resume_session_ids)  # type: ignore[union-attr]
+        if self._resume_session_ids:
+            self._apply_resume_session_ids(provider_type, provider)
 
         self._providers[provider_type] = provider
         return provider
@@ -244,17 +244,28 @@ class ProviderRegistry:
                 owners[agent_name] = provider_type
         return self._resume_session_ids | sessions
 
+    def _apply_resume_session_ids(
+        self, provider_type: ProviderType, provider: AgentProvider
+    ) -> None:
+        """Apply saved IDs only when this provider's own route can resume."""
+        settings = self._config.workflow.runtime.provider
+        if settings.name == provider_type and settings.has_custom_routing():
+            return
+        restore = getattr(provider, "set_resume_session_ids", None)
+        if callable(restore):
+            restore(dict(self._resume_session_ids))
+
     def set_resume_session_ids(self, ids: dict[str, str]) -> None:
-        """Store session IDs for Copilot session resume.
+        """Store session IDs for every resumable provider.
 
         The IDs are forwarded to providers that support
         ``set_resume_session_ids`` — both already-active providers
-        and providers created lazily in the future.
+        and providers created lazily in the future. Custom routing suppresses
+        restoration only for the matching provider, never another override.
 
         Args:
-            ids: Mapping of agent names to Copilot session IDs.
+            ids: Mapping of agent names to provider-native session IDs.
         """
         self._resume_session_ids = dict(ids)
-        for provider in self._providers.values():
-            if hasattr(provider, "set_resume_session_ids"):
-                provider.set_resume_session_ids(ids)  # type: ignore[union-attr]
+        for provider_type, provider in self._providers.items():
+            self._apply_resume_session_ids(provider_type, provider)

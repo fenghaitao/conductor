@@ -2180,13 +2180,9 @@ async def resume_workflow_async(
             if cp.provider_state:
                 registry.set_checkpoint_state(cp.provider_state)
 
-            # Pass stored session IDs to registry for Copilot session resume.
-            # Skip for custom-routed providers (e.g. DeepSeek, local LLMs) —
-            # those endpoints are stateless and don't support session continuation.
-            if cp.copilot_session_ids:
-                provider = config.workflow.runtime.provider
-                if not (hasattr(provider, "has_custom_routing") and provider.has_custom_routing()):
-                    registry.set_resume_session_ids(cp.copilot_session_ids)
+            # Session eligibility belongs to each concrete provider, not the
+            # workflow default: a stateless default can have resumable overrides.
+            registry.set_resume_session_ids(cp.copilot_session_ids)
 
             # Set up interrupt listener if interactive mode is enabled
             # Disabled in --web mode since the CLI isn't used for interaction

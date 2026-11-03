@@ -513,11 +513,13 @@ def test_uninstantiated_checkpoint_settings_survive_another_checkpoint(catalog):
     assert registry.get_checkpoint_state() == saved
 
 
+@pytest.mark.parametrize("custom_default", [False, True])
 def test_mixed_provider_checkpoint_preserves_both_sessions_and_resumes_codex_thread(
-    catalog, tmp_path, monkeypatch
+    catalog, tmp_path, monkeypatch, custom_default
 ):
     from conductor.cli.run import resume_workflow_async
     from conductor.config.loader import load_config
+    from conductor.config.schema import ProviderSettings, RouteDef
     from conductor.engine.checkpoint import CheckpointManager
     from conductor.engine.workflow import WorkflowEngine
     from conductor.providers import factory
@@ -556,11 +558,17 @@ output:
         planner_calls.append(agent.name)
         return {"plan": "prepared"}
 
-    copilot = CopilotProvider(mock_handler=plan)
-    # The native SDK session is simulated, while collection uses the real
-    # Copilot provider's get_session_ids() method.
-    copilot._session_ids["planner"] = "copilot-session-A"
-    monkeypatch.setattr(factory, "CopilotProvider", lambda **kwargs: copilot)
+    copilot_instances = []
+
+    def make_copilot(**kwargs):
+        copilot = CopilotProvider(mock_handler=plan, **kwargs)
+        # Simulate SDK bookkeeping while using the real collection/restore methods.
+        copilot._session_ids["planner"] = "copilot-session-A"
+        copilot.set_resume_session_ids = Mock(wraps=copilot.set_resume_session_ids)
+        copilot_instances.append(copilot)
+        return copilot
+
+    monkeypatch.setattr(factory, "CopilotProvider", make_copilot)
 
     async def run():
         implementer = thread()
@@ -587,6 +595,16 @@ output:
         )
         monkeypatch.setattr(codex_mod, "AsyncCodex", lambda config: client)
         config = load_config(workflow)
+        if custom_default:
+            config.workflow.runtime.provider = ProviderSettings(
+                name="copilot", base_url="http://127.0.0.1:4000/v1"
+            )
+            config.agents[1].routes = [RouteDef(to="finisher")]
+            config.agents.append(
+                AgentDef(name="finisher", prompt="Finish the plan.", routes=[RouteDef(to="$end")])
+            )
+            # CLI resume must reload the same custom default and Codex override.
+            workflow.write_text(json.dumps(config.model_dump(mode="json", exclude_none=True)))
         async with ProviderRegistry(config) as registry:
             engine = WorkflowEngine(config, registry=registry, workflow_path=workflow)
             with pytest.raises(ProviderError, match="failed"):
@@ -606,7 +624,13 @@ output:
         assert result == {"result": "continued"}
         assert client.thread_resume.call_args.args == ("codex-thread-B",)
         assert client.thread_resume.call_args.kwargs["model_provider"] == "github_copilot"
-        assert planner_calls == ["planner"]
+        assert planner_calls == (["planner", "finisher"] if custom_default else ["planner"])
+        if custom_default:
+            assert len(copilot_instances) == 2
+            for copilot in copilot_instances:
+                assert copilot._provider_settings.has_custom_routing()
+                copilot.set_resume_session_ids.assert_not_called()
+                assert copilot._resume_session_ids == {}
         client.account.assert_not_called()
         assert (
             len([c for c in client.thread_start.call_args_list if not c.kwargs.get("ephemeral")])
