@@ -90,9 +90,7 @@ Run this notification probe exactly:
     events = [json.loads(line) for line in events_path.read_text().splitlines()]
 
     tool_starts = [
-        _event_data(event)
-        for event in events
-        if event.get("type") == "tool.execution_start"
+        _event_data(event) for event in events if event.get("type") == "tool.execution_start"
     ]
     assert all(data.get("toolName") != "read_agent" for data in tool_starts)
 
