@@ -51,6 +51,8 @@ before provider construction or connection validation, even in a fresh shell
 without backend variables. Proxy credentials still come from the environment.
 Mixed-provider checkpoints retain session IDs from every active provider, so
 Codex can reattach to its original thread even when another provider ran first.
+Session restoration is checked per provider: a custom-routed, stateless default
+skips session continuation without blocking resumable per-agent overrides.
 Conflicting session IDs for the same agent refuse checkpoint creation with an
 explicit error instead of writing ambiguous resume state.
 Catalog drift and failed Copilot session resume fail without native fallback.

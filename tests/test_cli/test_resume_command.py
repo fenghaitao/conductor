@@ -612,6 +612,7 @@ class TestHashMismatchWarning:
             mock_registry_cls.return_value = mock_registry
             mock_registry.__aenter__ = AsyncMock(return_value=mock_registry)
             mock_registry.__aexit__ = AsyncMock(return_value=False)
+            mock_registry.set_resume_session_ids = MagicMock()
 
             # Set up engine mock
             mock_engine = MagicMock()
@@ -1203,6 +1204,7 @@ class TestResumeReplaysIntoDashboard:
             mock_registry_cls.return_value = mock_registry
             mock_registry.__aenter__ = AsyncMock(return_value=mock_registry)
             mock_registry.__aexit__ = AsyncMock(return_value=False)
+            mock_registry.set_resume_session_ids = MagicMock()
 
             mock_engine = MagicMock()
             mock_engine.resume = AsyncMock(return_value={"result": "ok"})
@@ -1261,6 +1263,7 @@ class TestResumeReplaysIntoDashboard:
             mock_registry_cls.return_value = mock_registry
             mock_registry.__aenter__ = AsyncMock(return_value=mock_registry)
             mock_registry.__aexit__ = AsyncMock(return_value=False)
+            mock_registry.set_resume_session_ids = MagicMock()
 
             mock_engine = MagicMock()
             mock_engine.resume = AsyncMock(return_value={"result": "ok"})

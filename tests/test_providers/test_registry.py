@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from conductor.config.schema import AgentDef, RuntimeConfig, WorkflowConfig, WorkflowDef
+from conductor.config.schema import (
+    AgentDef,
+    ProviderSettings,
+    RuntimeConfig,
+    WorkflowConfig,
+    WorkflowDef,
+)
 from conductor.engine.workflow import WorkflowEngine
 from conductor.exceptions import CheckpointError, ProviderError
 from conductor.providers.base import AgentOutput, AgentProvider
@@ -99,6 +105,44 @@ class TestProviderRegistryBasics:
 
 
 class TestCheckpointSessions:
+    @pytest.mark.parametrize("restore_before_creation", [False, True])
+    @pytest.mark.parametrize("custom_default", [False, True])
+    @pytest.mark.asyncio
+    async def test_restore_eligibility_is_per_provider(
+        self, restore_before_creation, custom_default, monkeypatch
+    ) -> None:
+        config = create_test_config()
+        if custom_default:
+            config.workflow.runtime.provider = ProviderSettings(
+                name="copilot", base_url="http://127.0.0.1:4000/v1"
+            )
+        registry = ProviderRegistry(config)
+        saved = {"planner": "copilot-session", "implementer": "codex-thread"}
+        providers = {
+            name: MagicMock(spec=MockProvider, set_resume_session_ids=MagicMock())
+            for name in ("copilot", "codex", "claude-agent-sdk")
+        }
+        monkeypatch.setenv("CONDUCTOR_CODEX_BACKEND", "native")
+
+        async def create(**kwargs):
+            return providers[kwargs["provider_type"]]
+
+        with patch("conductor.providers.registry.create_provider", side_effect=create):
+            if restore_before_creation:
+                registry.set_resume_session_ids(saved)
+            for name in providers:
+                await registry.get_provider(AgentDef(name=name, prompt="test", provider=name))
+            if not restore_before_creation:
+                registry.set_resume_session_ids(saved)
+
+        if custom_default:
+            providers["copilot"].set_resume_session_ids.assert_not_called()
+        else:
+            providers["copilot"].set_resume_session_ids.assert_called_once_with(saved)
+        for name in ("codex", "claude-agent-sdk"):
+            providers[name].set_resume_session_ids.assert_called_once_with(saved)
+        assert registry._resume_session_ids == saved
+
     @pytest.mark.parametrize("reverse", [False, True])
     def test_aggregates_all_session_capable_providers(self, reverse: bool) -> None:
         registry = ProviderRegistry(create_test_config())
