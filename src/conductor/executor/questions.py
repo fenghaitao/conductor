@@ -538,7 +538,7 @@ class QuestionsExecutor:
         an option either way.
         """
         try:
-            return await asyncio.to_thread(Prompt.ask, prompt, console=self.console)
+            return cast(str, await asyncio.to_thread(Prompt.ask, prompt, console=self.console))
         except EOFError as exc:
             raise ExecutionError(
                 "questions step: stdin closed while waiting for an answer",
