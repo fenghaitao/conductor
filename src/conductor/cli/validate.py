@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 def validate_workflow(
     workflow_path: Path,
     console: Console | None = None,
+    *,
+    environment: str | None = None,
 ) -> tuple[bool, WorkflowConfig | None]:
     """Validate a workflow YAML file.
 
@@ -60,6 +62,19 @@ def validate_workflow(
         from conductor.config.validator import validate_workflow_config
 
         warnings = validate_workflow_config(config, workflow_path=workflow_path)
+        from conductor.config.environment import builtin_local_environment, resolve_environment
+        from conductor.engine.run_manifest import compile_run_manifest
+
+        resolved_environment = (
+            resolve_environment(environment, workflow_dir=workflow_path.parent)
+            if environment is not None
+            else builtin_local_environment()
+        )
+        compile_run_manifest(
+            config,
+            workflow_path=workflow_path,
+            environment=resolved_environment,
+        )
         if warnings:
             for warning in warnings:
                 output_console.print(f"  [yellow]⚠[/yellow] {warning}")
