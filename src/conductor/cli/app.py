@@ -615,9 +615,7 @@ def validate(
         validate_workflow,
     )
 
-    is_valid, config = validate_workflow(
-        workflow_path, output_console, environment=environment
-    )
+    is_valid, config = validate_workflow(workflow_path, output_console, environment=environment)
 
     if is_valid and config is not None:
         display_validation_success(config, workflow_path, output_console)
