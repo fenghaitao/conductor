@@ -36,11 +36,9 @@ def _script_config(
 ) -> WorkflowConfig:
     execution = StepExecutionConfig(profile=step_profile) if step_profile else None
     defaults = WorkflowDefaults(
-        execution=(
-            WorkflowExecutionDefaults(profile=workflow_profile)
-            if workflow_profile
-            else None
-        )
+        execution=WorkflowExecutionDefaults(profile=workflow_profile)
+        if workflow_profile
+        else None
     )
     return WorkflowConfig(
         workflow=WorkflowDef(
