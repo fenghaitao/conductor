@@ -1913,7 +1913,9 @@ def display_execution_plan(plan: ExecutionPlan, console: Console | None = None) 
     output_console.print(" | ".join(summary_parts))
 
 
-def build_dry_run_plan(workflow_path: Path, *, environment: str | None = None) -> ExecutionPlan:
+def build_dry_run_plan(
+    workflow_path: Path, *, environment: str | None = None
+) -> ExecutionPlan:
     """Build an execution plan for dry-run mode.
 
     Loads the workflow configuration and builds an execution plan
