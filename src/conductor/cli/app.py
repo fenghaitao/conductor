@@ -578,6 +578,15 @@ def validate(
             help="Workflow file path or registry reference (name[@registry][@version]).",
         ),
     ],
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Execution environment name or path used to preflight execution profiles."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Validate a workflow YAML file without executing it.
 
@@ -608,7 +617,9 @@ def validate(
         validate_workflow,
     )
 
-    is_valid, config = validate_workflow(workflow_path, output_console)
+    is_valid, config = validate_workflow(
+        workflow_path, output_console, environment=environment
+    )
 
     if is_valid and config is not None:
         display_validation_success(config, workflow_path, output_console)
