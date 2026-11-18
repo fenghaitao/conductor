@@ -641,10 +641,9 @@ class WorkspaceConfig(BaseModel):
     @model_validator(mode="after")
     def reject_reserved_isolated_mode(self) -> WorkspaceConfig:
         if self.mode == "isolated":
-            raise ValueError(
-                "workspace.mode 'isolated' is reserved for future sandbox isolation"
-            )
+            raise ValueError("workspace.mode 'isolated' is reserved for future sandbox isolation")
         return self
+
 
 class AgentDef(BaseModel):
     """Definition for a single agent in the workflow.
