@@ -1,0 +1,7 @@
+default: vp
+
+profiles:
+  vp:
+    backend: local
+  test:
+    backend: local
