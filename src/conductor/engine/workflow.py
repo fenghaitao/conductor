@@ -40,6 +40,7 @@ from conductor.exceptions import (
 from conductor.exceptions import (
     TimeoutError as ConductorTimeoutError,
 )
+from conductor.execution import RunOutcome
 from conductor.executor.agent import AgentExecutor
 from conductor.executor.linkify import linkify_markdown
 from conductor.executor.output import validate_output
@@ -310,6 +311,9 @@ class WorkflowEngine:
         run_context: RunContext | None = None,
         _dashboard_context_path: list[str] | None = None,
         instructions_preamble: str | None = None,
+        execution_environment: Any | None = None,
+        execution_backend: Any | None = None,
+        _workspace_lease: Any | None = None,
     ) -> None:
         """Initialize the WorkflowEngine.
 
@@ -359,6 +363,19 @@ class WorkflowEngine:
         self.config = config
         self.skip_gates = skip_gates
         self.workflow_path = workflow_path
+        from conductor.config.environment import builtin_local_environment
+        from conductor.engine.run_manifest import compile_run_manifest
+
+        self._execution_environment = execution_environment or builtin_local_environment()
+        self._execution_manifest = compile_run_manifest(
+            config,
+            workflow_path=workflow_path,
+            environment=self._execution_environment,
+        )
+        from conductor.execution import LocalRunnerBackend
+
+        self._execution_backend = execution_backend or LocalRunnerBackend()
+        self._workspace_lease = _workspace_lease
         self._run_context = run_context or RunContext()
         self._run_id = self._run_context.run_id
         self._log_file = self._run_context.log_file
@@ -377,7 +394,7 @@ class WorkflowEngine:
         )
         self.gate_handler = HumanGateHandler(skip_gates=skip_gates)
         self.max_iterations_handler = MaxIterationsHandler(skip_gates=skip_gates)
-        self.script_executor = ScriptExecutor()
+        self.script_executor = ScriptExecutor(backend=self._execution_backend)
         self.set_executor = SetExecutor()
         self.wait_executor = WaitExecutor()
         self.questions_executor = QuestionsExecutor(skip_gates=skip_gates)
@@ -554,6 +571,8 @@ class WorkflowEngine:
             "log_file": self._log_file,
             "bg_mode": self._bg_mode,
         }
+        if self._subworkflow_depth == 0:
+            system["execution_manifest"] = self._execution_manifest.model_dump(mode="json")
 
         # Conditional fields — only when dashboard is active
         if self._dashboard_port is not None:
@@ -848,7 +867,7 @@ class WorkflowEngine:
             ExecutionError: If script fails or times out.
         """
         return await self.limits.wait_for_with_timeout(
-            self.script_executor.execute(agent, context),
+            self.script_executor.execute(agent, context, lease=self._workspace_lease),
             operation_name=f"script '{agent.name}'",
         )
 
@@ -1521,6 +1540,9 @@ class WorkflowEngine:
                 slot_key or agent.name,
             ],
             instructions_preamble=child_preamble,
+            execution_environment=self._execution_environment,
+            execution_backend=self._execution_backend,
+            _workspace_lease=self._workspace_lease,
         )
 
         # Resolve and apply sub-workflow's skill_directories (if any) before running.
@@ -1617,6 +1639,9 @@ class WorkflowEngine:
             "web_dashboard": self._web_dashboard,
             "run_context": self._run_context,
             "_subworkflow_depth": self._subworkflow_depth + 1,
+            "execution_environment": self._execution_environment,
+            "execution_backend": self._execution_backend,
+            "_workspace_lease": self._workspace_lease,
         }
         # Thread the dashboard context path into the child engine when the
         # field exists on this engine (added by the breadcrumb-navigation PR).
@@ -1821,7 +1846,27 @@ class WorkflowEngine:
         # Execute on_start hook
         self._execute_hook("on_start")
 
-        return await self._execute_loop(current_agent_name)
+        outcome: RunOutcome = "failed"
+        try:
+            if self._subworkflow_depth == 0 and self._workspace_lease is None:
+                from conductor.execution import RunSpec
+
+                self._workspace_lease = await self._execution_backend.prepare_run(
+                    RunSpec(run_id=self._run_id, workflow_name=self.config.workflow.name)
+                )
+            result = await self._execute_loop(current_agent_name)
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except BaseException:
+            outcome = "failed"
+            raise
+        else:
+            outcome = "succeeded"
+            return result
+        finally:
+            if self._subworkflow_depth == 0:
+                await self._finalize_execution_backend(outcome)
 
     async def resume(self, current_agent_name: str) -> dict[str, Any]:
         """Resume workflow execution from a specific agent.
@@ -1848,7 +1893,53 @@ class WorkflowEngine:
         # Execute on_start hook (signals resume)
         self._execute_hook("on_start")
 
-        return await self._execute_loop(current_agent_name)
+        outcome: RunOutcome = "failed"
+        try:
+            if self._subworkflow_depth == 0 and self._workspace_lease is None:
+                from conductor.execution import RunSpec
+
+                self._workspace_lease = await self._execution_backend.prepare_run(
+                    RunSpec(run_id=self._run_id, workflow_name=self.config.workflow.name)
+                )
+            result = await self._execute_loop(current_agent_name)
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except BaseException:
+            outcome = "failed"
+            raise
+        else:
+            outcome = "succeeded"
+            return result
+        finally:
+            if self._subworkflow_depth == 0:
+                await self._finalize_execution_backend(outcome)
+
+    async def _finalize_execution_backend(self, outcome: RunOutcome) -> None:
+        """Finalize the run-scoped execution lease without masking run outcome."""
+        lease = self._workspace_lease
+        self._workspace_lease = None
+        if lease is None:
+            return
+
+        task = asyncio.ensure_future(self._execution_backend.finalize_run(lease, outcome))
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+                if task.done():
+                    break
+            except Exception:
+                logger.warning(
+                    "Execution backend finalization failed; run outcome is unchanged",
+                    exc_info=True,
+                )
+                break
+        if cancelled:
+            raise asyncio.CancelledError
 
     def set_context(self, context: WorkflowContext) -> None:
         """Replace the engine's workflow context with a restored one.

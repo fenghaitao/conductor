@@ -1511,6 +1511,7 @@ async def run_workflow_async(
     metadata: dict[str, str] | None = None,
     workspace_instructions: bool = False,
     cli_instructions: list[str] | None = None,
+    environment: str | None = None,
 ) -> dict[str, Any]:
     """Execute a workflow asynchronously.
 
@@ -1585,6 +1586,14 @@ async def run_workflow_async(
         load_start = time.time()
         config = load_config(workflow_path)
         verbose_log_timing("Configuration loaded", time.time() - load_start)
+
+        resolved_environment = None
+        if environment is not None:
+            from conductor.config.environment import resolve_environment
+
+            resolved_environment = resolve_environment(
+                environment, workflow_dir=workflow_path.parent
+            )
 
         # Merge CLI metadata on top of YAML-declared metadata
         if metadata:
@@ -1681,6 +1690,7 @@ async def run_workflow_async(
                 keyboard_listener=listener,
                 web_dashboard=dashboard,
                 instructions_preamble=instructions_preamble,
+                execution_environment=resolved_environment,
                 run_context=RunContext(
                     run_id=event_log_subscriber.run_id if event_log_subscriber else "",
                     log_file=str(event_log_subscriber.path) if event_log_subscriber else "",
@@ -1903,7 +1913,7 @@ def display_execution_plan(plan: ExecutionPlan, console: Console | None = None) 
     output_console.print(" | ".join(summary_parts))
 
 
-def build_dry_run_plan(workflow_path: Path) -> ExecutionPlan:
+def build_dry_run_plan(workflow_path: Path, *, environment: str | None = None) -> ExecutionPlan:
     """Build an execution plan for dry-run mode.
 
     Loads the workflow configuration and builds an execution plan
@@ -1917,6 +1927,12 @@ def build_dry_run_plan(workflow_path: Path) -> ExecutionPlan:
     """
     # Load configuration
     config = load_config(workflow_path)
+
+    resolved_environment = None
+    if environment is not None:
+        from conductor.config.environment import resolve_environment
+
+        resolved_environment = resolve_environment(environment, workflow_dir=workflow_path.parent)
 
     # Create engine without provider (we won't execute anything)
     # We need a dummy provider for the constructor, but we won't use it
@@ -1966,7 +1982,12 @@ def build_dry_run_plan(workflow_path: Path) -> ExecutionPlan:
         async def close(self) -> None:
             pass
 
-    engine = WorkflowEngine(config, provider=_MockProvider())
+    engine = WorkflowEngine(
+        config,
+        provider=_MockProvider(),
+        workflow_path=workflow_path,
+        execution_environment=resolved_environment,
+    )
     return engine.build_execution_plan()
 
 
@@ -2007,6 +2028,7 @@ async def resume_workflow_async(
     web_port: int = 0,
     web_bg: bool = False,
     metadata: dict[str, str] | None = None,
+    environment: str | None = None,
 ) -> dict[str, Any]:
     """Resume a workflow from a checkpoint.
 
@@ -2089,6 +2111,13 @@ async def resume_workflow_async(
 
         # Resolve workflow path from checkpoint if not provided
         resolved_workflow_path = workflow_path or Path(cp.workflow_path)
+        resolved_environment = None
+        if environment is not None:
+            from conductor.config.environment import resolve_environment
+
+            resolved_environment = resolve_environment(
+                environment, workflow_dir=resolved_workflow_path.parent
+            )
         if not resolved_workflow_path.exists():
             raise CheckpointError(
                 f"Workflow file not found: {resolved_workflow_path}",
@@ -2237,6 +2266,7 @@ async def resume_workflow_async(
                 keyboard_listener=listener,
                 web_dashboard=dashboard,
                 instructions_preamble=cp.instructions_preamble,
+                execution_environment=resolved_environment,
                 run_context=RunContext(
                     run_id=event_log_subscriber.run_id,
                     log_file=str(event_log_subscriber.path),

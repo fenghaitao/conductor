@@ -296,6 +296,16 @@ def run(
             "base_url/api_key/type (and optional default_model).",
         ),
     ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Execution environment name or path. Names resolve through "
+                ".conductor/environments/ and then $CONDUCTOR_HOME/environments/."
+            ),
+        ),
+    ] = None,
     raw_inputs: Annotated[
         list[str] | None,
         typer.Option(
@@ -446,7 +456,7 @@ def run(
     # Handle dry-run mode
     if dry_run:
         try:
-            plan = build_dry_run_plan(workflow_path)
+            plan = build_dry_run_plan(workflow_path, environment=environment)
             display_execution_plan(plan, output_console)
             return
         except Exception as e:
@@ -497,6 +507,7 @@ def run(
                 metadata=cli_metadata,
                 workspace_instructions=workspace_instructions,
                 cli_instructions=raw_instructions,
+                environment=environment,
             )
             if is_verbose():
                 console.print(f"[bold cyan]Dashboard:[/bold cyan] {launch.url}")
@@ -526,6 +537,7 @@ def run(
                 metadata=cli_metadata,
                 workspace_instructions=workspace_instructions,
                 cli_instructions=raw_instructions,
+                environment=environment,
             )
         )
 
@@ -566,6 +578,13 @@ def validate(
             help="Workflow file path or registry reference (name[@registry][@version]).",
         ),
     ],
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help="Execution environment name or path used to preflight execution profiles.",
+        ),
+    ] = None,
 ) -> None:
     """Validate a workflow YAML file without executing it.
 
@@ -596,7 +615,7 @@ def validate(
         validate_workflow,
     )
 
-    is_valid, config = validate_workflow(workflow_path, output_console)
+    is_valid, config = validate_workflow(workflow_path, output_console, environment=environment)
 
     if is_valid and config is not None:
         display_validation_success(config, workflow_path, output_console)
@@ -755,6 +774,16 @@ def resume(
             help="Override the workflow provider. Accepts a provider name "
             "(e.g. 'copilot') or a path to a YAML provider profile carrying "
             "base_url/api_key/type (and optional default_model).",
+        ),
+    ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Execution environment name or path. Names resolve through "
+                ".conductor/environments/ and then $CONDUCTOR_HOME/environments/."
+            ),
         ),
     ] = None,
     raw_metadata: Annotated[
@@ -950,6 +979,7 @@ def resume(
                 log_file=resolved_log_file,
                 web_port=web_port,
                 metadata=cli_metadata,
+                environment=environment,
             )
             if is_verbose():
                 console.print(f"[bold cyan]Dashboard:[/bold cyan] {launch.url}")
@@ -976,6 +1006,7 @@ def resume(
                 web_port=web_port,
                 web_bg=web_bg,
                 metadata=cli_metadata,
+                environment=environment,
             )
         )
 
