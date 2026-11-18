@@ -296,6 +296,16 @@ def run(
             "base_url/api_key/type (and optional default_model).",
         ),
     ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Execution environment name or path. Names resolve through "
+                ".conductor/environments/ and then $CONDUCTOR_HOME/environments/."
+            ),
+        ),
+    ] = None,
     raw_inputs: Annotated[
         list[str] | None,
         typer.Option(
@@ -446,7 +456,7 @@ def run(
     # Handle dry-run mode
     if dry_run:
         try:
-            plan = build_dry_run_plan(workflow_path)
+            plan = build_dry_run_plan(workflow_path, environment=environment)
             display_execution_plan(plan, output_console)
             return
         except Exception as e:
@@ -497,6 +507,7 @@ def run(
                 metadata=cli_metadata,
                 workspace_instructions=workspace_instructions,
                 cli_instructions=raw_instructions,
+                environment=environment,
             )
             if is_verbose():
                 console.print(f"[bold cyan]Dashboard:[/bold cyan] {launch.url}")
@@ -526,6 +537,7 @@ def run(
                 metadata=cli_metadata,
                 workspace_instructions=workspace_instructions,
                 cli_instructions=raw_instructions,
+                environment=environment,
             )
         )
 
@@ -757,6 +769,16 @@ def resume(
             "base_url/api_key/type (and optional default_model).",
         ),
     ] = None,
+    environment: Annotated[
+        str | None,
+        typer.Option(
+            "--environment",
+            help=(
+                "Execution environment name or path. Names resolve through "
+                ".conductor/environments/ and then $CONDUCTOR_HOME/environments/."
+            ),
+        ),
+    ] = None,
     raw_metadata: Annotated[
         list[str] | None,
         typer.Option(
@@ -950,6 +972,7 @@ def resume(
                 log_file=resolved_log_file,
                 web_port=web_port,
                 metadata=cli_metadata,
+                environment=environment,
             )
             if is_verbose():
                 console.print(f"[bold cyan]Dashboard:[/bold cyan] {launch.url}")
@@ -976,6 +999,7 @@ def resume(
                 web_port=web_port,
                 web_bg=web_bg,
                 metadata=cli_metadata,
+                environment=environment,
             )
         )
 
