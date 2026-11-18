@@ -40,6 +40,7 @@ from conductor.exceptions import (
 from conductor.exceptions import (
     TimeoutError as ConductorTimeoutError,
 )
+from conductor.execution import RunOutcome
 from conductor.executor.agent import AgentExecutor
 from conductor.executor.linkify import linkify_markdown
 from conductor.executor.output import validate_output
@@ -1845,7 +1846,7 @@ class WorkflowEngine:
         # Execute on_start hook
         self._execute_hook("on_start")
 
-        outcome = "failed"
+        outcome: RunOutcome = "failed"
         try:
             if self._subworkflow_depth == 0 and self._workspace_lease is None:
                 from conductor.execution import RunSpec
@@ -1892,7 +1893,7 @@ class WorkflowEngine:
         # Execute on_start hook (signals resume)
         self._execute_hook("on_start")
 
-        outcome = "failed"
+        outcome: RunOutcome = "failed"
         try:
             if self._subworkflow_depth == 0 and self._workspace_lease is None:
                 from conductor.execution import RunSpec
@@ -1914,7 +1915,7 @@ class WorkflowEngine:
             if self._subworkflow_depth == 0:
                 await self._finalize_execution_backend(outcome)
 
-    async def _finalize_execution_backend(self, outcome: str) -> None:
+    async def _finalize_execution_backend(self, outcome: RunOutcome) -> None:
         """Finalize the run-scoped execution lease without masking run outcome."""
         lease = self._workspace_lease
         self._workspace_lease = None
