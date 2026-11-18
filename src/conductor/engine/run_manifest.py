@@ -57,11 +57,15 @@ def executable_step_identity(name: str, *, for_each_group: str | None = None) ->
     return name
 
 
-def _workflow_digest(path: Path | None) -> str | None:
-    if path is None:
+def _workflow_digest(path: Path | str | None) -> str | None:
+    if path is None or not isinstance(path, Path):
+        # WorkflowEngine historically accepted synthetic string identifiers in
+        # programmatic/test construction even though the public annotation is
+        # Path | None. Preserve that compatibility: only a concrete Path
+        # represents file bytes that the manifest can truthfully hash.
         return None
     try:
-        data = Path(path).read_bytes()
+        data = path.read_bytes()
     except OSError as exc:
         raise ConfigurationError(
             f"Failed to hash workflow file '{path}': {exc}",
