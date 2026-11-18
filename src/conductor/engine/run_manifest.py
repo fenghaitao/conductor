@@ -131,6 +131,14 @@ def compile_run_manifest(
             )
 
     workspace = config.workflow.workspace
+    if workspace.mode != "shared":
+        # WorkspaceConfig rejects this today; keep a defensive guard here so
+        # the manifest compiler remains correct if it receives constructed or
+        # future schema objects that bypass that validator.
+        raise ConfigurationError(
+            f"workspace mode '{workspace.mode}' is not supported by this execution build"
+        )
+
     return ResolvedRunManifest(
         workflow=WorkflowIdentity(
             name=config.workflow.name,
@@ -143,7 +151,7 @@ def compile_run_manifest(
         ),
         profiles=profiles,
         workspace=WorkspaceIdentity(
-            mode=workspace.mode,
+            mode="shared",
             persistence=workspace.persistence,
         ),
     )
