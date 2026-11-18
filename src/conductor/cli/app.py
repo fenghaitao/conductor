@@ -582,9 +582,7 @@ def validate(
         str | None,
         typer.Option(
             "--environment",
-            help=(
-                "Execution environment name or path used to preflight execution profiles."
-            ),
+            help="Execution environment name or path used to preflight execution profiles.",
         ),
     ] = None,
 ) -> None:
