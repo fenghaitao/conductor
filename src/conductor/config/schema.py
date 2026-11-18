@@ -1137,10 +1137,14 @@ class AgentDef(BaseModel):
     def validate_agent_type(self) -> AgentDef:
         """Ensure agent has required fields for its type."""
         if self.execution is not None and self.type in {
-            "human_gate", "questions", "set", "terminate", "wait"
+            "human_gate",
+            "questions",
+            "set",
+            "terminate",
+            "wait",
         }:
             raise ValueError(
-                f"\'{self.type}\' agents cannot have \'execution\' "
+                f"'{self.type}' agents cannot have 'execution' "
                 "(only executable agent/script/workflow steps support execution profiles)"
             )
 
