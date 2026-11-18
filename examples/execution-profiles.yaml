@@ -1,0 +1,35 @@
+workflow:
+  name: execution-profile-demo
+  entry_point: inspect
+  input:
+    vp_root:
+      type: string
+      required: true
+  defaults:
+    execution:
+      profile: vp
+  workspace:
+    mode: shared
+    persistence: ephemeral
+
+agents:
+  - name: inspect
+    working_dir: "{{ workflow.input.vp_root }}"
+    prompt: |
+      Inspect the repository in the configured working directory and summarize it.
+    routes:
+      - to: test
+
+  - name: test
+    type: script
+    execution:
+      profile: test
+    working_dir: "{{ workflow.input.vp_root }}"
+    command: python
+    args: ["-m", "pytest", "-q"]
+    routes:
+      - to: "$end"
+
+output:
+  summary: "{{ inspect.output }}"
+  test_exit_code: "{{ test.output.exit_code }}"
