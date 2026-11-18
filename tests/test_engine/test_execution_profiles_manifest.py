@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -31,7 +32,7 @@ def _script_config(
     *,
     step_profile: str | None = None,
     workflow_profile: str | None = None,
-    persistence: str = "ephemeral",
+    persistence: Literal["ephemeral", "durable", "on-failure"] = "ephemeral",
 ) -> WorkflowConfig:
     execution = StepExecutionConfig(profile=step_profile) if step_profile else None
     defaults = WorkflowDefaults(
