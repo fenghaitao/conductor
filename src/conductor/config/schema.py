@@ -639,7 +639,7 @@ class WorkspaceConfig(BaseModel):
     persistence: Literal["ephemeral", "durable", "on-failure"] = "ephemeral"
 
     @model_validator(mode="after")
-    def reject_reserved_isolated_mode(self) -> "WorkspaceConfig":
+    def reject_reserved_isolated_mode(self) -> WorkspaceConfig:
         if self.mode == "isolated":
             raise ValueError(
                 "workspace.mode 'isolated' is reserved for future sandbox isolation"
