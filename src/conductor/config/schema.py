@@ -587,6 +587,65 @@ class ReasoningConfig(BaseModel):
     """Reasoning effort level applied to the agent's model calls."""
 
 
+class StepExecutionConfig(BaseModel):
+    """Execution profile selected for an executable workflow step."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: str
+    """Logical execution profile name resolved through an environment document."""
+
+    @field_validator("profile")
+    @classmethod
+    def validate_profile_name(cls, value: str) -> str:
+        import re
+
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+            raise ValueError(
+                "execution profile names may contain only letters, digits, '_', '.', and '-'"
+            )
+        return value
+
+
+class WorkflowExecutionDefaults(BaseModel):
+    """Workflow-wide execution defaults."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: str | None = None
+    """Default logical execution profile for executable steps."""
+
+
+class WorkflowDefaults(BaseModel):
+    """Workflow-wide defaults shared by executable steps."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    execution: WorkflowExecutionDefaults | None = None
+
+
+class WorkspaceConfig(BaseModel):
+    """Workspace lifecycle policy recorded for a workflow run.
+
+    ``shared`` is the only active workspace mode in this port. Retention modes
+    are part of the upstream contract and are recorded in the resolved manifest;
+    concrete retained local/Docker workspace allocation is intentionally a
+    follow-up so this PR does not silently copy or mutate source trees.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["shared", "isolated"] = "shared"
+    persistence: Literal["ephemeral", "durable", "on-failure"] = "ephemeral"
+
+    @model_validator(mode="after")
+    def reject_reserved_isolated_mode(self) -> "WorkspaceConfig":
+        if self.mode == "isolated":
+            raise ValueError(
+                "workspace.mode 'isolated' is reserved for future sandbox isolation"
+            )
+        return self
+
 class AgentDef(BaseModel):
     """Definition for a single agent in the workflow.
 
@@ -748,6 +807,9 @@ class AgentDef(BaseModel):
 
     env: dict[str, str] = Field(default_factory=dict)
     """Environment variables for script subprocess."""
+
+    execution: StepExecutionConfig | None = None
+    """Logical execution profile for this executable step."""
 
     working_dir: str | None = None
     """Working directory for script execution or filesystem-backed agent providers.
@@ -1074,6 +1136,14 @@ class AgentDef(BaseModel):
     @model_validator(mode="after")
     def validate_agent_type(self) -> AgentDef:
         """Ensure agent has required fields for its type."""
+        if self.execution is not None and self.type in {
+            "human_gate", "questions", "set", "terminate", "wait"
+        }:
+            raise ValueError(
+                f"\'{self.type}\' agents cannot have \'execution\' "
+                "(only executable agent/script/workflow steps support execution profiles)"
+            )
+
         if self.type not in (None, "agent") and self.excluded_tools:
             raise ValueError(
                 f"'{self.type}' agents cannot have 'excluded_tools' "
@@ -1939,6 +2009,12 @@ class WorkflowDef(BaseModel):
 
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     """Provider and runtime settings."""
+
+    defaults: WorkflowDefaults = Field(default_factory=WorkflowDefaults)
+    """Workflow-wide step defaults, including execution profile selection."""
+
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
+    """Workspace lifecycle policy for the run."""
 
     input: dict[str, InputDef] = Field(default_factory=dict)
     """Workflow input parameter definitions."""
