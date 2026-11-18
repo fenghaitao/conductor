@@ -310,6 +310,7 @@ class WorkflowEngine:
         run_context: RunContext | None = None,
         _dashboard_context_path: list[str] | None = None,
         instructions_preamble: str | None = None,
+        execution_environment: Any | None = None,
     ) -> None:
         """Initialize the WorkflowEngine.
 
@@ -359,6 +360,15 @@ class WorkflowEngine:
         self.config = config
         self.skip_gates = skip_gates
         self.workflow_path = workflow_path
+        from conductor.config.environment import builtin_local_environment
+        from conductor.engine.run_manifest import compile_run_manifest
+
+        self._execution_environment = execution_environment or builtin_local_environment()
+        self._execution_manifest = compile_run_manifest(
+            config,
+            workflow_path=workflow_path,
+            environment=self._execution_environment,
+        )
         self._run_context = run_context or RunContext()
         self._run_id = self._run_context.run_id
         self._log_file = self._run_context.log_file
@@ -554,6 +564,8 @@ class WorkflowEngine:
             "log_file": self._log_file,
             "bg_mode": self._bg_mode,
         }
+        if self._subworkflow_depth == 0:
+            system["execution_manifest"] = self._execution_manifest.model_dump(mode="json")
 
         # Conditional fields — only when dashboard is active
         if self._dashboard_port is not None:
@@ -1521,6 +1533,7 @@ class WorkflowEngine:
                 slot_key or agent.name,
             ],
             instructions_preamble=child_preamble,
+            execution_environment=self._execution_environment,
         )
 
         # Resolve and apply sub-workflow's skill_directories (if any) before running.
@@ -1617,6 +1630,7 @@ class WorkflowEngine:
             "web_dashboard": self._web_dashboard,
             "run_context": self._run_context,
             "_subworkflow_depth": self._subworkflow_depth + 1,
+            "execution_environment": self._execution_environment,
         }
         # Thread the dashboard context path into the child engine when the
         # field exists on this engine (added by the breadcrumb-navigation PR).
