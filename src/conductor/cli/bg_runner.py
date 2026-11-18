@@ -509,6 +509,7 @@ def launch_background(
     metadata: dict[str, str] | None = None,
     workspace_instructions: bool = False,
     cli_instructions: list[str] | None = None,
+    environment: str | None = None,
 ) -> BackgroundLaunch:
     """Fork a detached child process running the workflow with a web dashboard.
 
@@ -570,6 +571,9 @@ def launch_background(
     if provider_override:
         cmd.extend(["--provider", provider_override])
 
+    if environment is not None:
+        cmd.extend(["--environment", environment])
+
     if skip_gates:
         cmd.append("--skip-gates")
 
@@ -595,6 +599,7 @@ def launch_background_resume(
     log_file: Path | None = None,
     web_port: int = 0,
     metadata: dict[str, str] | None = None,
+    environment: str | None = None,
 ) -> BackgroundLaunch:
     """Fork a detached child process resuming the workflow with a web dashboard.
 
@@ -670,6 +675,9 @@ def launch_background_resume(
 
     if provider_override:
         cmd.extend(["--provider", provider_override])
+
+    if environment is not None:
+        cmd.extend(["--environment", environment])
 
     if skip_gates:
         cmd.append("--skip-gates")
