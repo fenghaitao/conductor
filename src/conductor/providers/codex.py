@@ -44,8 +44,10 @@ from conductor.providers.base import AgentOutput, AgentProvider, EventCallback
 from conductor.providers.capabilities import ProviderCapabilities
 from conductor.providers.codex_backend import (
     backend_environment,
+    backend_label,
     backend_settings,
     config_overrides,
+    default_model,
     guard_startup,
     resolve_backend,
 )
@@ -74,7 +76,6 @@ except ImportError:  # pragma: no cover - exercised via the availability flag
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_COPILOT_MODEL: Final[str] = "gpt-6.1-sol"
 _MAX_SCHEMA_DEPTH: Final[int] = 10
 _MAX_PARSE_RECOVERY_ATTEMPTS: Final[int] = 2
 
@@ -280,8 +281,9 @@ class CodexProvider(AgentProvider):
             default_reasoning_effort: Workflow-wide ``reasoning.effort``
                 default, from ``runtime.default_reasoning_effort``. Falls
                 back to :data:`_DEFAULT_REASONING_EFFORT`.
-            backend: Explicit ``native`` or ``copilot`` backend. When omitted,
-                uses CONDUCTOR_CODEX_BACKEND (default ``native``).
+            backend: Explicit ``native``, ``copilot`` or ``cth-gemini``
+                backend. When omitted, uses CONDUCTOR_CODEX_BACKEND (default
+                ``native``).
             checkpoint_state: Saved public backend settings. These take
                 precedence over ambient environment on checkpoint resume.
             **_ignored: Runtime fields other providers accept that Codex has
@@ -314,7 +316,11 @@ class CodexProvider(AgentProvider):
         else:
             self._backend = resolve_backend(backend)
             self._backend_settings = backend_settings(self._backend)
-        self._model = model or (_DEFAULT_COPILOT_MODEL if self._backend == "copilot" else None)
+        self._model = model or default_model(self._backend)
+        # Routed (non-native) backends attest this provider on every thread.
+        self._routed = self._backend != "native"
+        self._model_provider = self._backend_settings.get("model_provider")
+        self._label = backend_label(self._backend)
         self._max_session_seconds = max_session_seconds
         self._default_reasoning_effort = default_reasoning_effort
         self._sandbox = self._coerce_sandbox(sandbox)
@@ -392,7 +398,7 @@ class CodexProvider(AgentProvider):
                 )
             )
             client = AsyncCodex(config)  # ty: ignore[call-non-callable]
-            if self._backend == "copilot":
+            if self._routed:
                 guard_startup(client, config)
             try:
                 # ``AsyncCodex`` initializes lazily and exposes no ``start()``;
@@ -416,7 +422,7 @@ class CodexProvider(AgentProvider):
                     suggestion=(
                         "Check that the bundled `codex` binary is runnable and "
                         "that the requested backend is reachable "
-                        "(Copilot does not use `codex login`)."
+                        "(routed backends do not use `codex login`)."
                     ),
                 ) from exc
             self._client = client
@@ -426,7 +432,7 @@ class CodexProvider(AgentProvider):
         """Validate the requested route, not a possibly unrelated ChatGPT login."""
         try:
             client = await self._ensure_client()
-            if self._backend == "copilot":
+            if self._routed:
                 # A catalog or an existing ChatGPT account is not an entitlement
                 # check. Never inherit workflow write authority or consume a
                 # restored agent session for this disposable inference probe.
@@ -434,7 +440,7 @@ class CodexProvider(AgentProvider):
                 with tempfile.TemporaryDirectory(prefix="conductor-codex-probe-") as cwd:
                     probe = await client.thread_start(
                         model=self._model,
-                        model_provider="github_copilot",
+                        model_provider=self._model_provider,
                         sandbox=sandbox,
                         approval_mode=self._coerce_approval_mode("deny_all"),
                         cwd=cwd,
@@ -454,7 +460,9 @@ class CodexProvider(AgentProvider):
                     )
                     if not result.status.endswith("completed") or not result.final_response:
                         message = getattr(result.error, "message", None) or result.status
-                        raise ProviderError(f"Copilot inference connection check failed: {message}")
+                        raise ProviderError(
+                            f"{self._label} inference connection check failed: {message}"
+                        )
                     await self._verify_backend(probe, self._model)
             else:
                 await client.account()
@@ -693,14 +701,14 @@ class CodexProvider(AgentProvider):
                 payload = getattr(notification, "payload", notification)
                 name = type(payload).__name__
                 if (
-                    self._backend == "copilot"
+                    self._routed
                     and name == "ModelReroutedNotification"
                     and self._for_turn(payload, turn_id)
                     and getattr(payload, "to_model", None) != model
                 ):
                     await self._interrupt(handle)
                     raise ProviderError(
-                        f"Copilot model rerouted to {getattr(payload, 'to_model', None)!r}; "
+                        f"{self._label} model rerouted to {getattr(payload, 'to_model', None)!r}; "
                         f"expected {model!r}. Refusing model fallback."
                     )
                 if name == "ItemCompletedNotification" and self._for_turn(payload, turn_id):
@@ -878,18 +886,19 @@ class CodexProvider(AgentProvider):
 
     async def _verify_backend(self, thread: Any, model: str | None) -> None:
         """Attest the app-server's actual thread before any paid turn."""
-        if self._backend != "copilot":
+        if not self._routed:
             return
+        expected = self._model_provider
         try:
             observed = (await thread.read()).thread
             provider = observed.model_provider
             observed_model = observed.model
         except Exception as exc:
-            raise ProviderError(f"Cannot attest Copilot session backend: {exc}") from exc
-        if provider != "github_copilot" or not model or observed_model != model:
+            raise ProviderError(f"Cannot attest {self._label} session backend: {exc}") from exc
+        if provider != expected or not model or observed_model != model:
             raise ProviderError(
-                f"Copilot backend mismatch: session provider={provider!r}, "
-                f"model={observed_model!r}; expected github_copilot, {model!r}. "
+                f"{self._label} backend mismatch: session provider={provider!r}, "
+                f"model={observed_model!r}; expected {expected}, {model!r}. "
                 "Refusing ChatGPT/native fallback."
             )
 
@@ -898,8 +907,8 @@ class CodexProvider(AgentProvider):
         kwargs: dict[str, Any] = {"approval_mode": self._approval_mode}
         if model is not None:
             kwargs["model"] = model
-        if self._backend == "copilot":
-            kwargs["model_provider"] = "github_copilot"
+        if self._routed:
+            kwargs["model_provider"] = self._model_provider
         if self._sandbox is not None:
             kwargs["sandbox"] = self._sandbox
         cwd = self._resolve_cwd(agent)
@@ -912,9 +921,9 @@ class CodexProvider(AgentProvider):
             try:
                 thread = await client.thread_resume(existing, **kwargs)
             except Exception as exc:
-                if self._backend == "copilot":
+                if self._routed:
                     raise ProviderError(
-                        f"Copilot session resume failed; no fallback: {exc}"
+                        f"{self._label} session resume failed; no fallback: {exc}"
                     ) from exc
                 logger.debug(
                     "Codex thread %s could not resume; starting fresh", existing, exc_info=True

@@ -638,3 +638,114 @@ output:
         )
 
     asyncio.run(run())
+
+
+# --- CTH Gemini backend (agent-providers CTH service) ---
+
+
+@pytest.fixture
+def agent_providers(tmp_path, monkeypatch, request):
+    """A minimal agent-providers checkout: the Gemini catalog and a service key."""
+    request.getfixturevalue("sdk_stub")
+    root = tmp_path / "agent-providers"
+    (root / "cth" / "codex").mkdir(parents=True)
+    (root / "cth" / "codex" / "codex_cth_gemini_models.json").write_text('{"models": []}')
+    (root / ".cth-service-key").write_text("sk-cth-file-key\n")
+    monkeypatch.setenv("AGENT_PROVIDERS_ROOT", str(root))
+    for name in (
+        "CONDUCTOR_CODEX_BACKEND",
+        "CONDUCTOR_CODEX_CTH_GEMINI_CATALOG",
+        "CTH_SERVICE_KEY",
+        "CTH_SERVICE_KEY_FILE",
+        "CTH_SERVICE_BRIDGE_PORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    return root.resolve()
+
+
+def _overrides(settings):
+    return dict(item.split("=", 1) for item in config_overrides(settings))
+
+
+def test_cth_gemini_routes_to_the_service_bridge(agent_providers, monkeypatch):
+    monkeypatch.setenv("CTH_SERVICE_BRIDGE_PORT", "4199")
+    settings = backend_settings("cth-gemini")
+    assert settings["key_file"] == str(agent_providers / ".cth-service-key")
+    assert "sk-cth-file-key" not in json.dumps(settings)
+    assert {k: json.loads(v) for k, v in _overrides(settings).items()} == {
+        "model_provider": "cth_gemini",
+        "model_providers.cth_gemini.name": "CTH Gemini via the agent-providers CTH service",
+        "model_providers.cth_gemini.base_url": "http://127.0.0.1:4199/v1",
+        "model_providers.cth_gemini.wire_api": "responses",
+        "model_providers.cth_gemini.env_key": "CTH_SERVICE_KEY",
+        "model_catalog_json": str(agent_providers / "cth/codex/codex_cth_gemini_models.json"),
+        "web_search": "disabled",
+        "features.unified_exec": False,
+        "features.apps": False,
+    }
+    # The key comes from the service's key file unless given directly.
+    assert backend_environment(settings)["CTH_SERVICE_KEY"] == "sk-cth-file-key"
+    monkeypatch.setenv("CTH_SERVICE_KEY", "sk-explicit")
+    assert backend_environment(settings)["CTH_SERVICE_KEY"] == "sk-explicit"
+    assert CodexProvider(backend="cth-gemini")._model == "gemini-4-argon"
+
+
+def test_cth_gemini_restores_the_saved_route_and_refuses_drift(agent_providers, monkeypatch):
+    settings = backend_settings("cth-gemini")
+    # A later shell with other ambient ports/roots still reaches the saved route.
+    monkeypatch.setenv("CTH_SERVICE_BRIDGE_PORT", "4555")
+    monkeypatch.setenv("AGENT_PROVIDERS_ROOT", "/elsewhere")
+    env = backend_environment(settings)
+    assert env["CTH_SERVICE_BRIDGE_PORT"] == "4101"
+    assert env["CTH_SERVICE_KEY"] == "sk-cth-file-key"
+    (agent_providers / "cth/codex/codex_cth_gemini_models.json").write_text('{"models": [1]}')
+    with pytest.raises(ProviderError, match="changed"):
+        backend_environment(settings)
+
+
+def test_cth_gemini_key_must_be_available(agent_providers, monkeypatch):
+    settings = backend_settings("cth-gemini")
+    (agent_providers / ".cth-service-key").unlink()
+    with pytest.raises(ProviderError, match="cth_service.sh"):
+        backend_environment(settings)
+    # Without a root or key file, only an explicit key works.
+    catalog = agent_providers / "cth/codex/codex_cth_gemini_models.json"
+    monkeypatch.setenv("CONDUCTOR_CODEX_CTH_GEMINI_CATALOG", str(catalog))
+    monkeypatch.delenv("AGENT_PROVIDERS_ROOT")
+    settings = backend_settings("cth-gemini")
+    assert settings["key_file"] is None
+    with pytest.raises(ProviderError, match="CTH_SERVICE_KEY"):
+        backend_environment(settings)
+    monkeypatch.setenv("CTH_SERVICE_KEY", "sk-explicit")
+    assert backend_environment(settings)["CTH_SERVICE_KEY"] == "sk-explicit"
+
+
+def test_cth_gemini_sessions_are_attested(agent_providers):
+    async def run():
+        p = CodexProvider(backend="cth-gemini")
+        for observed in ("github_copilot", "openai"):
+            t = thread(observed, "gemini-4-argon")
+            client = SimpleNamespace(thread_start=AsyncMock(return_value=t), account=AsyncMock())
+            p._client = client
+            with pytest.raises(ProviderError, match="mismatch"):
+                await p.execute(AgentDef(name="proof", prompt="test"), {}, "test")
+            t.turn.assert_not_called()
+            assert client.thread_start.call_args.kwargs["model_provider"] == "cth_gemini"
+            assert client.thread_start.call_args.kwargs["model"] == "gemini-4-argon"
+
+    asyncio.run(run())
+
+
+def test_cth_deepseek_is_not_a_codex_backend(agent_providers):
+    # CTH's content filter blocks Codex's multi-step tool use on DeepSeek.
+    with pytest.raises(ProviderError, match="Unknown Codex backend"):
+        CodexProvider(backend="cth-deepseek")
+
+
+def test_cth_checkpoint_state_round_trips(agent_providers):
+    saved = CodexProvider(backend="cth-gemini").get_checkpoint_state()["codex"]
+    restored = CodexProvider(checkpoint_state=saved)
+    assert restored._backend == "cth-gemini"
+    assert restored._model_provider == "cth_gemini"
+    with pytest.raises(ProviderError, match="conflicts"):
+        CodexProvider(backend="copilot", checkpoint_state=saved)
